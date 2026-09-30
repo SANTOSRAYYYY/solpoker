@@ -17,6 +17,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset CLICOLOR_FORCE FORCE_COLOR
 export CLICOLOR=0 NO_COLOR=1
 
+# magicblock-validator 0.14.10 raises RLIMIT_NOFILE to 1,000,000 at startup and exits
+# ("unable to set open file descriptor limit") if the hard limit is lower. mb-stack
+# filters that line out, so check here. GitHub runners have a 65,536 hard limit: run
+#   sudo prlimit --pid $$ --nofile=1048576:1048576
+# in the same shell first.
+NOFILE_NEEDED=1000000
+if [ "$(ulimit -Hn)" != "unlimited" ] && [ "$(ulimit -Hn)" -lt "$NOFILE_NEEDED" ]; then
+  echo "open-file hard limit is $(ulimit -Hn); the local ER needs >= $NOFILE_NEEDED." >&2
+  echo "Fix: sudo prlimit --pid \$\$ --nofile=1048576:1048576  (then rerun in that shell)" >&2
+  exit 1
+fi
+ulimit -n "$NOFILE_NEEDED"
+
 EXPECTED="0.14.10"
 ACTUAL="$(ephemeral-validator --version 2>/dev/null | awk '{print $2}')"
 if [ "$ACTUAL" != "$EXPECTED" ]; then

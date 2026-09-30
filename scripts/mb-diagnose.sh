@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$HOME/.solpoker-env" ] && . "$HOME/.solpoker-env"
 unset CLICOLOR_FORCE FORCE_COLOR
 export CLICOLOR=0 NO_COLOR=1
+ulimit -n 1000000 2>/dev/null || echo "WARN: cannot raise open-file limit to 1000000 (hard=$(ulimit -Hn)); the ER will refuse to start"
 D="$ROOT/.mb-diag"
 rm -rf "$D"
 mkdir -p "$D"
@@ -21,7 +22,7 @@ health() { curl -s -m 2 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0"
 
 echo "=== environment"
 uname -a
-echo "nproc=$(nproc) ulimit_n=$(ulimit -n) max_map_count=$(cat /proc/sys/vm/max_map_count 2>/dev/null)"
+echo "nproc=$(nproc) nofile_soft=$(ulimit -Sn) nofile_hard=$(ulimit -Hn) nr_open=$(cat /proc/sys/fs/nr_open) max_map_count=$(cat /proc/sys/vm/max_map_count 2>/dev/null)"
 free -m | sed -n 2p
 echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)"
 echo "cpu flags: $(grep -m1 -o -wE 'avx2|avx512f|avx512bw|avx512vl|bmi2|adx|sha_ni|aes' /proc/cpuinfo | sort -u | tr '\n' ' ')"
@@ -46,6 +47,9 @@ echo "--- er.log (first 40 lines)"
 head -n 40 er.log
 echo "--- er.log (last 80 lines)"
 tail -n 80 er.log
+# mb-test-validator is a node wrapper; the real solana-test-validator is a grandchild
 kill $BASE >/dev/null 2>&1
+pkill -f solana-test-validator >/dev/null 2>&1
+pkill -f ephemeral-validator >/dev/null 2>&1
 wait $BASE 2>/dev/null
 exit 0

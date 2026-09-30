@@ -83,3 +83,4 @@ ER 内的交易签名（例如 3 次 `increment`）只存在于 devnet-tee，需
 11. 模板遗留的 `pub use state::*;` 未使用告警，Stage 1 写入真实状态后自然消失。
 12. devnet 委托程序是否支持 `RequestUndelegation` / 超时回滚（逃生通道）仍待 Stage 3 验证，现状与开发前报告一致。
 13. **CI 注意事项（已修复，写在这里备查）**：(a) Anchor 1.0 的 `anchor build` 会比对 `target/deploy/*-keypair.json` 和 `declare_id!`，CI 没有程序密钥，所以要加 `--ignore-keys`，程序 ID 改由 `check-pins.sh` 校验 IDL 地址；(b) `scripts/mb-stack.sh` 在 `.mb-stack/` 目录里启动 validator，所以传给它的 `.so` 路径和 `solana config` 里的钱包路径都必须是绝对路径，否则程序加载失败、钱包拿不到创世余额。
+14. **本地 ER 需要 100 万个文件描述符（已修复）**：magicblock-validator 0.14.10 启动时会把 `RLIMIT_NOFILE` 提到 1,000,000，硬上限不够就直接退出（`unable to set open file descriptor limit`）。GitHub runner 的硬上限是 65,536，所以 CI 的前两次运行都卡在这里。`mb-stack` 只转发含 error/failed/fatal/panic 的子进程输出行，这条错误被过滤掉了，看起来就是「ER 无故退出」。现在的处理：CI 在启动栈前执行 `sudo prlimit --pid $$ --nofile=1048576:1048576`；`scripts/mb-stack.sh` 启动前检查硬上限，不够就报错并给出修复命令；新增 `scripts/mb-diagnose.sh`，单独前台运行 base 和 ER 并保留完整输出，CI 失败时自动运行。开发者本机如果遇到同样问题，也按这个办法处理。

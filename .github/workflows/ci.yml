@@ -85,6 +85,8 @@ jobs:
       - name: Start local MagicBlock stack with programs preloaded at their declared IDs
         id: stack
         run: |
+          # the local ER needs RLIMIT_NOFILE >= 1,000,000; runner hard limit is 65,536
+          sudo prlimit --pid $$ --nofile=1048576:1048576
           # absolute paths: scripts/mb-stack.sh runs the stack from .mb-stack/
           scripts/mb-stack.sh --reset \
             --upgradeable-program "$SOLPOKER_ID" "$PWD/target/deploy/solpoker.so" none \
@@ -110,6 +112,7 @@ jobs:
       - name: Diagnose local stack
         if: failure() && steps.stack.outcome == 'failure'
         run: |
+          sudo prlimit --pid $$ --nofile=1048576:1048576 || true
           scripts/mb-diagnose.sh \
             --upgradeable-program "$SOLPOKER_ID" "$PWD/target/deploy/solpoker.so" none \
             --upgradeable-program "$SMOKE_ID" "$PWD/target/deploy/smoke.so" none
