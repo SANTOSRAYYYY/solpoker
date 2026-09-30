@@ -28,6 +28,7 @@
 | `anchor deploy --provider.cluster devnet` | 两个程序部署成功，升级权限 = 部署者 `541kp…`，花费 1.8726 SOL（含 IDL 元数据账户） |
 | devnet-tee 冒烟（命令见 README） | 6 passing（2 分 47 秒）：`verifyTeeRpcIntegrity` 通过、`getAuthToken` 通过、委托记录的 validator = `MTEW…`、commit 后 L1 = ER 值、解除委托后 owner 回到 `smoke` 程序且 L1 可写 |
 | `node scripts/tee-latency.ts` | 完成，数据见下方「延迟」 |
+| GitHub Actions（[run 36685484158](https://github.com/SANTOSRAYYYY/solpoker/actions/runs/36685484158)，commit `9c9f64c`） | 全部步骤通过，7 passing；命中构建缓存时约 2 分钟。前两次运行失败的原因见遗留问题 14 |
 | CI 模拟（全新克隆，按 `ci.yml` 逐步执行：一次性钱包、`anchor build --ignore-keys`、预装程序、`anchor test --skip-local-validator --skip-build --skip-deploy`） | 7 passing；从零构建约 2 分 35 秒 |
 
 ### devnet 交易签名
