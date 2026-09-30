@@ -1,0 +1,21 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+.surfpool
+
+# --- secrets: never commit (devnet keys live in keys/, mainnet keys are managed elsewhere) ---
+keys/
+solpoker-key-*.json
+*-keypair.json
+id.json
+.env
+.env.*
+
+# --- local MagicBlock stack artefacts ---
+magicblock-test-storage/
+.mb-stack/
+*.log

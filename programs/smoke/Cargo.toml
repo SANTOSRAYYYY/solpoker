@@ -1,0 +1,30 @@
+[package]
+name = "smoke"
+version = "0.1.0"
+description = "Stage 0 spike: delegate / commit / undelegate a counter PDA against a MagicBlock ER. Throwaway; closed on devnet once the Stage 3 spikes no longer need it."
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "smoke"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+anchor-lang = "=1.0.2"
+ephemeral-rollups-sdk = { version = "=0.17.3", features = ["anchor", "access-control", "vrf"] }
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

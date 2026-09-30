@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  SOLANA_VERSION: "3.1.10"
+  ANCHOR_VERSION: "1.0.2"
+  ANCHOR_SHA256: "51c158a7b66db6d9802afe59cd73e6d78928791114b55567de5c0732e88770eb"
+  MB_VALIDATOR_VERSION: "0.14.10"
+  SOLPOKER_ID: "EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf"
+  SMOKE_ID: "BU1Ad3zgoJWrP11kZTzomMTJtebVGYdVweMjkQHtfQW4"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: yarn
+
+      - name: Rust toolchain (rust-toolchain.toml -> 1.89.0)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/solana
+            target
+          key: ${{ runner.os }}-sbf-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: Install Solana CLI ${{ env.SOLANA_VERSION }}
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI ${{ env.ANCHOR_VERSION }} (prebuilt, checksum pinned)
+        run: |
+          curl -sSfL -o /tmp/anchor "https://github.com/solana-foundation/anchor/releases/download/v${ANCHOR_VERSION}/anchor-${ANCHOR_VERSION}-x86_64-unknown-linux-gnu"
+          echo "${ANCHOR_SHA256}  /tmp/anchor" | sha256sum -c -
+          sudo install -m 755 /tmp/anchor /usr/local/bin/anchor
+
+      - name: Install local MagicBlock stack ${{ env.MB_VALIDATOR_VERSION }}
+        run: npm install -g "@magicblock-labs/ephemeral-validator@${MB_VALIDATOR_VERSION}"
+
+      - run: yarn install --frozen-lockfile
+
+      - name: Throwaway CI wallet (local validator only; devnet keys never enter CI)
+        run: |
+          mkdir -p keys
+          solana-keygen new --no-bip39-passphrase --silent -o keys/deployer.json
+          solana config set --url http://127.0.0.1:8899 --keypair keys/deployer.json
+
+      - run: cargo fmt --all -- --check
+
+      - run: anchor build
+
+      - run: scripts/check-pins.sh
+
+      - name: Start local MagicBlock stack with programs preloaded at their declared IDs
+        run: |
+          scripts/mb-stack.sh --reset \
+            --upgradeable-program "$SOLPOKER_ID" target/deploy/solpoker.so none \
+            --upgradeable-program "$SMOKE_ID" target/deploy/smoke.so none \
+            > mb-stack.log 2>&1 &
+          for i in $(seq 1 60); do scripts/mb-health.sh && exit 0; sleep 3; done
+          scripts/mb-health.sh
+
+      - run: anchor test --skip-local-validator --skip-build --skip-deploy
+
+      - if: failure()
+        run: tail -n 200 mb-stack.log || true

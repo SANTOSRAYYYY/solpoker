@@ -1,0 +1,23 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+smoke = "BU1Ad3zgoJWrP11kZTzomMTJtebVGYdVweMjkQHtfQW4"
+solpoker = "EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf"
+
+[programs.devnet]
+smoke = "BU1Ad3zgoJWrP11kZTzomMTJtebVGYdVweMjkQHtfQW4"
+solpoker = "EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf"
+
+[provider]
+cluster = "localnet"
+wallet = "keys/deployer.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+[hooks]
