@@ -28,6 +28,7 @@
 | `anchor deploy --provider.cluster devnet` | 两个程序部署成功，升级权限 = 部署者 `541kp…`，花费 1.8726 SOL（含 IDL 元数据账户） |
 | devnet-tee 冒烟（命令见 README） | 6 passing（2 分 47 秒）：`verifyTeeRpcIntegrity` 通过、`getAuthToken` 通过、委托记录的 validator = `MTEW…`、commit 后 L1 = ER 值、解除委托后 owner 回到 `smoke` 程序且 L1 可写 |
 | `node scripts/tee-latency.ts` | 完成，数据见下方「延迟」 |
+| CI 模拟（全新克隆，按 `ci.yml` 逐步执行：一次性钱包、`anchor build --ignore-keys`、预装程序、`anchor test --skip-local-validator --skip-build --skip-deploy`） | 7 passing；从零构建约 2 分 35 秒 |
 
 ### devnet 交易签名
 
@@ -81,3 +82,4 @@ ER 内的交易签名（例如 3 次 `increment`）只存在于 devnet-tee，需
 10. **commit 费用的计费粒度未确定**：本次每个 commit 只含 1 个账户。Stage 3 要实测「每手 commit Game + Seat×2 + HandProof」是按意图还是按账户收费，这会直接决定每手的平台成本。
 11. 模板遗留的 `pub use state::*;` 未使用告警，Stage 1 写入真实状态后自然消失。
 12. devnet 委托程序是否支持 `RequestUndelegation` / 超时回滚（逃生通道）仍待 Stage 3 验证，现状与开发前报告一致。
+13. **CI 注意事项（已修复，写在这里备查）**：(a) Anchor 1.0 的 `anchor build` 会比对 `target/deploy/*-keypair.json` 和 `declare_id!`，CI 没有程序密钥，所以要加 `--ignore-keys`，程序 ID 改由 `check-pins.sh` 校验 IDL 地址；(b) `scripts/mb-stack.sh` 在 `.mb-stack/` 目录里启动 validator，所以传给它的 `.so` 路径和 `solana config` 里的钱包路径都必须是绝对路径，否则程序加载失败、钱包拿不到创世余额。
