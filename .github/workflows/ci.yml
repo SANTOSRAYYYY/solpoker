@@ -28,7 +28,10 @@ jobs:
       - name: Rust toolchain (rust-toolchain.toml -> 1.89.0)
         run: rustup show active-toolchain || rustup toolchain install
 
-      - uses: actions/cache@v4
+      # restore + save (always) so a failing run still keeps the ~10 min SBF build cache
+      - name: Restore build cache
+        id: cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -66,9 +69,21 @@ jobs:
       # check; the IDL addresses still come from declare_id! and check-pins.sh asserts them.
       - run: anchor build --ignore-keys
 
+      - name: Save build cache
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/solana
+            target
+          key: ${{ runner.os }}-sbf-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
       - run: scripts/check-pins.sh
 
       - name: Start local MagicBlock stack with programs preloaded at their declared IDs
+        id: stack
         run: |
           # absolute paths: scripts/mb-stack.sh runs the stack from .mb-stack/
           scripts/mb-stack.sh --reset \
@@ -86,5 +101,15 @@ jobs:
 
       - run: anchor test --skip-local-validator --skip-build --skip-deploy
 
-      - if: failure()
+      - name: mb-stack log
+        if: failure()
         run: tail -n 200 mb-stack.log || true
+
+      # mb-stack hides child output unless a line contains error|failed|fatal|panic;
+      # rerun base + ER by hand so the real ER exit reason is visible.
+      - name: Diagnose local stack
+        if: failure() && steps.stack.outcome == 'failure'
+        run: |
+          scripts/mb-diagnose.sh \
+            --upgradeable-program "$SOLPOKER_ID" "$PWD/target/deploy/solpoker.so" none \
+            --upgradeable-program "$SMOKE_ID" "$PWD/target/deploy/smoke.so" none

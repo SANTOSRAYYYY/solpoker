@@ -19,3 +19,4 @@ id.json
 magicblock-test-storage/
 .mb-stack/
 *.log
+.mb-diag/
