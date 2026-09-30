@@ -639,12 +639,12 @@ Deck 和 PlayerHand 在含有秘密期间绝不 commit。它们委托时的 `com
 |---|---|
 | 请求方式 | 在 TEE ER 内用 `create_request_randomness_ix`（scoped identity）加 `invoke_signed_vrf` 发起请求 |
 | 队列 | devnet 和主网都用 ER 队列 `5hBR571x…`，本地用 `Sc9MJUng…`。已核实这个 ER 队列在 devnet 和主网上都委托给了「任意 validator」（委托记录中的 validator 为全 1 地址），所以 TEE ER 可以直接使用；主网的队列地址与 SDK 常量相同 |
-| 请求标识 | `caller_seed = sha256("solpoker/vrf/v1" ‖ table ‖ hand_id ‖ 目标 ‖ attempt)`，保证每次请求都不同。Stage 2 核实回调能否带回这个标识；如果能，回调时校验它等于当前挂起的请求 |
-| 回调 | 回调账户结构体加 `#[vrf_callback]`，由它校验签名者是 `PDA(["identity", 本程序 ID], VRF 程序)`。回调只把 randomness 写进 Deck，不洗牌、不抽牌 |
+| 请求标识 | `caller_seed = sha256("solpoker/vrf/v1" ‖ table ‖ hand_id ‖ 目标 ‖ attempt)`，保证每次请求都不同。源码已确认回调数据是 `判别符 ‖ randomness ‖ callback_args`，所以把 `(hand_id, 目标, attempt)` 放进 `callback_args`，回调时校验它等于当前挂起的请求；Stage 2 实测 |
+| 回调 | 回调账户结构体加 `#[vrf_callback]`，由它校验签名者是 `PDA(["identity", 本程序 ID], VRF 程序)`。回调只把 randomness 写进 Deck，不洗牌、不抽牌。**身份不对才报错；身份正确但请求已过期或不匹配时返回 Ok 并忽略**：回调报错会让整笔 fulfillment 回滚，请求会一直留在队列里，直到 120 秒 TTL |
 | 重试 | 10 秒内没有回调，任何人都可以调用 `retry_vrf`，用新的 attempt 重新请求同一条街，最多 3 次；迟到的旧回调直接忽略 |
 | 失败 | 3 次都失败，本手作废，全额退款 |
 | 延迟 | devnet 的实测数据作为上限；你指出主网会快很多，所以期限和重试参数都写在 Table 里。Stage 2 测 devnet 的 p50 和 p95，上线前再测一次 mainnet-tee |
-| 费用 | 每次 VRF 请求的费用未知，列入给 MagicBlock 的问题 |
+| 费用 | 源码：L1 队列每次 0.0005 SOL（高优先级 0.0008）；**ER 队列 `5hBR…` 永远免费**。队列暂停时请求报 `QueuePaused`；请求 120 秒后过期 |
 
 ---
 
