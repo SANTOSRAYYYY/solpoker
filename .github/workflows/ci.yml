@@ -57,7 +57,8 @@ jobs:
         run: |
           mkdir -p keys
           solana-keygen new --no-bip39-passphrase --silent -o keys/deployer.json
-          solana config set --url http://127.0.0.1:8899 --keypair keys/deployer.json
+          # absolute path: the validator runs from .mb-stack/ and funds the CLI keypair at genesis
+          solana config set --url http://127.0.0.1:8899 --keypair "$PWD/keys/deployer.json"
 
       - run: cargo fmt --all -- --check
 
@@ -76,6 +77,12 @@ jobs:
             > mb-stack.log 2>&1 &
           for i in $(seq 1 60); do scripts/mb-health.sh && exit 0; sleep 3; done
           scripts/mb-health.sh
+
+      - name: Fund the throwaway wallet on the local base layer
+        run: |
+          bal=$(solana balance --lamports | awk '{print $1}')
+          [ "${bal:-0}" -ge 100000000000 ] || solana airdrop 1000
+          solana balance
 
       - run: anchor test --skip-local-validator --skip-build --skip-deploy
 
