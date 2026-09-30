@@ -1,6 +1,6 @@
 # commit 费用与逃生通道：初步应对方案（Stage 1 配套文档二）
 
-> **状态**：初步方案。日期：2026-09-30。
+> **状态**：**已确认的初步方案**（2026-09-30）。E2（心跳 30 分钟、快照 2 小时未更新才允许逃生）和 E7（主网委托程序支持逃生通道是上线硬性前提）已确认；§2.5 的兜底选项等 MagicBlock 答复后再定。
 > **依据**：委托程序源码（`magicblock-labs/delegation-program`，tag v3.1.0，与 HEAD `fb6668c` 中的相关代码一致）、Stage 0 的 devnet 实测、本阶段用 `scripts/probe_dlp.py` 在 devnet 和主网上的探测结果。出处和原始数据见[调研笔记](../stage1-research-notes.md)。
 > 相关设计：[主设计文档](stage1-design.md) 的 D1（账本放进 Game）、D3（DelegPayer）、D4（commit 策略可配置）。
 
@@ -192,7 +192,7 @@ assert I-X
 
 **门槛**：主网委托程序通过 `probe_dlp.py` 的探测，并且 §2.4 的用例在 devnet 上通过。
 
-如果 MagicBlock 在目标上线日期之前没有升级，有以下几种选择，需要你决定：
+如果 MagicBlock 在目标上线日期之前没有升级，有以下几种选择，届时再由你决定：
 
 | 方案 | 做法 | 代价 |
 |---|---|---|

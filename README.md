@@ -32,6 +32,8 @@ Solana 上的隐私德州扑克（v1 为单挑现金桌）。对局运行在 Mag
 | `scripts/mb-stack.sh`, `scripts/mb-health.sh` | start / health-check the local MagicBlock stack |
 | `scripts/tee-latency.ts` | latency breakdown against devnet-tee |
 | `scripts/check-pins.sh` | version pin checks |
+| `scripts/probe_dlp.py` | does a cluster's delegation program support the escape hatch (simulation only) |
+| `scripts/probe-er-feepayer.ts` | which fee payers (funded / zero / rent-exempt minimum) the ER accepts |
 | `docs/design/` | Stage 1 design (main, AI tables and x402, fees and escape hatch), decisions, pre-dev review, context block |
 | `docs/stage*-notes.md` | verified external facts with sources |
 

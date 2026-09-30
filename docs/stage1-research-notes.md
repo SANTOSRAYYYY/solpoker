@@ -50,3 +50,23 @@
 
 ## SDK 0.17.3 delegate CPI and PDA payers
 - `sdk/src/cpi.rs::delegate_account_inner`: creates the buffer with `accounts.payer`, then `invoke_signed(..., pda_signer_seeds)` with ONLY the delegated PDA's seeds. A program-PDA payer (system-owned PDA) therefore needs a custom CPI that also passes the payer's seeds (build with magicblock-delegation-program-api 3.1.0 builders). Stage 3 spike.
+
+## ER fee payer probe (2026-09-30, scripts/probe-er-feepayer.ts)
+Smoke `increment` (authority = deployer co-signs) sent with different fee payers, the way a session key would pay:
+
+| case | devnet-tee (ER 0.16.0) | local stack (ER 0.14.10 via QFS 6699) |
+|---|---|---|
+| A deployer (funded) | ok, fee 0 | ok, fee 0 |
+| B fresh keypair, 0 lamports | **ok**, fee 0, `getTransaction` shows it as fee payer | **ok**, fee 0 |
+| C fresh keypair with only the rent-exempt minimum (devnet 650,240 / local 890,880) | ok twice, balance unchanged | ok twice, balance unchanged |
+
+- Conclusion today: both ER versions accept a zero-balance fee payer and charge 0 for ER transactions. The user reports that the ER does not accept zero-balance fee payers; we design conservatively (fund session keys, amount is a parameter) until MagicBlock confirms mainnet behaviour.
+- devnet signatures: A `4HsmzeUQrdvAgQUwzag995AtCrdByFJQdjL2aYYff8YAke43JuobyLzVRJfcRDPDRQDPfX25BTNFTmBWUHVJw7pJ`, B `3wDQZk9jFnuWvkQsMxE9A7w6eG2YWpSQzceWZLeyUt8Kz6fprBU4ch1n7TzphAnFgXYxHzfBt1DfSnARrKt9eEcY`, C `621m5FG9KVvbzn2hbk63TH9by5J5YXjMmW4qVedPR7Ns8MCfAepzjFRmtunyyLS9b9si4r1Z4M18vJ14kBu9Xhb3`.
+- Agave rule found on the way: the fee payer must stay rent-exempt after the fee is deducted (or end at exactly 0 through a transfer paid by someone else). An account funded with only the rent-exempt minimum cannot pay its own L1 fee; 0.001 SOL (1,000,000 lamports) leaves room for self-sweeping on both rent levels.
+- Rent-exempt minimum for a 0-byte account: devnet/mainnet 650,240 lamports; local test validator (Agave 3.1.10) 890,880.
+- The first devnet run lost 650,240 lamports (the throwaway key was not persisted and the sweep was wrong); fixed in the script, local re-run swept to 0.
+
+## TEE endpoints (verified 2026-09-30 17:58 +08, JSON-RPC getIdentity / getVersion)
+- https://mainnet-tee.magicblock.app -> identity MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo; magicblock-core 0.16.0, git e66d914, solana-core 4.0.0
+- https://devnet-tee.magicblock.app  -> identity MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo; magicblock-core 0.16.0, git e66d914, solana-core 4.0.0
+- Same validator identity and build on both clusters, so ProgramConfig.tee_validator is the same value on devnet and mainnet.

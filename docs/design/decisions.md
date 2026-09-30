@@ -468,3 +468,46 @@ x402 是 HTTP 原生的付款协议：服务器返回 `402 Payment Required`，�
 | D5 | x402 以原子模式入座 | §9.4 的两步入座与 `credit_x402_deposit` |
 | D6 | 揭示盐的交易只写本人的 PlayerHand | 发牌协议第 2 步 |
 
+
+---
+
+## 11. 第五轮（2026-09-30）：设计定稿、ER 付款人实测、混合桌与 MCP 审查
+
+### 11.1 已确认
+
+- **D1–D6、E1–E7、X1–X6 全部按推荐采纳。** [stage1-design.md](stage1-design.md) 定稿，取代本文中对应的旧条目：§2 里「Seat 在入座时委托」「TopUpReceipt」「RakeAccount 划转」，§9.4 的两步入座与 `credit_x402_deposit`，以及独立的 Session PDA。
+- 项目指令已按上下文块 v4 更新。
+
+### 11.2 ER 手续费付款人：你的说法与实测不一致
+
+你的说法：ER 不接受余额为 0 的手续费付款人。实测（`scripts/probe-er-feepayer.ts`，smoke `increment`，authority 由部署者签名，只替换手续费付款人）：
+
+| 付款人 | devnet-tee（ER 0.16.0） | 本地栈（ER 0.14.10） |
+|---|---|---|
+| 部署者（有余额） | 成功，手续费 0 | 成功，手续费 0 |
+| 新密钥，0 lamports | **成功**，手续费 0；`getTransaction` 显示付款人就是它 | **成功**，手续费 0 |
+| 新密钥，只有免租最低额 | 连续两次成功，余额不变 | 连续两次成功，余额不变 |
+
+devnet 签名：零余额付款人 `3wDQZk9jFnuWvkQsMxE9A7w6eG2YWpSQzceWZLeyUt8Kz6fprBU4ch1n7TzphAnFgXYxHzfBt1DfSnARrKt9eEcY`；对照组 `4HsmzeUQrdvAgQUwzag995AtCrdByFJQdjL2aYYff8YAke43JuobyLzVRJfcRDPDRQDPfX25BTNFTmBWUHVJw7pJ`。
+
+**处理**：仍按你的说法做保守设计（X10）：session key 预充 0.001 SOL，金额可配置。原因是主网 ER 的收费规则还不知道，这点成本也可以忽略。这个问题已列进给 MagicBlock 的问题清单；主网上线前再跑一次探测脚本。
+
+顺带发现的 Agave 规则：手续费付款人扣完手续费后必须仍然免租。只放免租最低额（devnet 和主网 650,240 lamports，本地 890,880）的账户没法自己付手续费把钱转走，所以取 0.001 SOL。第一次在 devnet 上跑探测时，一个临时密钥里的 650,240 lamports 没能收回，脚本已修正。
+
+### 11.3 混合桌与本地 MCP 的详细审查：新增 X7–X13（按推荐默认执行）
+
+详见 [stage1-agents-x402.md](stage1-agents-x402.md) §0.1 与 §11.2。
+
+| # | 结论 |
+|---|---|
+| X7 | `AgentProfile.payout` 默认为主人；入座时固定到 `SeatLedger.payout`，`cash_out` 只付给它 |
+| X8 | `act` 带 `hand_id` 和 `action_seq`，对不上以 `StaleAction` 拒绝（真人和 agent 共用，Stage 5） |
+| X9 | 主人可以暂停和恢复 agent（`Paused` 状态） |
+| X10 | session key 预充 0.001 SOL（真人在 `sit_down` 交易里自己转；x402 agent 由网关另转，每 7 天最多一次） |
+| X11 | 真人第一次坐混合桌前必须确认对手是 AI；展示 agent 的公开资料和统计 |
+| X12 | 每手开始前复查两个座位的资格 |
+| X13 | MCP 必须运行在 LLM 访问不到的用户或容器里；主网缺少限额文件就拒绝启动 |
+
+### 11.4 下一步：Stage 2（TEE 内 VRF）
+
+范围按路线图 S2 和主设计文档 §9、§17：在 TEE ER 内请求 VRF 并回调成功；回调身份校验；逐街延迟 p50 和 p95；超时重试与作废；迟到的旧回调被忽略；回调能否带回请求标识；顺手处理 E6（`"type": "module"`）。按项目纪律，写代码前先复述任务和验收标准，等你确认。

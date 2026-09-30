@@ -1,9 +1,9 @@
-# solpoker Stage 1 设计文档 v1（草案）
+# solpoker Stage 1 设计文档 v1（定稿）
 
-> **状态**：草案，§1 的 6 项修订需要你确认。日期：2026-09-30。
+> **状态**：**定稿 v1**。§1 的 D1–D6 和 §18.1 的 E1–E7 已于 2026-09-30 确认；配套文档一审查后新增的 X7–X13 也已同步到本文。
 > **依据**：[决策记录](decisions.md)（§8、§9 为最新）、[开发前核实报告](pre-dev-review.md)、[Stage 0 CHANGELOG](../../CHANGELOG.md)、[Stage 1 调研笔记](../stage1-research-notes.md)（本阶段核实的外部事实与出处）。
 > **配套文档**：[AI 桌与 x402 架构](stage1-agents-x402.md)、[commit 费用与逃生通道：初步应对方案](stage1-fees-escape.md)。
-> 本文与决策记录冲突时，**在你确认 §1 之前以决策记录为准**；确认之后，本文取代决策记录中对应的条目，并同步更新项目指令。
+> 本文已取代决策记录中对应的条目（见决策记录 §11），项目指令已同步更新。
 
 ---
 
@@ -22,11 +22,11 @@
 
 ---
 
-## 1. 本阶段提出的设计修订（需要你确认）
+## 1. 本阶段的设计修订（已确认，2026-09-30）
 
-写状态机和资金流时，发现原方案有一个正确性问题，另外有几处可以明显简化。每项都给出了推荐方案，可以只回复「全部按推荐」。
+写状态机和资金流时，发现原方案有一个正确性问题，另外有几处可以明显简化。以下六项已全部按推荐采纳。
 
-| # | 修订 | 原决定 | 推荐 | 主要理由 |
+| # | 修订 | 原决定 | 结论 | 主要理由 |
 |---|---|---|---|---|
 | **D1** | 座位资金账本放在 **Game** 里，Seat 不再委托 | Seat 在入座时委托、离桌时解除委托；每手 commit Game、Seat×2、HandProof | 采纳 | 修复多账户 commit 不原子带来的对账风险；省掉每位玩家每次入座的委托费用；删去 RakeAccount 流程 |
 | **D2** | 会话密钥记在 L1 的 **SeatLedger** 里，不再单独建 Session PDA | 程序内自建 Session PDA（owner、session_pubkey、expires_at ≤ 7 天） | 采纳 | 不需要额外租金，x402 agent 没有 SOL 也能入座；授权范围自动限定在这个座位 |
@@ -157,7 +157,7 @@ flowchart LR
 
 **每张桌合计**：账户租金约 0.052 SOL，加上 5 个委托账户的委托记录与元数据押金 0.0114 SOL（解除委托时退回，扣除费用），共约 **0.063 SOL**。真人桌 9 张加 AI 桌与混合桌 6 张，共 15 张，约 **0.95 SOL**。HandProof 占每张桌租金的一半以上。
 
-### 3.2 字段定义（草案）
+### 3.2 字段定义（字段集已定，大小与顺序在 Stage 5–6 定稿）
 
 下面是 Rust 风格的伪代码，只列设计上关心的字段。所有金额都是 u64 的 USDC 基础单位，所有时间都是 `Clock::unix_timestamp`（秒）。
 
@@ -201,6 +201,7 @@ pub struct SeatLedger {             // L1 半边的座位账本（D1），永不
     pub agent_owner: Pubkey,      // kind = Agent 时等于 AgentProfile.owner
     pub session_key: Pubkey,      // D2
     pub session_expires_at: i64,  // ≤ 入座时刻 + 7 天
+    pub payout: Pubkey,           // X7：cash_out 只付给 ATA(payout, mint)；入座时固定（真人为本人，agent 按 AgentProfile.payout）
     pub deposited_total: u64,     // 入座和补码的累计（跨所有占用者，只增）
     pub paid_total: u64,          // cash_out 的累计（只增）
     pub bump: u8,
@@ -216,6 +217,7 @@ pub struct Game {                   // 公开
     pub pot: u64,                 // 本手所有投入（含 ante）
     pub current_bet: u64, pub last_full_raise: u64,
     pub to_act: u8, pub action_deadline: i64, pub phase_deadline: i64,
+    pub action_seq: u32,          // X8：本手内每个改变局面的事件 +1，每手开始归零；act 必须带上
     pub board: [u8; 5], pub board_len: u8, pub board_src: [u8; 5], // 每张公共牌来自哪个 VRF
     pub vrf: VrfSlot,             // { target: Street|Runout, attempt, requested_at, pending }
     pub transcript: [u8; 32],     // 事件流链式哈希
@@ -269,8 +271,9 @@ pub struct ProofEntry {
 
 pub struct AgentProfile {           // L1，主人与 agent 双签注册
     pub agent: Pubkey, pub owner: Pubkey,
+    pub payout: PayoutTo,         // X7：Owner（默认）| Agent；只有主人能改，只影响之后的入座
     pub name: [u8; 32], pub meta_uri: [u8; 96],
-    pub status: AgentStatus,      // Active | Revoked | Banned
+    pub status: AgentStatus,      // Active | Paused（X9）| Revoked | Banned
     pub registered_at: i64, pub bump: u8,
 }
 ```
@@ -570,7 +573,7 @@ index = v mod n；从有序牌堆中取出第 index 张并删除
 - `draw_no` 在一手内连续编号：底牌 0–3（从 SB 开始，每人一张，共两轮：SB、BB、SB、BB），翻牌 4–6，转牌 7，河牌 8。
 - **每张牌都绑定最新的事件流**：每抽一张就追加一条事件（底牌只记座位和 draw_no，不记牌面），所以下一张牌用到的 `transcript_digest` 已经包含了上一张。
 
-### 8.5 事件流与规范编码（草案）
+### 8.5 事件流与规范编码（设计级，字节级规范在 Stage 4 定稿）
 
 ```text
 transcript_0     = sha256("solpoker/transcript/v1" ‖ program_id ‖ table ‖ hand_id)
@@ -668,7 +671,7 @@ Deck 和 PlayerHand 在含有秘密期间绝不 commit。它们委托时的 `com
 3. ER `init_permissions`：用 `CreateEphemeralPermissionCpi` 创建 Deck（私有，members = []）和 PlayerHand×2（私有，members = []）的权限账户。
 4. 等权限生效，牌桌进入 Idle。
 
-`scripts/deploy-tables` 一次创建 9 张真人桌（三档各 3 张）。AI 桌和混合桌的数量等 Stage 8 确认（默认每档各 1 张，共 6 张，见配套文档一）。空桌也不关。
+`scripts/deploy-tables` 一次创建 9 张真人桌（三档各 3 张）。AI 桌和混合桌每档各 1 张，共 6 张（Q15 已定），Stage 8 用同一个脚本创建。空桌也不关。
 
 ### 11.2 换人时的底牌权限
 
@@ -710,6 +713,7 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 | 兜底 | 所有 ER 动作指令都接受占用者钱包直接签名 |
 | 读底牌 | session key 不能读 PlayerHand。读权限绑定的是钱包公钥（agent 就是 agent 公钥），需要钱包 `signMessage` 一次换取 token |
 | 撤销的时效 | ER 读的是 SeatLedger 的克隆，撤销在克隆刷新之后生效（秒级）。session key 只能签对局动作，碰不到资金，这个延迟可以接受 |
+| 手续费付款人 | session key 自己付 ER 交易的手续费。按用户的说法 ER 不接受余额为 0 的付款人，所以 session key 预充 0.001 SOL（X10）：真人和原生路径 agent 在 `sit_down` 交易里自己转；x402 agent 由网关另转，每 7 天最多一次；离桌或到期时自己把余额转回。**实测**：今天 devnet-tee（ER 0.16.0）和本地栈（ER 0.14.10）都接受零余额付款人，ER 内交易费为 0（调研笔记）。金额和阈值是前端与网关的配置，不写进程序 |
 
 每条 ER 动作指令都以只读方式带上本座位的 SeatLedger，用来校验签名者是占用者本人，或者是未过期的 session key。
 
@@ -739,13 +743,14 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 | `init_config` / `update_config` | A | 设置 admin、treasury、tee_validator、gateway、flags | — |
 | `create_table` | A | 创建一张桌的全部账户（§11.1） | 金库余额为 0 |
 | `delegate_table` | A | 由 DelegPayer 付租金，委托 5 个常驻账户给 MTEW… | — |
-| `register_agent` | agent + 主人双签 | 创建 AgentProfile | — |
-| `update_agent` / `revoke_agent` | 主人 | 修改资料或注销 | — |
+| `register_agent` | agent + 主人双签 | 创建 AgentProfile；主网要求主人在 `OwnerAllowlist` 内 | — |
+| `update_agent` / `set_payout` / `revoke_agent` | 主人 | 修改资料、修改 payout（只影响之后的入座）或永久注销 | — |
+| `pause_agent` / `resume_agent` | 主人 | Active ↔ Paused（X9） | — |
 | `set_agent_status` | A | 封禁或解封（合规需要） | — |
-| `sit_down` | W（agent 本人） | 转账进金库，登记占用，设置 session；不创建账户 | I-L1 |
+| `sit_down` | W（agent 本人） | 转账进金库，登记占用，设置 session，固定 payout（X7）；不创建账户 | I-L1 |
 | `top_up` | W | 转账进金库，`deposited_total += x` | I-L1 |
 | `set_session` / `revoke_session` | W | 设置或撤销 session key | — |
-| `cash_out` | P | 读 Game 快照，付款给占用者，条件满足时释放座位 | I-L1、I-B |
+| `cash_out` | P | 读 Game 快照，付款给 `ATA(SeatLedger.payout, mint)`，条件满足时释放座位 | I-L1、I-B |
 | `sweep_rake` | P | 读 Game 快照，把 rake 划到 treasury | I-L1、I-B |
 | `audit_table` | P（只读） | 检查 I-X，失败时报错 | I-X |
 | `request_escape` | P（需满足条件）/ A | 逃生第一步，只针对 Game 和 HandProof（配套文档二 §2） | — |
@@ -763,10 +768,10 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 | `apply_deposits` | P | 在手与手之间计入补码，超额部分记入 owed | I-ER |
 | `commit_salt` | O | 提交本手或下一手的盐承诺 | — |
 | `reveal_salt` | O | 只写本人 PlayerHand（D6） | — |
-| `advance` | P | 确定性推进：定庄位、投强制注、发牌、结算、作废 | I-ER |
+| `advance` | P | 确定性推进：定庄位、投强制注、发牌、结算、作废。开新手前复查两个座位的资格（X12）：真人座位上的钱包不能有 AgentProfile，agent 座位上的 AgentProfile 必须是 Active，不满足的一方站起 | I-ER |
 | `vrf_callback` | VRF 身份 | 只存 randomness | — |
 | `retry_vrf` | P（超时后） | 重新请求当前这条街的 VRF | — |
-| `act` | O | fold、check、call、bet、raise、all-in；结束本街时直接请求下一个 VRF | I-ER |
+| `act` | O | 参数带 `hand_id` 和 `action_seq`，对不上以 `StaleAction` 拒绝（X8）；fold、check、call、bet、raise、all-in；结束本街时直接请求下一个 VRF | I-ER |
 | `claim_timeout` | P（超时后） | 能 check 就 check，否则 fold；记超时次数 | I-ER |
 | `stand_up` | O | 站起；手牌进行中视为 fold；立即安排 commit | I-ER |
 | `heartbeat` | P | 满足条件时安排一次 commit | — |
@@ -787,7 +792,7 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 
 | 性质 | 由什么保证 | 用户怎么验证 | 仍然需要信任的部分 |
 |---|---|---|---|
-| 钱只能付给本人 | 程序钉死了收款地址（占用者的 ATA）；`cash_out` 任何人都能触发 | 读开源代码、核对可验证构建、看 L1 上的余额 | 程序升级权限（主网交给多签或锁定升级） |
+| 钱只能付给本人 | 程序钉死了收款地址（入座时固定的 payout 的 ATA：真人为本人，agent 默认为主人）；`cash_out` 任何人都能触发 | 读开源代码、核对可验证构建、看 L1 上的余额 | 程序升级权限（主网交给多签或锁定升级） |
 | 每张桌全额有担保 | I-X 不变量；commit 只在 pot = 0 时发生 | 任何人都可以调用 `audit_table` | 同上 |
 | 牌局中底牌保密 | TEE 加 PER 权限层 | attestation（目前只能证明是真的 TDX 机器） | MagicBlock 的 TEE 实现；度量值尚未公布 |
 | 发牌无法被操纵 | VRF 加双方各自的盐 | 按 HandProof 复算每一张牌 | VRF 诚实，或者至少有一名玩家诚实地生成了盐 |
@@ -814,11 +819,11 @@ pokerable 在其信任页上称 MagicBlock 只保留约一周的执行记录，�
 
 ---
 
-## 18. 待确认问题（汇总）
+## 18. 决策状态与外部问题
 
-### 18.1 需要你决定
+### 18.1 已确认（2026-09-30）
 
-| # | 问题 | 推荐 |
+| # | 问题 | 结论 |
 |---|---|---|
 | D1–D6 | §1 的六项修订 | 全部采纳 |
 | E1 | §6.3 的超时默认值：承诺 10 秒、揭示 10 秒、VRF 10 秒 × 3 次、行动 30 秒、手间 2 秒 | 采纳，Stage 2 按实测调整 |
@@ -834,7 +839,7 @@ pokerable 在其信任页上称 MagicBlock 只保留约一周的执行记录，�
 1. 委托程序 v3.1.0（`RequestUndelegation` 和超时回滚）在 devnet 和主网的部署计划。附上我们的探测证据：两条链都返回 `InvalidInstructionData`。
 2. 一次 commit 多个账户时，L1 上是否原子？validator 会不会把它们拆成多笔交易？
 3. 主网 ER 与 TEE ER 的交易费和 commit 收费是否会调整？commit 有没有频率限制？
-4. ER 能否接受 L1 上余额为 0 的手续费付款人？（x402 agent 可能没有 SOL）
+4. 主网 ER 是否接受 L1 上余额为 0 的手续费付款人，是否收 ER 交易费、从哪里扣？（devnet-tee 和本地栈今天实测都接受，交易费为 0；我们暂按「不接受」设计，给 session key 预充 0.001 SOL）
 5. ER 对 L1 只读克隆的刷新机制和延迟上限。
 6. `UpdateEphemeralPermission` 在 ER 内何时生效？更新之后，旧成员持有的 token 是否立即失效？
 7. 交易级可见性：只触及私有账户的交易，其他人能否用 `getTransaction` 读到指令数据和日志？

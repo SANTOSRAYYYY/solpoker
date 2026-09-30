@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## Stage 1 定稿（2026-09-30）
+
+### 做了什么
+
+- **D1–D6、E1–E7、X1–X6 全部确认**：[`stage1-design.md`](docs/design/stage1-design.md) 和 [`stage1-agents-x402.md`](docs/design/stage1-agents-x402.md) 改为定稿 v1，[`stage1-fees-escape.md`](docs/design/stage1-fees-escape.md) 改为已确认的初步方案；决策记录新增 §11。
+- **混合桌、本地 MCP 打牌和资金安全的详细审查**（配套文档一重写）：混合桌细则、MCP 进程结构（执行器与决策分开）、每手时序与时间预算、过期动作防护、崩溃恢复、工具清单、五层资金防线、限额的精确定义、签名前校验、威胁模型。新增 X7–X13，已按推荐默认执行，并同步到主设计文档：`SeatLedger.payout`、`Game.action_seq`、`AgentProfile.payout` 与 `Paused` 状态、`act` 带 `hand_id` 和 `action_seq`、`advance` 每手复查座位资格、session key 预充。
+- **ER 手续费付款人实测**（`scripts/probe-er-feepayer.ts`）：你说 ER 不接受余额为 0 的付款人；实测今天 devnet-tee（ER 0.16.0）和本地栈（ER 0.14.10）都接受，ER 内交易费为 0。设计仍按保守方案：session key 预充 0.001 SOL（X10），金额可配置，主网上线前再测。
+- **核实 mainnet-tee**：`getIdentity` 返回 MTEW…，版本与 devnet-tee 相同（magicblock-core 0.16.0，git e66d914）。
+- **项目指令更新为上下文块 v4**（[`docs/design/context-block-v4.md`](docs/design/context-block-v4.md)），项目文件同步了三份 Stage 1 文档和决策记录。
+
+### 验收命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `node scripts/probe-er-feepayer.ts`（devnet-tee） | 有余额、0 lamports、只有免租最低额三种付款人全部成功，手续费 0，余额不变 |
+| 同上，`PROVIDER_ENDPOINT=http://127.0.0.1:8899 EPHEMERAL_PROVIDER_ENDPOINT=http://127.0.0.1:6699` | 结果相同；回收交易把临时账户清零 |
+| `curl … getIdentity` 查询 mainnet-tee 与 devnet-tee | 都是 `MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo` |
+| GitHub Actions | 见本次推送的运行结果 |
+
+### devnet 交易签名（付款人探测，smoke 程序计数器）
+
+| 步骤 | 签名 |
+| --- | --- |
+| 委托计数器给 MTEW… | `3kjBxb7WzgCpsQpdy8KWn36EXcewss4JHdgk83RkCn4yyyU9wyGgK25iF5xg6pK7XAadHzX5iNwkQbJYoXGAMMCb` |
+| A 部署者付款（ER） | `4HsmzeUQrdvAgQUwzag995AtCrdByFJQdjL2aYYff8YAke43JuobyLzVRJfcRDPDRQDPfX25BTNFTmBWUHVJw7pJ` |
+| B 零余额付款人（ER） | `3wDQZk9jFnuWvkQsMxE9A7w6eG2YWpSQzceWZLeyUt8Kz6fprBU4ch1n7TzphAnFgXYxHzfBt1DfSnARrKt9eEcY` |
+| 给 C 转入免租最低额（L1） | `ozbT8Z2B1z8o69AHcDgWQiAF6EMPFEUnw6dwNqxox6WWDwv2cesPgb7zhfhXmyXsUgLVH8XVq2BphQHbycjBek8` |
+| C 免租最低额付款人（ER，两次） | `621m5FG9KVvbzn2hbk63TH9by5J5YXjMmW4qVedPR7Ns8MCfAepzjFRmtunyyLS9b9si4r1Z4M18vJ14kBu9Xhb3`、`2ttCRLHKte9i3VAkWaPiFZ8pCBRrnwHW4ST8shNe5myK3kD5YwNq1eatj8RMd2knKXYkmUPzjKJvDKtWgACenCef` |
+| commit 并解除委托 | `VvjcCNeaVLVELDdX8S3FgAgQAnSy4Uen9ShEMqRc9MPq7twALiFVQNV93EJ7KASmTNyo4R7KCVdyQmRfQ6ULAFP` |
+
+### 遗留问题
+
+1. devnet 上临时账户 `7g2ushdgbcHjAuRaQQCwGewUwyaKw8tX6RaVFXZqRGhY` 里的 650,240 lamports 没能收回：手续费付款人扣费后必须仍然免租，所以只有最低额的账户不能自己付费转出。脚本已改为由部署者代付手续费，本地复测清零。
+2. 需要 MagicBlock 回答的问题见主设计文档 §18.2 与配套文档二 §2.6，新增一条：主网 ER 是否接受零余额付款人、是否收 ER 交易费。
+3. Stage 0 遗留问题 6（`"type": "module"`）在 Stage 2 处理。
+
 ## Stage 1 — 设计文档（2026-09-30）
 
 ### 做了什么
