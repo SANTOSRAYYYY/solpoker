@@ -4,7 +4,9 @@ Private heads-up No-Limit Hold'em on Solana. Hands run inside a MagicBlock **Pri
 
 Solana 上的隐私德州扑克（v1 为单挑现金桌）。对局运行在 MagicBlock 私有 Ephemeral Rollup（Intel TDX）里，USDC 只留在 L1 的每桌托管账户中。
 
-> Status: **Stage 0** (toolchain, repo skeleton, delegation smoke test on local stack and devnet-tee). See [CHANGELOG.md](CHANGELOG.md). Design documents live in [docs/design/](docs/design/).
+> Status: **Stage 1** (design documents, awaiting sign-off). Stage 0 delivered the pinned toolchain, repo skeleton and delegation smoke test on the local stack and devnet-tee. See [CHANGELOG.md](CHANGELOG.md).
+>
+> Design: [Stage 1 design](docs/design/stage1-design.md) · [AI tables and x402](docs/design/stage1-agents-x402.md) · [commit fees and escape hatch](docs/design/stage1-fees-escape.md) · [decisions](docs/design/decisions.md) · [pre-dev review](docs/design/pre-dev-review.md)
 
 ## Pinned toolchain
 
@@ -30,7 +32,8 @@ Solana 上的隐私德州扑克（v1 为单挑现金桌）。对局运行在 Mag
 | `scripts/mb-stack.sh`, `scripts/mb-health.sh` | start / health-check the local MagicBlock stack |
 | `scripts/tee-latency.ts` | latency breakdown against devnet-tee |
 | `scripts/check-pins.sh` | version pin checks |
-| `docs/design/` | design review, decisions, context block |
+| `docs/design/` | Stage 1 design (main, AI tables and x402, fees and escape hatch), decisions, pre-dev review, context block |
+| `docs/stage*-notes.md` | verified external facts with sources |
 
 ## Local test
 

@@ -452,3 +452,19 @@ x402 是 HTTP 原生的付款协议：服务器返回 `402 Payment Required`，�
 | Q19 | AI 桌和混合桌的 rake | 与真人桌相同 |
 | Q20 | agent 注册的门槛 | devnet 上任何人都能注册；主网按你们牌照的 KYC/AML 要求，给主人钱包加白名单 |
 | Q21 | 真人桌能否挡住 bot | 做不到密码学保证。默认靠用户协议加后续的行为检测，这一点需要你确认可以接受 |
+
+---
+
+## 10. Stage 1 设计文档（2026-09-30）
+
+完整设计见 [stage1-design.md](stage1-design.md)，另有配套文档 [AI 桌与 x402](stage1-agents-x402.md) 和 [commit 费用与逃生通道](stage1-fees-escape.md)。其中 6 项修订（D1–D6）会改动本文 §2 和 §9 中已确认的条目，**在你确认之前，仍以本文为准**：
+
+| # | 修订 | 改动的条目 |
+|---|---|---|
+| D1 | 座位账本放进 Game，Seat 不再委托 | §2 托管模型、补码同步、离桌、rake 划转 |
+| D2 | 会话密钥记在 SeatLedger 里 | Session PDA |
+| D3 | 委托租金由程序 PDA 支付 | 常驻桌委托、逃生通道 |
+| D4 | commit 策略可配置 | 每手 commit |
+| D5 | x402 以原子模式入座 | §9.4 的两步入座与 `credit_x402_deposit` |
+| D6 | 揭示盐的交易只写本人的 PlayerHand | 发牌协议第 2 步 |
+

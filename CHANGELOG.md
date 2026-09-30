@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## Stage 1 — 设计文档（2026-09-30）
+
+### 做了什么
+
+- **主设计文档** [`docs/design/stage1-design.md`](docs/design/stage1-design.md)：账户与字段、权限矩阵、资金流与守恒（6 个只增不减的累计计数器和 I-ER、I-L1、I-X 三条不变量）、手牌状态机与超时、heads-up 规则引擎与 rake 伪代码、发牌协议（设计级）、VRF 集成、commit 策略、常驻桌与换人、维护模式、会话密钥、客户端连接、指令清单、日志纪律、信任模型、测试计划。附录 A 逐条对照核实报告 §3 和路线图 S1。
+- **提出 6 项设计修订，等你确认**：D1 座位账本放进 Game，Seat 不再委托（修复多账户 commit 不原子带来的对账风险）；D2 会话密钥记在 SeatLedger 里；D3 委托租金由程序 PDA `DelegPayer` 支付；D4 commit 策略可配置；D5 x402 以原子模式入座；D6 揭示盐的交易只写本人的 PlayerHand。
+- **AI 桌与 x402 架构** [`docs/design/stage1-agents-x402.md`](docs/design/stage1-agents-x402.md)：AgentProfile 与双签注册、三类牌桌的入座规则与同主人规则、组件与密钥权限表、x402 原子入座（付款交易本身就是 `sit_down`，走规范的 Path 2，由自建 facilitator 把 solpoker 程序加入白名单）、facilitator 校验清单与攻击测试、本地 MCP 的工具与安全措施、反作弊、Stage 8 分解。
+- **commit 费用与逃生通道的初步方案** [`docs/design/stage1-fees-escape.md`](docs/design/stage1-fees-escape.md)：从委托程序源码核实了计费方式，并用 Stage 0 实测数据对上了账；给出成本模型、风险与调节手段；逃生通道的取证结果、设计（只对 Game 和 HandProof 发起、Deck 和 PlayerHand 按 epoch 换新、快照陈旧门槛加心跳）、测试计划和主网门槛。
+- **调研笔记** [`docs/stage1-research-notes.md`](docs/stage1-research-notes.md)：本阶段核实的全部外部事实及出处。
+- **取证脚本** `scripts/probe_dlp.py`：用模拟交易判断某条链上的委托程序是否支持逃生通道指令，不签名、不发送。
+
+### 验收命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python3 scripts/probe_dlp.py https://api.devnet.solana.com <付款人>` | solana-core 4.3.0；判别符 26、27 与不存在的 250 一样返回 `InvalidInstructionData`；已知的 3 返回 `NotEnoughAccountKeys` → **devnet 不支持逃生通道** |
+| `python3 scripts/probe_dlp.py https://api.mainnet-beta.solana.com <付款人>` | 结果相同 → **主网不支持** |
+| 查询 VRF ER 队列 `5hBR571x…` 的委托记录（devnet 与主网） | 两条链上都委托给了「任意 validator」（全 1 地址），TEE ER 可以直接使用；主网的队列地址与 SDK 常量相同 |
+| 三份文档中的 6 张 Mermaid 图用 `manus-render-diagram` 渲染 | 全部成功 |
+| GitHub Actions | 见本次推送的运行结果 |
+
+### devnet 交易签名
+
+本阶段只写文档，没有发送交易。探测和查询都是只读的模拟调用或账户查询。
+
+### 遗留问题与待确认
+
+1. 主设计文档 §18.1：D1–D6、E1–E7 需要你确认。确认之后同步更新项目指令（附录 B 列出了要改的条目），再进入 Stage 2。
+2. 配套文档一 §10：X1–X6（x402 原子模式、混合桌固定座位、主人白名单、封禁的处理、agent 的 gas 兜底、并发座位上限）。
+3. 主设计文档 §18.2 和配套文档二 §2.6：需要 MagicBlock 回答的问题共 14 条，最关键的是委托程序 v3.1.0 的部署时间表、多账户 commit 是否原子，以及主网的收费规则。
+4. Stage 0 遗留问题 6（`"type": "module"`）计划在 Stage 2 顺手处理；遗留问题 9（smoke 程序占用 1.52 SOL 租金）在 Stage 3 spike 结束后关闭。
+
 ## Stage 0 — 工具链、仓库骨架与委托冒烟（2026-09-30）
 
 ### 做了什么
