@@ -61,7 +61,9 @@ jobs:
 
       - run: cargo fmt --all -- --check
 
-      - run: anchor build
+      # CI has no program keypairs (they never leave keys/), so skip Anchor 1.0's keypair-vs-declare_id
+      # check; the IDL addresses still come from declare_id! and check-pins.sh asserts them.
+      - run: anchor build --ignore-keys
 
       - run: scripts/check-pins.sh
 
