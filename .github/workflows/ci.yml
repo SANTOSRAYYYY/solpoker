@@ -69,9 +69,10 @@ jobs:
 
       - name: Start local MagicBlock stack with programs preloaded at their declared IDs
         run: |
+          # absolute paths: scripts/mb-stack.sh runs the stack from .mb-stack/
           scripts/mb-stack.sh --reset \
-            --upgradeable-program "$SOLPOKER_ID" target/deploy/solpoker.so none \
-            --upgradeable-program "$SMOKE_ID" target/deploy/smoke.so none \
+            --upgradeable-program "$SOLPOKER_ID" "$PWD/target/deploy/solpoker.so" none \
+            --upgradeable-program "$SMOKE_ID" "$PWD/target/deploy/smoke.so" none \
             > mb-stack.log 2>&1 &
           for i in $(seq 1 60); do scripts/mb-health.sh && exit 0; sleep 3; done
           scripts/mb-health.sh
