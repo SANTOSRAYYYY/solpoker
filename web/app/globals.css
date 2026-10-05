@@ -1,0 +1,165 @@
+:root {
+  /* Solana palette */
+  --solana-purple: #9945ff;
+  --solana-green: #14f195;
+
+  /* Dark theme surfaces */
+  --bg: #0b0b10;
+  --bg-elevated: #14141c;
+  --bg-hover: #1c1c26;
+  --border: #2a2a38;
+
+  /* Text */
+  --text: #e8e8f0;
+  --text-muted: #8a8a9a;
+
+  /* Semantic actions */
+  --positive: var(--solana-green);
+  --danger: #c04040; /* muted red, e.g. fold */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  min-height: 100vh;
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--solana-purple);
+}
+
+.brand-sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.main {
+  flex: 1;
+  padding: 24px 0;
+}
+
+.heading {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+
+.tier {
+  margin-bottom: 24px;
+}
+
+.tier-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+
+.table-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.table-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.table-id {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.btn {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: none;
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--solana-purple);
+  color: #fff;
+}
+
+.btn-positive {
+  background: transparent;
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-muted {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.footer {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.footer-link {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.footer-link:hover {
+  color: var(--text);
+}

@@ -707,6 +707,7 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 |---|---|
 | 存放 | `SeatLedger.session_key` 和 `session_expires_at`（L1，有效期不超过 7 天） |
 | 设置 | 在 `sit_down` 时一并传入，或由占用者钱包单独调用 `set_session` |
+| 真人授权方式 | 真人的 session key 由 Privy 钱包在 `sit_down` 交易里一次签名授权（Stage 7 钱包层决定，见 §13 末尾）；agent 的入座交易仍由 agent 密钥直接签名 |
 | 撤销 | `revoke_session`：**只有占用者本人**可以撤销（session-keys 3.1.1 允许任何人撤销，对手可以借此逼你超时，这里不存在这个问题）；座位释放时自动清空 |
 | 可签的指令 | `commit_salt`、`reveal_salt`、`act`、`stand_up`（都是 ER 指令） |
 | 不可签的指令 | 所有 L1 资金指令：`sit_down`、`top_up`、`set_session` 等 |
@@ -722,13 +723,22 @@ PlayerHand 按座位固定，换人必须严格按下面的顺序进行，保证
 ## 13. 客户端连接与 attestation
 
 1. **端点**：对局交易和读取全部走 `devnet-tee.magicblock.app?token=…`（主网为 `mainnet-tee.magicblock.app`，validator 身份同为 MTEW…）。Magic Router 只用于 L1 操作。
-2. **入场检查**（每次打开页面做一次，结果缓存）：
+2. **钱包层**：Stage 7 前端用 Privy（`@privy-io/react-auth`）连接钱包：登录后得到内嵌 Solana 钱包，也可以连接用户自己的外部 Solana 钱包；无论哪种，前端把用户最终使用的钱包当作占用者钱包。详见本节末尾「钱包层：Privy」。
+3. **入场检查**（每次打开页面做一次，结果缓存）：
    - 包一层自己的 `verifyTeeRpcIntegrity`，challenge 用 `crypto.getRandomValues` 生成（SDK 自带的实现用的是 `Math.random()`）；
-   - `getAuthToken`：钱包 `signMessage` 一次，token 只放在内存里，并提供「重新鉴权」入口；
+   - `getAuthToken`：由 Privy 钱包对 challenge `signMessage` 一次（每个会话一次），token 只放在内存里，并提供「重新鉴权」入口；
    - 在 MagicBlock 公布 TDX 度量值之前，门控只能做到「对面确实是 TDX 机器」这一层，信任页要如实说明。
-3. **发送交易**：直接 `sendRawTransaction`，然后轮询或订阅确认。不用 Anchor `.rpc()` 的默认确认方式：Stage 0 实测它要 1.8–9.3 秒，直接发送只要约 2 个往返。
-4. **订阅状态**：先订阅 Game（公开）和本人的 PlayerHand（凭 token），再发送交易，避免 Stage 0 遇到的订阅竞态。
-5. **延迟**：沙盒测到的 600 ms 往返不代表真实玩家的网络；主网也会更快。上线前从目标地区实测。
+4. **发送交易**：直接 `sendRawTransaction`，然后轮询或订阅确认。不用 Anchor `.rpc()` 的默认确认方式：Stage 0 实测它要 1.8–9.3 秒，直接发送只要约 2 个往返。L1 资金交易（`sit_down`、`top_up`）由前端组装后交给 Privy 钱包作为完整交易签名；ER 对局动作由 session key 签名，手牌中不弹钱包。
+5. **订阅状态**：先订阅 Game（公开）和本人的 PlayerHand（凭 token），再发送交易，避免 Stage 0 遇到的订阅竞态。
+6. **延迟**：沙盒测到的 600 ms 往返不代表真实玩家的网络；主网也会更快。上线前从目标地区实测。
+
+### 钱包层：Privy（Stage 7 决定，2026-10-06）
+
+1. **钱包层 = Privy**（`@privy-io/react-auth`）：登录后产生一个内嵌 Solana 钱包，也可以连接外部 Solana 钱包；前端以用户最终使用的钱包作为「占用者钱包」。
+2. **`signMessage`**：由 Privy 的 Solana 钱包对 `getAuthToken` 的 challenge 签名，每个会话一次；challenge 必须用 `crypto.getRandomValues` 生成（不用 `Math.random`）；TEE token 只放在内存里。
+3. **L1 资金操作**（`sit_down`、`top_up`）：由 Privy 钱包作为完整交易签名。
+4. **会话密钥**（§12，D2）：每个座位在本地新生成一对 ed25519 密钥；`sit_down` 交易携带 `session_key` 和 `session_expires_at`，由 Privy 钱包签一次；对局动作（`commit_salt`、`reveal_salt`、`act`、`stand_up`）一律由 session key 签名，手牌中不弹钱包；X10 给 session key 预充的 0.001 SOL 放在同一笔 `sit_down` 交易里。
+5. **前端技术栈**：Next.js App Router + React 19；Solana Purple 主题（#9945FF / #14F195，按 A11）不变。
 
 ---
 

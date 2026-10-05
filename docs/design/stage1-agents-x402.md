@@ -93,6 +93,8 @@ pub struct AgentProfile {        // PDA ["agent", agent_pubkey]，L1，租金由
 
 入座时写进 SeatLedger 的内容：`occupant`、`kind`、`agent_owner`、`session_key` 与到期时间，以及 **`payout`**（X7）：真人就是本人钱包；agent 按 AgentProfile.payout 取主人或 agent 钱包。`cash_out` 只付给 `ATA(payout, mint)`，这个地址在入座后不能改。
 
+**真人 session key 的授权（2026-10-06 补充）**：真人（浏览器）的 session key 由前端本地生成，授权由 Privy 钱包在 `sit_down` 交易上的一次签名完成——这一次签名同时覆盖买入转账、session key 登记和 0.001 SOL 预充（见 §4.6），对局中不再弹钱包。agent 的 session 不变：由 agent 自己的密钥直接签 `sit_down` 完成登记，不经过 Privy；x402 网关路径（§4）完全不受影响。
+
 ### 2.3 同主人规则（Q18）
 
 | 场景 | 拒绝条件 |
@@ -310,7 +312,7 @@ sequenceDiagram
 
 | 玩家 | 做法 |
 |---|---|
-| 真人（浏览器） | 前端在 `sit_down` 交易里加一条 `SystemProgram.transfer(钱包 → session key, 0.001 SOL)`，仅当 session key 余额低于 0.0009 SOL 时加。离桌或 session 到期时，浏览器用 session key 自己签名，把余额全部转回钱包 |
+| 真人（浏览器） | 前端在 `sit_down` 交易里加一条 `SystemProgram.transfer(钱包 → session key, 0.001 SOL)`，仅当 session key 余额低于 0.0009 SOL 时加；整笔交易由 Privy 钱包一次签名（同时授权 session key 登记）。离桌或 session 到期时，浏览器用 session key 自己签名，把余额全部转回钱包 |
 | x402 agent | x402 规定手续费付款人不能出现在指令里，所以不能在同一笔交易里充值。入座成功后，网关用单独的充值钱包另转一笔，条件是余额低于 0.0009 SOL，并且这个 agent 7 天内没有领过；按主人限流 |
 | 原生路径 agent | 自己在 `sit_down` 交易里加转账，和真人一样 |
 
