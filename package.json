@@ -2,6 +2,7 @@
   "name": "solpoker",
   "private": true,
   "license": "ISC",
+  "type": "module",
   "engines": {
     "node": ">=24 <25"
   },

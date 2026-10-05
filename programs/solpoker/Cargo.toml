@@ -23,7 +23,25 @@ custom-panic = []
 [dependencies]
 # Pinned exactly: the ER SDK declares anchor-lang ^1.0, which would otherwise resolve to 1.2.x.
 anchor-lang = "=1.0.2"
+# anchor-lang 1.0.2 declares `anchor-attribute-* = "1"` style ranges, which
+# otherwise float to 1.2.0 and break the macro/runtime pairing (observed in
+# Stage 2: #[program] E0432 + unexpected_cfg noise). Pin every macro crate.
+anchor-attribute-access-control = "=1.0.2"
+anchor-attribute-account = "=1.0.2"
+anchor-attribute-constant = "=1.0.2"
+anchor-attribute-error = "=1.0.2"
+anchor-attribute-event = "=1.0.2"
+anchor-attribute-program = "=1.0.2"
+anchor-derive-accounts = "=1.0.2"
+anchor-derive-serde = "=1.0.2"
+anchor-derive-space = "=1.0.2"
+anchor-syn = "=1.0.2"
 ephemeral-rollups-sdk = { version = "=0.17.3", features = ["anchor", "access-control", "vrf"] }
+# Same sha2 as solpoker-core (vrf_callback_discriminator; on-chain compatible).
+sha2 = "0.10"
+# Poker state machine: VRF arm/request/fulfill/retry rules live here, chain
+# handlers only validate accounts and replay/sync the slot mirror.
+solpoker-core = { path = "../../crates/solpoker-core" }
 
 
 [lints.rust]

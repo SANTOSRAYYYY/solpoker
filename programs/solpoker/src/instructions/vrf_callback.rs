@@ -1,0 +1,73 @@
+//! vrf_callback — VRF fulfillment entrypoint (design §9).
+//!
+//! Real SDK signature used (ephemeral-vrf-sdk-vrf-macro-0.17.3/src/lib.rs):
+//! `#[vrf_callback]` placed ABOVE `#[derive(Accounts)]` injects
+//! `vrf_program_identity: Signer<'info>` constrained to
+//! `scoped_vrf_identity(&crate::ID)` — the PDA ["identity", program_id] of the
+//! VRF program Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz
+//! (ephemeral-vrf-sdk-0.17.3/src/consts.rs). A wrong identity therefore fails
+//! the Anchor constraint and the whole fulfillment reverts.
+//!
+//! Wire layout of the fulfillment instruction data (verified against the VRF
+//! SDK sources): `callback_discriminator ‖ randomness ‖ callback_args`.
+//!
+//! Behavior per §9:
+//! - wrong identity => error (signer constraint above);
+//! - identity ok but request stale/mismatched => return Ok(()) and ignore
+//!   (an error would roll back the fulfillment and keep the request queued
+//!   until its 120 s TTL);
+//! - otherwise store randomness in Deck only — no shuffling, no drawing
+//!   (advance does that in Stage 4), and never log it (§15).
+//!
+//! The match/no-match decision is `solpoker_core::vrf::VrfSlot::fulfill`.
+
+use anchor_lang::prelude::*;
+use solpoker_core::vrf::FulfillOutcome;
+
+use crate::state::VrfTarget;
+use crate::vrf;
+use crate::VrfCallbackState;
+
+pub fn handler(
+    ctx: Context<VrfCallbackState>,
+    randomness: [u8; 32],
+    callback_args: Vec<u8>,
+) -> Result<()> {
+    let game = &mut ctx.accounts.game;
+    let deck = &mut ctx.accounts.deck;
+
+    // Slot not reconstructible for a fulfillment (Idle/Ready/Fulfilled/Void)
+    // or malformed args → Ok and ignore, per §9.
+    let Some(mut core_slot) = game.vrf.core_replay() else {
+        return Ok(());
+    };
+    let Some(args) = vrf::decode_callback_args(&callback_args) else {
+        return Ok(());
+    };
+    // The deck must belong to the hand this game is playing.
+    if deck.hand_id != game.hand_id {
+        return Ok(());
+    }
+
+    match core_slot.fulfill(
+        args.hand_id,
+        args.target.to_core(),
+        args.attempt,
+        randomness,
+        game.hand_id,
+    ) {
+        Ok(FulfillOutcome::Stored) => {
+            let idx = VrfTarget::from_core(core_slot.target()).deck_index();
+            deck.vrf_out[idx] = randomness;
+            deck.vrf_attempt_used[idx] = core_slot.attempt();
+            game.vrf.sync_from_core(&core_slot);
+        }
+        Ok(FulfillOutcome::Ignored) => {
+            // §9: correct identity, stale or mismatched request — ignore.
+        }
+        Err(()) => unreachable!("core fulfill is infallible"),
+    }
+
+    // §15: randomness is never logged.
+    Ok(())
+}

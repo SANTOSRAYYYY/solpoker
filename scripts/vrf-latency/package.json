@@ -1,0 +1,17 @@
+{
+  "name": "solpoker-stage2-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stage 2 (TEE 内 VRF) 取证与探测脚本：probe-vrf-latency",
+  "scripts": {
+    "probe:vrf-latency": "node ../probe-vrf-latency.ts"
+  },
+  "dependencies": {
+    "@magicblock-labs/ephemeral-rollups-sdk": "0.17.3",
+    "@solana/web3.js": "1.98.4"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

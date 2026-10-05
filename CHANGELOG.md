@@ -1,5 +1,82 @@
 # CHANGELOG
 
+## Stage 2：TEE 内 VRF — 本地快速开发基线（2026-10-05）
+
+> 本轮在一台全新 Windows 机器上从零搭环境（Git 2.55 / Node 24.10 / Rust 1.89 /
+> MSVC Build Tools / `magicblock-dev-skill`），先用本地脚手架 `stage2-dev/`
+> 并行开发，再合并回主仓库。**仓库 main 上现在就是这份代码**，workspace
+> 全量测试通过；链上实测（本地栈 / devnet-tee）待有 Solana/Anchor 工具链后
+> 按「验收命令」执行。
+
+### 做了什么
+
+- V1 拆分：VRF 状态机（arm / request / fulfill / retry / 耗尽 Void）落在
+  [`crates/solpoker-core`](crates/solpoker-core)（纯 Rust，无 Anchor/Solana
+  依赖，sha2 + hmac）。链上 `Game.vrf` 是可序列化镜像（**不存 randomness**，
+  未公开输出只进私有 Deck，§3.2/§15），经 `core_replay` / `sync_from_core`
+  调用核心逻辑，规则只有 core 一份。
+- `request_vrf` / `retry_vrf` / `vrf_callback` / `advance` stub 在
+  [`programs/solpoker`](programs/solpoker)，替换 Stage 0 模板骨架（`initialize`）。
+  全部用 crates.io 拉取的 SDK 0.17.3 真实源码核对签名（见各文件头部注释）。
+- 探测脚本 [`scripts/probe-vrf-latency.ts`](scripts/probe-vrf-latency.ts)
+  （sendRawTransaction + 轮询确认，normal/high，p50/p95/p99）与
+  [`scripts/vrf-latency/`](scripts/vrf-latency)（独立 Node 24 ESM 子包，
+  依赖按【版本钉死】锁定）。
+- E6：仓库根 `package.json` 声明 `"type": "module"`；[`docs/stage2-notes.md`](docs/stage2-notes.md)
+  带任务复述与 §17 S2 验收清单（已验证项打勾，链上项待跑）。
+- CI 校验关系：`check-pins.sh` 的 crate 钉死检查不变（attribute 钉死不影响
+  `anchor-lang` 唯一性），根 `package.json` 的 `"type": "module"` 需 yarn 重装
+  后以 Stage 2 本地栈测试为准（Stage 0 遗留问题 6 已处理）。
+
+### 验收命令及结果
+
+| 验收项（§17 S2） | 命令 | 结果 |
+| --- | --- | --- |
+| V1 拆分 arm/request（纯逻辑层） | `cargo test -p solpoker-core` | ✅ 17 单测 + 1 文档测试全过（含 caller_seed 钉死向量） |
+| 回调编解码 / caller_seed 一致 | `cargo test -p solpoker` | ✅ 4 单测（复算 core 钉死向量、args 往返、坏输入拒绝） |
+| 程序编译（无告警） | `cargo check -p solpoker` | ✅ 干净通过（修复过程中解决 3 类问题，见下） |
+| workspace 全量 | `cargo test --workspace` | ✅ core 17 + 程序 4 + smoke 回归 1 全过 |
+| TEE 内请求 + scoped 回调 | 本地栈 `anchor test --skip-local-validator` | ⏳ 待跑（需 Solana CLI 3.1.10 + Anchor 1.0.2） |
+| 正常/高优先级 | 同上 + probe 脚本 | ⏳ 待跑 |
+| 伪造身份拒绝 / 超时重试 / 3 次耗尽作废 | 同上 | ⏳ 待跑（宏约束已静态验证签名者地址） |
+| 延迟 p50/p95 | `cd scripts/vrf-latency && npm run probe:vrf-latency -- --n 50`（四组） | ⏳ 待跑 |
+
+### 修复过程中确认的技术事实（比设计文档新增）
+
+1. **Anchor 1.0 布局约束**：`#[program]` 生成 `pub use crate::__client_accounts_<ix>::*;`，
+   而 1.0.x 的 `#[derive(Accounts)]` 把 `__client_accounts_*` 模块放在结构体所在模块——
+   两者只对得上当**所有 Accounts 结构体定义在 crate 根**。已把 4 个上下文结构体移到
+   `programs/solpoker/src/lib.rs` 根，handler 留在 `src/instructions/`。
+2. **anchor-lang 1.0.2 的 attribute crate 会漂移**：`anchor-attribute-* = "1"` 区间会
+   解析到 1.2.0，导致宏/运行时错配（E0432、unexpected_cfg 噪音）。已在
+   `programs/solpoker/Cargo.toml` 与 `programs/smoke/Cargo.toml` 把 10 个
+   `anchor-attribute-*`/`anchor-syn` 钉到 `=1.0.2`。
+3. **`#[vrf]` 只能用于结构体**，不能放在父上下文的字段上；嵌套 VRF 账户作为普通
+   字段即可。
+4. **borsh 1.x 拒绝带显式判别值的枚举**；`VrfState`/`VrfTarget` 去掉 `#[repr(u8)]`
+   和显式判别值，线上编码走显式 `to_u8()`（与 core 钉死向量同源）。
+5. **solana-program 3.x 没有 `solana_program::hash`**；`vrf_callback_discriminator`
+   改用 sha2（与 core 同库，链上可用）。
+6. **`next_clockwise` 单人语义**：mask 只剩自己时返回自己（total 函数，调用方循环
+   无需特判）；`None` 仅表示空 mask。文档注释与测试已固定此语义。
+7. 默认决定待确认：**attempt 从 1 开始编号**（0 保留为非法值）。
+
+### devnet 交易签名
+
+待跑（本地栈与 devnet-tee 验证后填入 [`docs/stage2-notes.md`](docs/stage2-notes.md)「证据」一节）。
+
+### 遗留问题
+
+- 本地栈 / devnet-tee 全路径实测：需装 Solana CLI (Agave) 3.1.10 + Anchor CLI 1.0.2，
+  按 `scripts/mb-stack.sh` 启动本地栈后 `anchor test --skip-local-validator`。
+- probe-vrf-latency.ts 的指令编码 TODO：依赖部署后的程序 IDL 与 Game/Deck 回调解码。
+- 主网 TEE 上 VRF 的费用、延迟和速率限制（设计 §18.2 问题 9）。
+- 队列频率限制未知，探测若触发限流需记录阈值并回报 MagicBlock。
+- `owner = ephemeral_rollups_sdk::id()` 约束 + solana-program 3.0 类型统一、回调
+  账户顺序假设（identity signer 在前，`[deck, game]` 在后）、ER 队列是否扣 payer——
+  首次 `anchor build` 与本地栈 fulfillment 时确认（记录于
+  [`programs/solpoker/README.md`](programs/solpoker/README.md)）。
+
 ## Stage 1 定稿（2026-09-30）
 
 ### 做了什么

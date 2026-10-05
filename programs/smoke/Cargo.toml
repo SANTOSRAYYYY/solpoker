@@ -23,6 +23,18 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "=1.0.2"
+# See programs/solpoker/Cargo.toml: keep the attribute crates pinned with the
+# 1.0.2 runtime so smoke stays green under the same lockfile.
+anchor-attribute-access-control = "=1.0.2"
+anchor-attribute-account = "=1.0.2"
+anchor-attribute-constant = "=1.0.2"
+anchor-attribute-error = "=1.0.2"
+anchor-attribute-event = "=1.0.2"
+anchor-attribute-program = "=1.0.2"
+anchor-derive-accounts = "=1.0.2"
+anchor-derive-serde = "=1.0.2"
+anchor-derive-space = "=1.0.2"
+anchor-syn = "=1.0.2"
 ephemeral-rollups-sdk = { version = "=0.17.3", features = ["anchor", "access-control", "vrf"] }
 
 
