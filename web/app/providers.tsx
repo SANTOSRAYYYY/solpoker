@@ -37,6 +37,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
+        // Match the dark Solana theme (GUI test 2026-10-06: default modal is light).
+        appearance: {
+          theme: "dark",
+          accentColor: "#9945FF",
+        },
         embeddedWallets: {
           solana: {
             createOnLogin: "users-without-wallets",
