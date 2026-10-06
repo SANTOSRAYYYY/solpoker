@@ -43,5 +43,13 @@ pub fn handler(ctx: Context<DelegateGame>, validator: Pubkey) -> Result<()> {
             ..Default::default()
         },
     )?;
+    ctx.accounts.delegate_commit_payer(
+        &ctx.accounts.admin,
+        &[b"commit_payer", table_bytes.as_ref()],
+        DelegateConfig {
+            validator: Some(validator),
+            ..Default::default()
+        },
+    )?;
     Ok(())
 }

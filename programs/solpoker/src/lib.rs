@@ -153,6 +153,16 @@ pub struct CreateTable<'info> {
         bump,
     )]
     pub deck: Account<'info, Deck>,
+    /// CHECK: commit payer PDA（D8 测试台雏形：程序所有、0 字节，委托后支付
+    /// ER 内租金/费用——ER 规则要求被修改的付款账户必须是委托账户）。
+    #[account(
+        init,
+        payer = admin,
+        space = 0,
+        seeds = [b"commit_payer", table.key().as_ref()],
+        bump,
+    )]
+    pub commit_payer: UncheckedAccount<'info>,
     #[account(mut)]
     pub admin: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -178,6 +188,13 @@ pub struct DelegateGame<'info> {
         bump,
     )]
     pub deck: UncheckedAccount<'info>,
+    /// CHECK: commit payer PDA; delegated so it can pay ER-side rents/fees.
+    #[account(
+        mut, del,
+        seeds = [b"commit_payer", table.key().as_ref()],
+        bump,
+    )]
+    pub commit_payer: UncheckedAccount<'info>,
     #[account(mut)]
     pub admin: Signer<'info>,
 }
@@ -194,6 +211,47 @@ pub struct DebugArmVrf<'info> {
     )]
     pub game: Account<'info, Game>,
     pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct InitPermissions<'info> {
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
+    /// CHECK: deck PDA; signs the permission-creation CPI via its seeds.
+    #[account(
+        seeds = [b"deck", table.key().as_ref(), &table.epoch.to_be_bytes()],
+        bump,
+        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub deck: UncheckedAccount<'info>,
+    /// CHECK: permission PDA derived by the permission program for deck.
+    #[account(
+        mut,
+        seeds = [b"permission:", deck.key().as_ref()],
+        bump,
+        seeds::program = permission_program.key(),
+    )]
+    pub permission: UncheckedAccount<'info>,
+    /// CHECK: rent vault for ephemeral accounts (collects permission rent).
+    #[account(mut, address = ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: the magic program.
+    #[account(address = ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID)]
+    pub magic_program: UncheckedAccount<'info>,
+    /// CHECK: the permission program (access control, ACLseo…).
+    #[account(address = ephemeral_rollups_sdk::consts::PERMISSION_PROGRAM_ID)]
+    pub permission_program: UncheckedAccount<'info>,
+    /// CHECK: 委托的 commit payer PDA，付权限账户租金（Stage 3 实测：ER 要求
+    /// 被扣款的付款人必须是委托账户，未委托的 deployer 会被拒）。
+    #[account(
+        mut,
+        seeds = [b"commit_payer", table.key().as_ref()],
+        bump,
+    )]
+    pub commit_payer: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 // ---------------------------------------------------------------------------
@@ -249,5 +307,11 @@ pub mod solpoker {
     /// the advance phase machine).
     pub fn debug_arm_vrf(ctx: Context<DebugArmVrf>, target: u8) -> Result<()> {
         instructions::debug_arm_vrf::handler(ctx, target)
+    }
+
+    /// Stage 3 (ER): create the PER private permission for Deck
+    /// (is_private = true, members = []).
+    pub fn init_permissions(ctx: Context<InitPermissions>) -> Result<()> {
+        instructions::init_permissions::handler(ctx)
     }
 }

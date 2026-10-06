@@ -1,5 +1,68 @@
 # CHANGELOG
 
+## Stage 3：PER 隐私层上线（2026-10-06，devnet-tee 实测）
+
+> Deck 现在有真实的 PER 私有权限：陌生 token 读取被 validator 拒绝（不是
+> 「服务端不返回」，是权限层强制）。PlayerHand 的 9 个权限随 Stage 4 发牌
+> 一起做。
+
+### 做了什么
+
+- **`init_permissions`（ER，admin-gated）**：对 Deck 调
+  `CreateEphemeralPermissionCpi`（`is_private=true, members=[]`，SDK 0.17.3
+  源码核对签名）；权限为 ER 本地账户，不在 L1 建/委托（§4）。
+- **CommitPayer 测试台雏形（D8）**：`create_table` 新建程序 PDA
+  `["commit_payer", table]`（0 字节，充 0.05 SOL），`delegate_game` 一并
+  委托。起因是 Stage 3 首次上链发现的 ER 规则：**被修改的付款账户必须是
+  委托账户**——用未委托的 deployer 付权限租金会被拒
+  （`Feepayer was modified without being delegated` → `InvalidAccountForFee`）。
+- **程序扩容**：access-control 引入后 .so 从 225KB 涨到 382KB；Agave 3.x
+  要求 ProgramData 扩容最少 10,240 字节，先 `solana program extend … 33000`
+  再部署（此前曾触发 "only 1072 were requested" 的部署失败）。
+- **端到端脚本**：`scripts/stage3-privacy-e2e.mjs`（全路径+可见性检查）、
+  `scripts/stage3-sim-probe.mjs`（模拟取证）、
+  `scripts/stage3-identify-account.mjs`（账户识别）。
+
+### 验收命令及结果（devnet-tee，table_id=46）
+
+| 验收项（设计 §4/§17 S3 核心项） | 结果 |
+| --- | --- |
+| create_table + delegate_game（含 commit_payer） | ✅ `uhUBqf91dsmU…`、`5wnTMEGbezQk…` |
+| init_permissions（Deck members=[]） | ✅ `dtvyaVsAKtXy…`（195ms） |
+| **陌生人读 Deck 被拒** | ✅ 全新随机钱包 + 自有 token：返回 null/拒绝——PER 强制生效 |
+| 陌生人读 Game 照常（公开账户） | ✅ 281 bytes 可读 |
+| PER 就位后 VRF 链路照常（CPI 写不受限） | ✅ arm 196ms → request 197ms → fulfilled 791ms，attempt=1 |
+
+### devnet 交易签名
+
+部署：extend+deploy `5tC8ncbztHtm9DkVixrjNxoX1GCH8ADPyqFssBYDcbwcKFfV6em8YJmF5Lkm1FLFQsuow9NFAVfLPdf45urGGGEH`。
+table 46：create `uhUBqf91…`、delegate `5wnTMEGbez…`、init_permissions
+`dtvyaVsAKtXyM9TS1muWEsyURnpwvKTXLe2TCDepWj6TxuDfCvsuc7hW2J1eyk18bcQ7iwLKa3LXGDAdFkQ5xuM`、
+arm `5NNibjizjp9s…`、request `3XMbNkn1VfPq…`。
+
+### 本阶段发现并修复的问题（优化时的关键上下文）
+
+1. **ER 费用规则**：ER 内任何「修改账户」的操作，被修改账户必须是委托
+   账户；未委托账户在 ER 是只读克隆。权限租金、未来的 commit 费用都要走
+   委托的 CommitPayer（D8 的正确性再获实证）。
+2. **`#[delegate]` 宏对每个 `del` 字段各生成一个方法**，handler 必须逐
+   个调用——加了字段忘了调用，账户就「传了但没委托」（Stage 3 实测踩过：
+   commit_payer 没被委托，`illegally used as writable`）。
+3. **权限创建 CPI 里 permissioned_account 是 readonly+signer**，由我们的
+   PDA seeds 签名；rent 从 payer 扣，permission 账户归 ACL 程序所有。
+4. **Agave 3.x ProgramData 扩容最少 10,240B**；程序变大前先 `solana
+   program extend`。
+
+### 遗留问题
+
+- PlayerHand×9 的权限（members=[占用者]）随 Stage 4 发牌落地；换人时
+  `UpdateEphemeralPermissionCpi` 的顺序测试（§11.2）也归 Stage 4/6。
+- `waitUntilPermissionActive`：本次建权限后立即读就被拒（同 slot 生效），
+  未遇到需要等待的情形；换人权生效时机仍待实测（§18.2 问题 6）。
+- `commit_payer` 余额监控/充值走运维流程，测试台未做（设计 R1b）。
+- 权限账户租金 4096 lamports/个已实测；13 账户全量权限的成本在 Stage 4
+  建齐账户后再核算。
+
 ## Stage 2 续：devnet-tee 链上验收通过（2026-10-06）
 
 > 在全新 Windows 机器上装齐工具链（Solana CLI 3.1.10 + Anchor 1.0.2 官方
