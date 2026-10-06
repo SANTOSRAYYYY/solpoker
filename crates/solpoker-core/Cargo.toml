@@ -8,3 +8,6 @@ license = "MIT"
 [dependencies]
 sha2 = "0.10"
 hmac = "0.12"
+
+[dev-dependencies]
+proptest = "1"

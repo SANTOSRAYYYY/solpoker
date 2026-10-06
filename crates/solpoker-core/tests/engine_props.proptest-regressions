@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ab6499269532fe236918236efe3b8215ff61fe5bd9a15ba24317cfec3b5c21ed # shrinks to (setup, seed) = (Setup { mask: 400, button: 4, sb: 315000, bb: 630000, ante: 60000, stacks: [0, 0, 0, 0, 3150000, 0, 0, 3150000, 3150000] }, 117183)
+cc 671a95bcc721a5bba0202dd8d89d7ea0de9c974148152c1425d6a05a055838d7 # shrinks to contribs_cents = [0, 1, 1], folded_bits = 55198, bb_mult = 2, flop_dealt = false, seed = 0
+cc 6abd83695fbff3f5d4dc1cbd2c7147173a88419cd8cad03f0f10d887781fd0b9 # shrinks to (setup, seed) = (Setup { mask: 240, button: 7, sb: 175000, bb: 350000, ante: 30000, stacks: [0, 0, 0, 0, 7000000, 11200000, 8050000, 21000000, 0] }, 16878521159288089487)
+cc 313ad2c6da45fc76930d1723a450897be90c87d15702c8622673453c7546fbf1 # shrinks to (setup, _seed) = (Setup { mask: 257, button: 0, sb: 155000, bb: 310000, ante: 30000, stacks: [1550000, 0, 0, 0, 0, 0, 0, 0, 1550000] }, 0)
+cc 0adac4fbd7558d00644c50b5808d05312686d92e7039dc44dd12fd862346f3f6 # shrinks to (setup, seed) = (Setup { mask: 400, button: 4, sb: 45000, bb: 90000, ante: 0, stacks: [0, 0, 0, 0, 720000, 0, 0, 2880000, 2070000] }, 12513479022123835737), hands = 1
+cc 54416ae41f10e12c54371bcc3818dea2c8ac6e2759d795411557e1c7bc6c1338 # shrinks to (setup, seed) = (Setup { mask: 288, button: 5, sb: 75000, bb: 150000, ante: 10000, stacks: [0, 0, 0, 0, 0, 750000, 0, 0, 750000] }, 9197452499901720090)

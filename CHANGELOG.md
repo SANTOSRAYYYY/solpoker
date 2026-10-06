@@ -1,5 +1,64 @@
 # CHANGELOG
 
+## Stage 5：规则引擎与结算（solpoker-core，proptest 全绿，2026-10-06）
+
+> 纯 Rust 规则引擎全部落在 `solpoker-core`（设计 §6/§7）：牌型评估、位置与
+> 行动、强制投入、最小加注、runout 条件、贡献层边池结算、rake、奇数筹码。
+> §7.3 的全部 proptest 性质跑通。链上接线（事件、时限、计分、HandProof、
+> CU 实测）归 Stage 6。
+
+### 做了什么
+
+- **`src/eval.rs`**：7 选 5 牌型评估（21 组合枚举），`HandRank`（类别 +
+  比较序踢脚，可 Ord）；wheel A2345 高牌记 5；皇家同花顺 = A 高同花顺；
+  花色不参与比较（分池友好）；`best_indices` 返回全部并列赢家。19 个单测
+  （含 500 组随机不变量扫描）。
+- **`src/engine.rs`**：手牌状态机——2–9 人位置（3–9 标准 BTN/SB/BB；
+  heads-up 特例 button=SB、翻前 button 先、翻后 BB 先）；强制投入（ante
+  按座位升序→SB→BB，短码先 ante 后盲注、不足即 all-in；ante 死钱不计入
+  street_bet）；动作（fold/check/call/bet/raise/all-in，金额必须 CENT 整数
+  倍）；完整加注重开 pending、不足额 all-in 不重开（acted 玩家只能
+  call/fold）；`live==1` 立即结算；runout 条件（pending 清零、live≥2、
+  actionable≤1）；超时能 check 就 check 否则 fold 并记 strikes。
+- **`src/settle.rs`**：先退唯一未跟注差额 → 贡献层主/边池（folded 贡献但
+  永不 eligible）→ rake（`min(floor_cent(gross×2.5%), 3BB)`，不见翻牌不
+  收、≤1BB 不收，主池向边池依次扣）→ 逐池评估并列赢家平分、余数从
+  button 左侧第一个该池赢家顺时针发 → 守恒断言。`void_hand` 全额退回。
+- **`tests/engine_props.rs`**：§7.3 全部性质的 proptest（守恒、单调、
+  合法性、终止、确定性、rake 边界、边池划分、奇数筹码、HU 特例），
+  每性 48–64 例；`engine_props.proptest-regressions` 钉住开发中抓到真
+  bug 的种子（保留）。
+
+### 规则定案（优化时的关键上下文）
+
+1. `live == 1` 在一条街中途也立即结算（即使该玩家还在 pending 里）。
+2. 不足额 all-in 抬高 current_bet 时：未行动者保留加注权；已行动者只能
+   call/fold（`RaiseNotReopened`）。
+3. strikes 引擎内只增；主动行动清零与 3 次自动站起归链侧（§6.3）。
+4. 翻前 runout 时 `flop_dealt` 由链上 runout advance 在 settle 前置位
+   （rake 以实际发出翻牌为准）。
+5. `Bet` 与 `RaiseTo` 在 `current_bet == 0` 时同一路径，翻后最小下注 1BB、
+   翻前最小加注到 2BB 自然成立。
+6. `settle` 对 `R: Ord` 泛型，直接接 `eval::evaluate7`。
+
+### 验收命令及结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `cargo test -p solpoker-core` | ✅ 89 单测（17 引擎 + 11 结算 + 19 评估 + 42 既有）+ 1 向量集成 + 7 proptest + 1 文档测试 |
+| `cargo test --workspace` | ✅ 全部（含 Stage 2/3/4 回归） |
+| `cargo fmt --all -- --check` | ✅ 干净 |
+
+### 遗留问题（Stage 6 接线清单）
+
+- 事件流：从引擎转移追加 transcript 事件（引擎本身不发事件）；
+  `claim_timeout` 前的截止时间检查；strikes 清零与自动站起；runout
+  advance 调 `DealSession::deal_runout` 后置 `flop_dealt` 再 settle；
+  rake_total/credited/owed 累计、HandProof 写入、leave_requested/零筹码
+  站起处理。
+- §7.4 计算预算：九人最坏结算 CU 实测；必要时拆「评估固定结果」与
+  「分配」两条指令。
+
 ## Stage 4：发牌协议三件套，三方逐字节一致（2026-10-06）
 
 > 字节级规范 + Rust 实现 + Python 参考实现 + 测试向量全部落地，**三方逐字节一致**
