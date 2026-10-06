@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { PRIVY_CONFIGURED } from "./providers";
+import { useSolanaWallet, useSignChallenge } from "@/lib/privy-solana";
+import { establishTeeSession, type TeeSession } from "@/lib/tee-auth";
 
 // Sample tables — placeholders only, no backend yet (Stage 7 scaffold).
 // Blinds are in USDC. Table IDs are sample constants per design docs.
@@ -46,6 +49,69 @@ function LoginButton() {
   );
 }
 
+type TeeStatus =
+  | { phase: "idle" }
+  | { phase: "working"; step: string }
+  | { phase: "ok"; session: TeeSession }
+  | { phase: "error"; message: string };
+
+function TeeConnect() {
+  const { authenticated } = usePrivy();
+  const wallet = useSolanaWallet();
+  const signChallenge = useSignChallenge();
+  const [status, setStatus] = useState<TeeStatus>({ phase: "idle" });
+
+  if (!authenticated || !wallet) return null;
+
+  const connect = async () => {
+    try {
+      setStatus({ phase: "working", step: "校验 TEE attestation…" });
+      // establishTeeSession does both steps; surface progress via status text.
+      const session = await establishTeeSession(wallet.address, (bytes) =>
+        signChallenge(wallet, bytes)
+      );
+      setStatus({ phase: "ok", session });
+    } catch (e) {
+      setStatus({
+        phase: "error",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  return (
+    <section className="tee-panel">
+      <p className="muted">
+        钱包 <code>{wallet.address.slice(0, 4)}…{wallet.address.slice(-4)}</code>
+      </p>
+      {status.phase === "idle" && (
+        <button className="btn btn-positive" onClick={connect}>
+          连接 TEE（校验 + 鉴权）
+        </button>
+      )}
+      {status.phase === "working" && (
+        <button className="btn btn-muted" disabled>
+          {status.step}
+        </button>
+      )}
+      {status.phase === "ok" && (
+        <p className="ok-text">
+          TEE 已连接（token 有效期至{" "}
+          {new Date(status.session.expiresAt * 1000).toLocaleString()}）
+        </p>
+      )}
+      {status.phase === "error" && (
+        <>
+          <p className="error-text">连接失败：{status.message}</p>
+          <button className="btn btn-primary" onClick={connect}>
+            重试
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function Home() {
   return (
     <div className="page">
@@ -67,6 +133,8 @@ export default function Home() {
       <main className="main">
         <h1 className="heading">牌桌列表</h1>
         <p className="muted">示例数据,后端未接入。</p>
+
+        {PRIVY_CONFIGURED && <TeeConnect />}
 
         {TIERS.map((tier) => (
           <section key={tier.blinds} className="tier">

@@ -1,5 +1,75 @@
 # CHANGELOG
 
+## Stage 2 续：devnet-tee 链上验收通过（2026-10-06）
+
+> 在全新 Windows 机器上装齐工具链（Solana CLI 3.1.10 + Anchor 1.0.2 官方
+> 预编译二进制），程序升级到 devnet 并完成 VRF 端到端实测。机器只能经
+> 系统代理出网，公共 RPC 对共享出口 IP 限流（429），最终方案：
+> `scripts/http-relay.mjs` 本地 Host 重写中继 + **rpc.magicblock.app/devnet**
+> （无限流）+ `solana program deploy --use-rpc`（TPU 直连被网络阻断）。
+
+### 做了什么
+
+- **测试台指令**（admin-gated）：`create_table` / `delegate_game` /
+  `debug_arm_vrf`——没有它们链上验收走不到 Ready；生产版建桌（§11.1）
+  在 Stage 5/6。`#[ephemeral]` 宏已加，Table 加 `admin` 字段。
+- **修复三个首次上链才发现的 bug**：
+  1. **ER owner 约束错误**：被委托账户在 ER 上归原程序所有（不归委托
+     程序），`owner = ephemeral_rollups_sdk::id()` 覆盖已从全部 5 个 ER
+     侧上下文移除（smoke Stage 0 的 ER increment 即为证据）。
+  2. **oracle_queue 未标 writable**：VRF 程序要求队列可写（
+     `AccountMeta::new(queue, false)`），漏标导致
+     "unauthorized writable account"。
+  3. **callback_args 缺 borsh 长度前缀**：Anchor 对 `Vec<u8>` 参数按
+     borsh 反序列化（u32 LE 长度 + 数据），不传前缀时 hand_id 的前 4 字节
+     被当长度——hand_id=0 时回调收到空 Vec 被静默忽略，fulfillment 交易
+     ok 但状态停在 Pending。编码已改为 `[u32 len] ‖ hand_id_be ‖ target ‖
+     attempt`。
+- **端到端脚本**：`scripts/stage2-vrf-e2e.mjs`（全路径）、
+  `scripts/stage2-vrf-retry.mjs`（重试路径）、
+  `scripts/stage2-probe-state.mjs`（状态取证）。
+- **前端 TEE 鉴权**：`web/lib/tee-auth.ts`（attestation 校验用
+  `crypto.getRandomValues` 挑战，替代 SDK 的 `Math.random`；token 只存
+  内存）+ 页面「连接 TEE」按钮。
+
+### 验收命令及结果（devnet，§17 S2）
+
+| 验收项 | 结果 |
+| --- | --- |
+| 程序升级部署 | ✅ 3 次升级签名：`3pQC8MatX6…`（slot 508049397）、`2EScTnTWda…`、`3ByhTg3kmW…` |
+| create_table + delegate_game（L1 → MTEW…） | ✅ `61ahPgdCKQ…`、`56EFcLVzjk…` |
+| TEE 内请求 + scoped 回调 | ✅ request_vrf `3kUzVXx6h2…`（168ms）→ fulfilled，attempt=1，Deck.vrf_out[Flop] 已填（`77d1eb8b…`） |
+| 超时重试 | ✅ retry_vrf `3uYxh7ASgM…`（211ms）→ fulfilled 845ms，attempt 1→2，Deck.vrf_out 非零 |
+| 旧回调 Ok+忽略 | ✅ attempt=1 的 fulfillment 交易执行 ok、状态不变（在修复编码 bug 前的真实观测） |
+| ER 队列费用 | ✅ 无 payer 扣费（余额比对） |
+| 伪造身份拒绝 | 宏静态保证：注入的 Signer 带 `address = scoped_vrf_identity(&crate::ID)` 约束 |
+| 3 次耗尽 → 作废 | core 单测覆盖（17+1）；链上路径与重试相同 |
+| 延迟 p50/p95 | 样本 n=2：718ms / 845ms（sent → fulfilled，经代理+relay，属上限） |
+| 本地栈全路径 | 本机 Windows 无法跑 ephemeral-validator，以 devnet-tee 为准 |
+
+### devnet 交易签名
+
+部署：`3pQC8MatX6fQPwpnrbPWjHmC4qipPJvnTSdcXfZjdgRy7QtKAv65nt3R1ocY2NY21M1iM8jdcUCHJq76CGhF2qzF`、
+`2EScTnTWdaAeZmdmfTmBS6gW42Kq8GfGhhfLyiHPjNgFqJKc5DsDyEa797UW1RUQjiTRX7UHbimfoHUiyG9bUL6W`、
+`3ByhTg3kmWd1nUzHosXZcFs1imveqDiJ2kTLBPEng27hbStULNtv4BNBFMuXPayyo9RnEx98cZ5nTdDM3coprvLg`。
+
+table_id=42（重试路径）：create `4yYVBk8hZcug…`、delegate `4XbREyxQJ4A…`、
+arm `3EZyKinG2VHp…`、request（旧编码，ok+忽略）`4VPdALAvsJU…`、
+retry `3uYxh7ASgM3QdeW2G31TTSAya1JizUffHnDb2KKPQoTRAW2aHhwDDLSxv9WwB21Wj9nYpf8XJmtYjnNKbXnV7vhm`。
+
+table_id=43（正常路径）：create `61ahPgdCKQoa…`、delegate `56EFcLVzjk1v…`、
+arm `2XkfzopPwRrn…`、request `3kUzVXx6h2xr…` → fulfilled 718ms。
+
+### 遗留问题
+
+- 延迟样本 n=2，不足以定 `vrf_timeout_s`；用 `scripts/vrf-latency/` 的
+  probe 跑 ≥20 组后再调 Table 参数（当前默认 10s 远大于实测 ~0.8s）。
+- 本地栈（ER 0.14.10）路径未测——本机 Windows 跑不了 ephemeral-validator；
+  CI 或 Linux 机器上补。
+- `vrf_timeout_s` 期间 fulfillment 的 PrivilegeEscalation 失败交易
+  （`35SPoMeir…`）出现在 writable 修复之前，属预期历史遗留，非新问题。
+- deployer 余额 90.09 SOL；中断的部署曾留 buffer，当前无遗留可收。
+
 ## Stage 2：TEE 内 VRF — 本地快速开发基线（2026-10-05）
 
 > 本轮在一台全新 Windows 机器上从零搭环境（Git 2.55 / Node 24.10 / Rust 1.89 /

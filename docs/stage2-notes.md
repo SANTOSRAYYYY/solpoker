@@ -37,20 +37,40 @@ MSVC Build Tools / `magicblock-dev-skill`），先用本地脚手架 `stage2-dev
 
 ## 验收标准（设计 §17 S2）
 
-> 2026-10-05 本地快速开发过一遍：纯逻辑/编译层条目已验证，链上实测条目待本地栈。
+> 2026-10-06 devnet-tee 链上验收：核心路径全部实测通过，证据见 CHANGELOG
+> 「Stage 2 续」与本文件「证据」一节。
 
 - [x] V1 拆分 arm/request：`act`/`advance` 只 arm，`request_vrf` 单独执行 CPI
-      （core 状态机单测覆盖：`cargo test -p solpoker-core` 17+1 全过）
+      （core 单测 + devnet 实测：debug_arm 170ms → request 168ms）
 - [x] TEE 内请求并 scoped 回调（回调身份 = `scoped_vrf_identity(&crate::ID)`）
-      （宏签名经 SDK 0.17.3 源码核对；链上 fulfillment 待跑）
-- [ ] 正常/高优先级两种请求路径
-- [ ] 伪造身份的回调被拒绝
-- [x] 10 秒超时重试（`retry_vrf`，新 attempt）（core 单测含恰好 10 秒边界）
-- [x] 旧回调（过期/不匹配的合法身份）返回 Ok 并忽略，不回滚 fulfillment（core 单测）
-- [x] 3 次耗尽 → 本手作废（core 侧 Void 信号与落库；退款结算归 Stage 5/6）
-- [ ] 本地（ER 0.14.10 + 本地 oracle）全路径通过
-- [ ] devnet-tee（ER 0.16.0）正常路径通过
-- [ ] 延迟实测：逐街 p50/p95（本地 + devnet）
+      ✅ devnet-tee：request `3kUzVXx6h2…` → fulfilled 718ms，attempt=1
+- [x] 正常/高优先级两种请求路径——宏自动映射判别符（10/11 scoped）
+- [x] 伪造身份的回调被拒绝（宏注入 Signer 带 `address =` 约束，静态保证）
+- [x] 10 秒超时重试（`retry_vrf`，新 attempt）✅ devnet：`3uYxh7ASgM…`，
+      attempt 1→2，845ms fulfilled，Deck.vrf_out 非零
+- [x] 旧回调（过期/不匹配的合法身份）返回 Ok 并忽略，不回滚 fulfillment
+      ✅ 实测：attempt=1 的 fulfillment 交易 ok、状态不变
+- [x] 3 次耗尽 → 本手作废（core 单测；链上路径与重试相同）
+- [ ] 本地（ER 0.14.10 + 本地 oracle）全路径通过——本机 Windows 跑不了
+      ephemeral-validator，以 devnet-tee（ER 0.16.0）为准；CI/Linux 补测
+- [x] devnet-tee（ER 0.16.0）正常路径通过 ✅
+- [ ] 延迟实测：逐街 p50/p95（本地 + devnet）——devnet 仅 n=2 样本
+      （718/845ms，经代理属上限），`scripts/vrf-latency/` 补测后定 Table 参数
+
+## 2026-10-06 链上验收发现并修复的 bug（优化时的关键上下文）
+
+1. **ER 上被委托账户归原程序所有**，不归委托程序——所有 ER 侧指令的
+   `owner = ephemeral_rollups_sdk::id()` 覆盖是错的，必须用 Anchor 默认的
+   crate::ID 检查。L1 侧读委托账户（Stage 6 cash_out/sweep_rake）才接受
+   `owner = DLP`（§5.3）。
+2. **VRF 请求账户：oracle_queue 必须 writable**（队列要追加请求）。
+3. **callback_args 必须带 borsh Vec<u8> 长度前缀**（u32 LE）——Anchor 按
+   borsh 反序列化 handler 参数；缺前缀时 hand_id=0 会被读成长度 0，回调
+   静默忽略（fulfillment 交易 ok 但状态停在 Pending，这是最难查的一类
+   bug：一切"成功"但什么都没发生）。
+4. **本机网络约束**：直连被重置，只能走系统代理；api.devnet.solana.com
+   对代理共享出口 IP 限流 429，程序部署必须走
+   `scripts/http-relay.mjs` + rpc.magicblock.app/devnet + `--use-rpc`。
 
 ## 实测数据
 

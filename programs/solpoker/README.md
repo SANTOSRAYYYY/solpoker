@@ -113,10 +113,14 @@ cargo test            # in crates/solpoker-core: full VrfSlot state machine
 
 ## Open questions for the local-stack run
 
-- `owner = ephemeral_rollups_sdk::id()` on Game/Deck assumes the delegated
-  owner in the ER is the delegation program and that Anchor 1.0 accepts a
-  const-fn path in the `owner` constraint. If the undelegated (L1) path needs
-  the same code, the constraint must be relaxed or made conditional.
+- ~~`owner = ephemeral_rollups_sdk::id()` on Game/Deck assumes the delegated
+  owner in the ER is the delegation program~~ **已解决（2026-10-06）：这个假设是错的。**
+  被委托账户在 L1 上归委托程序所有，但在 **ER 上克隆体归原程序所有**
+  （MagicBlock 文档原话；Stage 0 smoke 的 ER increment 用 Anchor 默认
+  `crate::ID` owner 检查实测通过即为证据）。`RequestVrf` / `RetryVrf` /
+  `VrfCallbackState` / `Advance` / `DebugArmVrf` 的 `owner =` 覆盖已全部
+  移除，ER 侧指令用 Anchor 默认检查；L1 侧读委托账户的指令（Stage 6 的
+  cash_out / sweep_rake）才需要接受 `owner = DLP`（§5.3）。
 - The fulfillment's callback account ordering assumption: identity signer
   first, then `accounts_metas` in the order given (`[deck, game]`). Confirm on
   the local stack that the VRF program passes them in exactly this order.
@@ -127,6 +131,9 @@ cargo test            # in crates/solpoker-core: full VrfSlot state machine
   under this program) matches what `create_request_randomness_ix` puts in the
   ix (`find_program_address(&[IDENTITY], callback_program_id)`) at runtime —
   should hold by construction, but the first end-to-end request proves it.
-- The `Table`/`Game`/`Deck` accounts for these tests must be created and
+- ~~The `Table`/`Game`/`Deck` accounts for these tests must be created and
   delegated by the Stage 3 deploy script; this slice intentionally contains no
-  `create_table`/init instructions.
+  `create_table`/init instructions.~~ **已补上（2026-10-06）**：测试台指令
+  `create_table` / `delegate_game` / `debug_arm_vrf`（均 admin-gated）已加入
+  本切片，否则链上验收路径根本走不到 Ready。生产版建桌指令（§11.1，
+  13 个账户）在 Stage 5/6 落地。

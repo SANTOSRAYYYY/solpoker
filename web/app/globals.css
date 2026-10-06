@@ -163,3 +163,36 @@ body {
 .footer-link:hover {
   color: var(--text);
 }
+  
+.tee-panel {  
+  margin: 0 0 24px;  
+  padding: 12px;  
+  background: var(--bg-elevated);  
+  border: 1px solid var(--border);  
+  border-radius: 6px;  
+}  
+  
+.tee-panel .muted {  
+  margin: 0 0 10px;  
+}  
+  
+.ok-text {  
+  color: var(--positive);  
+  font-size: 13px;  
+  margin: 0;  
+}  
+  
+.error-text {  
+  color: var(--danger);  
+  font-size: 13px;  
+  margin: 0 0 10px;  
+}  
+  
+.config-banner {  
+  padding: 8px 12px;  
+  background: #3a2a10;  
+  color: #e0b060;  
+  font-size: 13px;  
+  text-align: center;  
+  border-bottom: 1px solid var(--border);  
+}  

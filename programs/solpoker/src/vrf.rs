@@ -42,11 +42,18 @@ pub struct CallbackArgs {
 /// hand_id (8) + target (1) + attempt (1)
 const CALLBACK_ARGS_LEN: usize = 10;
 
-/// encode_callback_args = hand_id_be ‖ target ‖ attempt, where target uses the
-/// solpoker-core wire encoding (`VrfTarget::to_u8`, Preflop=0..Runout=4 — the
-/// same bytes that feed `caller_seed`'s pinned CI vector).
+/// encode_callback_args = borsh `Vec<u8>` 编码的 `hand_id_be ‖ target ‖ attempt`，
+/// 前 4 字节是 u32 LE 长度前缀。target 用 solpoker-core 的线上编码
+/// （`VrfTarget::to_u8`，Preflop=0..Runout=4——与 caller_seed 钉死向量同源）。
+///
+/// **为什么有长度前缀**：VRF 程序把 callback_args 原样带回，而 Anchor 对 handler
+/// 的 `Vec<u8>` 参数按 borsh 反序列化（u32 LE 长度 + 数据）。不传前缀时 Anchor
+/// 会把 hand_id 的前 4 字节当长度——hand_id=0 时被读成 0，回调收到空 Vec 被
+/// 静默忽略（2026-10-06 devnet-tee 实测发现：fulfillment 交易 ok 但状态停在
+/// Pending）。
 pub fn encode_callback_args(hand_id: u64, target: VrfTarget, attempt: u8) -> Vec<u8> {
-    let mut v = Vec::with_capacity(CALLBACK_ARGS_LEN);
+    let mut v = Vec::with_capacity(4 + CALLBACK_ARGS_LEN);
+    v.extend_from_slice(&(CALLBACK_ARGS_LEN as u32).to_le_bytes());
     v.extend_from_slice(&hand_id.to_be_bytes());
     v.push(target.to_core().to_u8());
     v.push(attempt);
@@ -105,8 +112,11 @@ mod tests {
                 attempt: 3,
             };
             let encoded = encode_callback_args(args.hand_id, args.target, args.attempt);
-            assert_eq!(encoded.len(), 10);
-            assert_eq!(decode_callback_args(&encoded), Some(args));
+            // borsh Vec<u8>: 4-byte LE length prefix + 10 payload bytes.
+            assert_eq!(encoded.len(), 14);
+            assert_eq!(&encoded[0..4], &10u32.to_le_bytes());
+            // The handler receives the payload after Anchor unwraps the Vec.
+            assert_eq!(decode_callback_args(&encoded[4..]), Some(args));
         }
     }
 
@@ -116,7 +126,7 @@ mod tests {
         assert_eq!(decode_callback_args(&[0u8; 9]), None);
         assert_eq!(decode_callback_args(&[0u8; 11]), None);
         let mut bad = encode_callback_args(1, VrfTarget::Flop, 1);
-        bad[8] = 99; // invalid target discriminant
-        assert_eq!(decode_callback_args(&bad), None);
+        bad[4 + 8] = 99; // invalid target discriminant (after the length prefix)
+        assert_eq!(decode_callback_args(&bad[4..]), None);
     }
 }

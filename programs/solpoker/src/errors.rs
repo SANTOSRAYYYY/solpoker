@@ -18,4 +18,10 @@ pub enum SolpokerError {
     /// Slot state does not allow arming (e.g. Fulfilled not yet consumed).
     #[msg("vrf")]
     VrfArmRejected,
+    /// Delegation validator is not on the allowlist.
+    #[msg("validator")]
+    ValidatorNotAllowed,
+    /// Signer is not the table admin (test harness instructions).
+    #[msg("admin")]
+    Unauthorized,
 }

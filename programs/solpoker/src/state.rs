@@ -12,12 +12,20 @@ use anchor_lang::prelude::*;
 
 pub const MAX_SEATS: usize = 9;
 
+/// devnet/mainnet TEE validator (context block v6 关键地址). Delegation must
+/// name it explicitly — `validator: None` is never used.
+pub const TEE_VALIDATOR: Pubkey = pubkey!("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
+
 /// L1 table configuration. Never delegated; carries the tunable VRF timeouts
 /// (E1: vrf_timeout_s = 10, vrf_max_attempts = 3) so Stage 2 latency
 /// measurements can adjust them on-chain instead of in code.
 #[account]
+#[derive(InitSpace)]
 pub struct Table {
     pub table_id: u32,
+    /// Stage 2/3 test-harness gate: create_table / delegate_game /
+    /// debug_arm_vrf require this key's signature.
+    pub admin: Pubkey,
     /// Seconds after `VrfSlot.requested_at` before anyone may call retry_vrf.
     pub vrf_timeout_s: u16,
     /// Maximum request attempts per street (first request is attempt 1).
@@ -30,6 +38,7 @@ pub struct Table {
 /// ER game state (public). While delegated, the account owner is the
 /// delegation program, hence the `owner` override on the field.
 #[account]
+#[derive(InitSpace)]
 pub struct Game {
     pub table: Pubkey,
     pub hand_id: u64,
@@ -52,7 +61,7 @@ pub struct Game {
 /// 注意：不给变体写显式判别值。borsh 1.x（Anchor 1.0 的序列化后端）要求
 /// 带显式判别的枚举必须额外声明 `use_discriminant`，而这里的序列化值
 /// 不进任何哈希——线上编码由 `VrfTarget::to_core().to_u8()` 显式给出。
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
 pub enum VrfState {
     Idle,
     Ready,
@@ -64,7 +73,7 @@ pub enum VrfState {
 /// Which VRF draw a street needs. Wire encoding MUST match
 /// `solpoker_core::vrf::VrfTarget::to_u8` (Preflop=0..Runout=4) because it
 /// feeds `caller_seed` (pinned CI vector in solpoker-core).
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
 pub enum VrfTarget {
     Preflop,
     Flop,
@@ -120,7 +129,7 @@ impl VrfTarget {
 
 /// Public mirror of the core VRF slot (see module docs). `attempt` is 1-based
 /// (core convention). `requested_at` is 0 unless state == Pending.
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
 pub struct VrfSlot {
     pub state: VrfState,
     pub target: VrfTarget,
@@ -184,7 +193,9 @@ impl VrfSlot {
 
 /// ER seat ledger stub (design §3.2 / D1). Stage 5 adds the remaining fields
 /// (occupant, status, in_hand, street_bet, folded, strikes, salt commits, ...).
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(
+    AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, Default, InitSpace,
+)]
 pub struct SeatState {
     pub stack: u64,
     pub credited_total: u64,
@@ -194,6 +205,7 @@ pub struct SeatState {
 /// ER deck state (private account, members = [] per §4). Only the VRF
 /// fulfillment callback and dealing instructions may write here.
 #[account]
+#[derive(InitSpace)]
 pub struct Deck {
     pub hand_id: u64,
     /// Raw VRF outputs per draw: [preflop, flop, turn, river, runout].

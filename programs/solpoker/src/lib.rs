@@ -24,6 +24,7 @@
 //! in `src/instructions/`; only the context structs live here.
 
 use anchor_lang::prelude::*;
+use ephemeral_rollups_sdk::anchor::{delegate, ephemeral};
 use ephemeral_rollups_sdk::vrf::anchor::{vrf, vrf_callback};
 
 pub mod errors;
@@ -44,11 +45,15 @@ declare_id!("EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf");
 #[derive(Accounts)]
 pub struct RequestVrf<'info> {
     pub table: Account<'info, Table>,
+    // No explicit owner override: these instructions execute on the ER, where
+    // the delegated clone is owned by THIS program (the delegation program
+    // only owns the L1-side record — smoke Stage 0 verified Anchor's default
+    // crate::ID check passes on devnet-tee). L1-side readers of delegated
+    // state (cash_out/sweep_rake, Stage 6) accept owner = DLP per §5.3.
     #[account(
         mut,
         seeds = [b"game", table.key().as_ref()],
         bump,
-        owner = ephemeral_rollups_sdk::id(),
     )]
     pub game: Account<'info, Game>,
     /// Outer transaction signer paying the request (ER queue is free; the
@@ -67,18 +72,22 @@ pub struct RequestVrfAccounts<'info> {
     /// 5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc; local:
     /// Sc9MJUngNbQXSXGP3F67KvKwVnhaYn6kcioxXNVowYT.
     /// CHECK: queue address is caller-chosen by design; the VRF program
-    /// validates it against its own queue records.
+    /// validates it against its own queue records. Must be WRITABLE — the
+    /// queue appends the request (first on-chain run 2026-10-06 failed with
+    /// "unauthorized writable account" until `mut` was added).
+    #[account(mut)]
     pub oracle_queue: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct RetryVrf<'info> {
     pub table: Account<'info, Table>,
+    // ER-side instruction: delegated clone is owned by this program (see
+    // RequestVrf note).
     #[account(
         mut,
         seeds = [b"game", table.key().as_ref()],
         bump,
-        owner = ephemeral_rollups_sdk::id(),
     )]
     pub game: Account<'info, Game>,
     #[account(mut)]
@@ -91,31 +100,107 @@ pub struct RetryVrf<'info> {
 #[derive(Accounts)]
 pub struct RetryVrfAccounts<'info> {
     /// CHECK: caller-chosen queue; must match the queue used for the first
-    /// request (keepers use the table's configured queue).
+    /// request (keepers use the table's configured queue). WRITABLE, see
+    /// RequestVrfAccounts.
+    #[account(mut)]
     pub oracle_queue: UncheckedAccount<'info>,
 }
 
 #[vrf_callback]
 #[derive(Accounts)]
 pub struct VrfCallbackState<'info> {
-    /// Private deck; only randomness lands here.
-    #[account(mut, owner = ephemeral_rollups_sdk::id())]
+    /// Private deck; only randomness lands here. Runs on the ER, where the
+    /// clone is owned by this program (see RequestVrf note).
+    #[account(mut)]
     pub deck: Account<'info, Deck>,
     /// Pending request slot to match against callback_args.
-    #[account(mut, owner = ephemeral_rollups_sdk::id())]
+    #[account(mut)]
     pub game: Account<'info, Game>,
 }
 
 #[derive(Accounts)]
 pub struct Advance<'info> {
-    #[account(mut, owner = ephemeral_rollups_sdk::id())]
+    #[account(mut)]
     pub game: Account<'info, Game>,
+}
+
+// --- Stage 2/3 test harness contexts (production versions in Stage 5/6) ---
+
+#[derive(Accounts)]
+#[instruction(table_id: u32)]
+pub struct CreateTable<'info> {
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Table::INIT_SPACE,
+        seeds = [b"table", table_id.to_le_bytes().as_ref()],
+        bump,
+    )]
+    pub table: Account<'info, Table>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Game::INIT_SPACE,
+        seeds = [b"game", table.key().as_ref()],
+        bump,
+    )]
+    pub game: Account<'info, Game>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Deck::INIT_SPACE,
+        seeds = [b"deck", table.key().as_ref(), [0u8, 0u8].as_ref()],
+        bump,
+    )]
+    pub deck: Account<'info, Deck>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[delegate]
+#[derive(Accounts)]
+pub struct DelegateGame<'info> {
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
+    /// CHECK: game PDA; ownership moves to the delegation program.
+    #[account(
+        mut, del,
+        seeds = [b"game", table.key().as_ref()],
+        bump,
+        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub game: UncheckedAccount<'info>,
+    /// CHECK: deck PDA (epoch 0 seeds at creation); ownership moves to the delegation program.
+    #[account(
+        mut, del,
+        seeds = [b"deck", table.key().as_ref(), &table.epoch.to_be_bytes()],
+        bump,
+    )]
+    pub deck: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct DebugArmVrf<'info> {
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
+    #[account(
+        mut,
+        seeds = [b"game", table.key().as_ref()],
+        bump,
+        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub game: Account<'info, Game>,
+    pub admin: Signer<'info>,
 }
 
 // ---------------------------------------------------------------------------
 // Program
 // ---------------------------------------------------------------------------
 
+#[ephemeral]
 #[program]
 pub mod solpoker {
     use super::*;
@@ -148,5 +233,21 @@ pub mod solpoker {
     /// only demonstrates the arm hook that sets `VrfSlot = Ready`.
     pub fn advance(ctx: Context<Advance>) -> Result<()> {
         instructions::advance::handler(ctx)
+    }
+
+    /// Test harness (Stage 2/3): create Table + Game + Deck PDAs on L1.
+    pub fn create_table(ctx: Context<CreateTable>, table_id: u32) -> Result<()> {
+        instructions::create_table::handler(ctx, table_id)
+    }
+
+    /// Test harness (Stage 2/3): delegate Game + Deck to the TEE validator.
+    pub fn delegate_game(ctx: Context<DelegateGame>, validator: Pubkey) -> Result<()> {
+        instructions::delegate_game::handler(ctx, validator)
+    }
+
+    /// Test harness (Stage 2/3, ER): arm the VRF slot (production arms via
+    /// the advance phase machine).
+    pub fn debug_arm_vrf(ctx: Context<DebugArmVrf>, target: u8) -> Result<()> {
+        instructions::debug_arm_vrf::handler(ctx, target)
     }
 }
