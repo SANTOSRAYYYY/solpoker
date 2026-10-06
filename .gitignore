@@ -20,3 +20,5 @@ magicblock-test-storage/
 .mb-stack/
 *.log
 .mb-diag/
+__pycache__/  
+*.pyc  
