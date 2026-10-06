@@ -1,5 +1,64 @@
 # CHANGELOG
 
+## Stage 4：发牌协议三件套，三方逐字节一致（2026-10-06）
+
+> 字节级规范 + Rust 实现 + Python 参考实现 + 测试向量全部落地，**三方逐字节一致**
+> 已在本机跑通（§17 S4 验收口径）。链上 PlayerHand/发牌指令依赖座位模型，
+> 归 Stage 5/6（规范 §1 已注明）。
+
+### 做了什么
+
+- **规范**：`docs/dealing-protocol.zh.md` / `.en.md`——牌编码、盐承诺/聚合、
+  逐街种子、首手庄位、13 种事件的字节布局、transcript 链、HMAC 拒绝采样
+  抽牌、runout 合并、验证流程、安全性质。事件规范顺序：
+  `HandStart → SaltCommitted(升序) → VrfFulfilled(0) → ForcedBet →
+  StreetStart(0) → HoleDealt → VrfFulfilled(k) → StreetStart(k) → BoardDealt`。
+- **Rust**：`crates/solpoker-core/src/deal.rs`（约 1100 行）——全部公式与
+  `DealSession` 编排（`deal_hole` / `deal_street` / `deal_runout` /
+  `append_event` 分步可调），43 个单测 + 1 文档测试；
+  `crates/solpoker-core/tests/deal_vectors.rs` 向量集成测试（std 手写极简
+  JSON 解析，无新依赖）。
+- **Python 参考**：`reference/solpoker_deal.py`（纯标准库）+
+  `reference/generate_vectors.py`（确定性生成，重复生成逐字节相同）。
+- **测试向量** `vectors/v1/`：`hu_2p`、`3p_sparse`（稀疏座位 0/4/8）、
+  `9p_full`、`button_rotation`（庄位轮转）、`runout`（翻前 all-in 合并）、
+  `redraw`（拒绝采样重抽，force_retry 测试钩子——自然拒绝概率 ≤2.8e-18
+  不可暴力搜索）。
+- **编码定案**（优化时的关键上下文）：
+  - `salt_digest = sha256("solpoker/salts/v1" ‖ table ‖ hand_id ‖ hand_mask
+    ‖ 升序 (seat,occupancy_id,occupant,salt))`；`seed_k =
+    sha256("solpoker/seed/v1" ‖ VRF_k ‖ salt_digest)`——与设计 §8.3 逐字节
+    一致，table/hand_id 经 salt_digest 传递绑定，不做额外绑定；
+  - `VrfFulfilled.attempt` 一律 1 起（与链上 caller_seed 的 attempt 约定
+    一致），各 target 取值写入 inputs 的 `vrf_attempts`，保证 inputs
+    完整决定 expected；
+  - runout 的 `BoardDealt.street` 记实际牌位（1/2/3），仅 `vrf_src=4`
+    （HandProof 的 board_src 与 vrf_src 一致）；
+  - 拒绝采样阈值 `2^64 mod n` 用 u128 计算：mod 52=16、mod 51=1、
+    mod 3=1、mod 2=0。
+
+### 验收命令及结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `cargo test -p solpoker-core` | ✅ 43 单测 + 1 向量集成测试（6 条向量全部逐字节一致）+ 1 文档测试 |
+| `py -3 reference/solpoker_deal.py verify` | ✅ 6/6 OK |
+| `py -3 reference/generate_vectors.py`（重复生成） | ✅ 逐字节相同 |
+| `cargo test --workspace` | ✅ 全部（含 Stage 2/3 回归） |
+
+### 遗留问题
+
+- 链上接线（Stage 5/6）：`advance`/发牌指令调 `DealSession` 各步，传真实
+  attempt（VrfSlot），在正确位置注入 ForcedBet/Action/Timeout/
+  StreetSkipped/HandEnd/HandVoid，事件字节写入 Game.events/ProofEntry；
+  发牌时校验各座位 salt_commitment（缺失/不符 → HandVoid(MissingSalt)）；
+  首手 `first_button`，之后 `next_clockwise` 轮转，Game 存 prev_button/
+  button_initialized。`set_force_retry` 是测试钩子，链上禁用。
+- CI 把「Rust + Python + 向量」三方一致性纳入流水线（本机已验证，
+  ci.yml 待加一步 `py -3 reference/solpoker_deal.py verify` +
+  `cargo test -p solpoker-core --test deal_vectors`）。
+- 2 人时 button_pick 的 mod 2 与原 heads-up 公式等价性已在规范 §5.3 注明。
+
 ## Stage 3：PER 隐私层上线（2026-10-06，devnet-tee 实测）
 
 > Deck 现在有真实的 PER 私有权限：陌生 token 读取被 validator 拒绝（不是

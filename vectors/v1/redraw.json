@@ -1,0 +1,187 @@
+{
+  "expected": {
+    "board": [
+      45,
+      25,
+      29,
+      10,
+      1
+    ],
+    "board_src": [
+      1,
+      1,
+      1,
+      2,
+      3
+    ],
+    "button": 1,
+    "draws": [
+      {
+        "card": 47,
+        "draw_no": 0,
+        "retry": 1
+      },
+      {
+        "card": 49,
+        "draw_no": 1,
+        "retry": 0
+      },
+      {
+        "card": 37,
+        "draw_no": 2,
+        "retry": 0
+      },
+      {
+        "card": 27,
+        "draw_no": 3,
+        "retry": 0
+      },
+      {
+        "card": 45,
+        "draw_no": 4,
+        "retry": 1
+      },
+      {
+        "card": 25,
+        "draw_no": 5,
+        "retry": 0
+      },
+      {
+        "card": 29,
+        "draw_no": 6,
+        "retry": 0
+      },
+      {
+        "card": 10,
+        "draw_no": 7,
+        "retry": 0
+      },
+      {
+        "card": 1,
+        "draw_no": 8,
+        "retry": 0
+      }
+    ],
+    "hole": {
+      "0": [
+        47,
+        37
+      ],
+      "1": [
+        49,
+        27
+      ]
+    },
+    "salt_commitments": {
+      "0": "06bc18721acb96180ba49bd869752319205ae7c957458393dce838608feb11be",
+      "1": "bfbfc69fc07628ddbcd8907e44293c849695310ac82f2e38462227b5bdae6f26"
+    },
+    "salt_digest": "24f4a100a261e3f30cc22b76b5bea8ce589fbae77bb065f0bae55a4c76ce6b98",
+    "seed_flop": "56657d014e179860f3dbac1d12413e30183a2394c590861bacd2f2210925a4fc",
+    "seed_preflop": "181a9979e1c150ef4bc1c90ba279904ddeecbfb739066e9427120bb8f28b994d",
+    "seed_river": "d6446028d20d23c5860bacfe21e0e7b137a9b162f45b93f6cebb065ede1b91ea",
+    "seed_runout": "422e6cb2d187fdfda2b0e2b6e777ffe7b927a13e3020aa4987992f6d358fc79c",
+    "seed_turn": "df208a46a7bc3f3deb511499d68cc76c5121bd9bc65e1c38587fd39c4547f36b",
+    "transcript_final": "c5f2abcf5fb4ee11511d16267b04f7cb77183d2b64b27170f6f4d6a5d93959d5"
+  },
+  "inputs": {
+    "button_initialized": false,
+    "force_retry": [
+      0,
+      4
+    ],
+    "forced": [
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 0
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 1
+      },
+      {
+        "amount": 100000,
+        "kind": 1,
+        "seat": 1
+      },
+      {
+        "amount": 200000,
+        "kind": 2,
+        "seat": 0
+      }
+    ],
+    "hand_id": 1,
+    "hand_mask": 3,
+    "occupancy_ids": [
+      9000,
+      9001,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "occupants": [
+      "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "prev_button": null,
+    "program_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "salts": {
+      "0": "a086d8cdd293c10efca9d94681ebffe59c68fa6e14f0dc58385bd280f9de43f5",
+      "1": "43e649ebbb40bd0eeef473ca34ddd8e5b1e0b804c7feed99ef2647f00f02fc04"
+    },
+    "script": [
+      {
+        "street": 1,
+        "type": "street"
+      },
+      {
+        "street": 2,
+        "type": "street"
+      },
+      {
+        "street": 3,
+        "type": "street"
+      }
+    ],
+    "stacks": [
+      20000000,
+      20000000,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "table": "6666666666666666666666666666666666666666666666666666666666666666",
+    "vrf_attempts": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1
+    },
+    "vrf_outputs": {
+      "0": "e01052f627be11665b86c4f4bc2b5e03910e1d7257427205900e8fc6ab37f1f6",
+      "1": "6cfa18039e6eaf581a1852e1e84c99b7f378711a6b335487839796a731319527",
+      "2": "b0e258de5292248f68dff19036e2de09af3269f7903b1196ff1d2ed61dc55011",
+      "3": "432cbb661b75cd0916126cbd6810f72ef81615ce53b1fab7f7fe66ea002d7318",
+      "4": "f07cf6ba8a3617a4ed2965b24f5b8b41042c53c1177f3ce80e2cfe9399e91e77"
+    }
+  },
+  "name": "redraw"
+}

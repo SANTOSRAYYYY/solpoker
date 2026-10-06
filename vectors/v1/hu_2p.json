@@ -1,0 +1,183 @@
+{
+  "expected": {
+    "board": [
+      24,
+      30,
+      7,
+      5,
+      38
+    ],
+    "board_src": [
+      1,
+      1,
+      1,
+      2,
+      3
+    ],
+    "button": 0,
+    "draws": [
+      {
+        "card": 48,
+        "draw_no": 0,
+        "retry": 0
+      },
+      {
+        "card": 8,
+        "draw_no": 1,
+        "retry": 0
+      },
+      {
+        "card": 3,
+        "draw_no": 2,
+        "retry": 0
+      },
+      {
+        "card": 9,
+        "draw_no": 3,
+        "retry": 0
+      },
+      {
+        "card": 24,
+        "draw_no": 4,
+        "retry": 0
+      },
+      {
+        "card": 30,
+        "draw_no": 5,
+        "retry": 0
+      },
+      {
+        "card": 7,
+        "draw_no": 6,
+        "retry": 0
+      },
+      {
+        "card": 5,
+        "draw_no": 7,
+        "retry": 0
+      },
+      {
+        "card": 38,
+        "draw_no": 8,
+        "retry": 0
+      }
+    ],
+    "hole": {
+      "0": [
+        8,
+        9
+      ],
+      "1": [
+        48,
+        3
+      ]
+    },
+    "salt_commitments": {
+      "0": "5ec838151a17d9d0e723ab53dc4ef34bd1de378a042799260c2ee1e19d87207f",
+      "1": "5842afa782f4808b46ef9683b44d78b778ab9f7bd95975cf5cc251aa2fa379dc"
+    },
+    "salt_digest": "010ca23fea4171ec3bf7f5515370d1f64e2fcd45d3ee5fc6d5d944ea65e19329",
+    "seed_flop": "0f15bc2fd39b6ec99ca92b773c0ad05865b590ccd828872187151c6bf75b400d",
+    "seed_preflop": "8e00ea2de3cf2f49a77c9221beb527ab86ff6b1d56d523cce0105f066b4f1e05",
+    "seed_river": "69f2c90612b1e5a993f4acb045156ea4d6da241770890209dfad42e82d72540e",
+    "seed_runout": "f422b91c0132d6b8ad2d5cf06ece1333203f347bbfa1b959dce1b2f6d2c52296",
+    "seed_turn": "e36e0589bb6aee0722dbff192fd242e628375d0f2f2d27a5a5de18d705c84a82",
+    "transcript_final": "0c3f6b5ad7f217b3e904bd7f317d79472d5db47c211c74e2e47d25aa7bb0ff05"
+  },
+  "inputs": {
+    "button_initialized": false,
+    "forced": [
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 0
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 1
+      },
+      {
+        "amount": 100000,
+        "kind": 1,
+        "seat": 0
+      },
+      {
+        "amount": 200000,
+        "kind": 2,
+        "seat": 1
+      }
+    ],
+    "hand_id": 1,
+    "hand_mask": 3,
+    "occupancy_ids": [
+      9000,
+      9001,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "occupants": [
+      "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "prev_button": null,
+    "program_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "salts": {
+      "0": "de8a458b9d7ce662a1b792e4005f308880da99debb021ad87c9ab7e995d2eb85",
+      "1": "9578a155b40ce726f3bd124a65116c61c51a5cfd037a3430a51ced9866e14ed8"
+    },
+    "script": [
+      {
+        "street": 1,
+        "type": "street"
+      },
+      {
+        "street": 2,
+        "type": "street"
+      },
+      {
+        "street": 3,
+        "type": "street"
+      }
+    ],
+    "stacks": [
+      20000000,
+      20000000,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "table": "1111111111111111111111111111111111111111111111111111111111111111",
+    "vrf_attempts": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1
+    },
+    "vrf_outputs": {
+      "0": "3915ec2f139f68b6e36fbd4b0b0383e25de8395fa2550150f0059231871c7252",
+      "1": "8d0c8cba85f52655e57c7dd4bac766485df014dcb7c352f6112ab204083c65db",
+      "2": "20806146fb3937eee0b69495b89724c9896fbc254d38b85d6a9a4ef286ec9b36",
+      "3": "600348ea9b9bff9acf25ead4d5d3d669956b3ead65e65598952f17e6517efc03",
+      "4": "f930258a10f7afdfc06edd072d01c0e7e3158fde1ac918e0688a466e4e663a4d"
+    }
+  },
+  "name": "hu_2p"
+}
