@@ -196,8 +196,16 @@ async function main() {
           })
           .instruction()
       );
-      const sig = await sendAndConfirm(l1, ixs, [deployer], `t${tableId} sweep cash_out[${i}]`);
-      console.log(`[t${tableId}] sweep cash_out[${i}]: ${sig.slice(0, 12)}...`);
+      try {
+        const sig = await sendAndConfirm(l1, ixs, [deployer], `t${tableId} sweep cash_out[${i}]`);
+        console.log(`[t${tableId}] sweep cash_out[${i}]: ${sig.slice(0, 12)}...`);
+      } catch (e) {
+        // Program-rejected seat (e.g. the dead state: ledger clean but the Game seat
+        // still Left): remember it for this snapshot so we do not retry every pass
+        // (each retry burns a fee and spams the log).
+        sweepTried.add(sweepKey);
+        console.log(`[t${tableId}] sweep skip[${i}]: ${String(e.message ?? e).slice(0, 90)}`);
+      }
       return; // one action per pass
     }
     // 1) take_seat：比较每个座位 L1 账本与 game 里的 occupancy_id
