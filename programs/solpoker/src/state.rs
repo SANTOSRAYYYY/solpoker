@@ -358,8 +358,18 @@ pub const REPLAY_RING: usize = 8;
 pub struct ReplayEntry {
     /// 槽位归属：写入时与 game.hand_id 比对（0 = 空槽）。
     pub hand_id: u64,
-    /// 该手 9 个 occupant —— 让「occupants + salts → salt_digest」这一步也能被验证。
-    pub occupants: [Pubkey; MAX_SEATS],
+    /// **v2**：每条街**结束时**（该街最后一个事件之后）的 transcript 摘要。
+    /// 有了它 + 链下公开的事件流，任何人都能验证"这条行动序列确实产生了这条
+    /// transcript"，并一路对到 HandProof.transcript_final（设计 §7）。
+    /// v1 里这 288 字节是 occupants —— 弃用理由：对历史手牌的 salt_digest 自检，
+    /// 价值低于"事件流可验证"；当前手的 occupant 仍可从实时 Game 读到。
+    pub street_end: [[u8; 32]; 4],
+    /// bit k = street_end[k] 有效。
+    pub streets_ended: u8,
+    /// 这 288 字节区的剩余部分（v2 未用，置零）。拆成两个数组：bytemuck 只对
+    /// ≤32 的数组有 Pod/Default 实现。
+    pub _occ_pad_a: [[u8; 32]; 4],
+    pub _occ_pad_b: [u8; 31],
     /// salt_digest = sha256("solpoker/salts/v1" ‖ table ‖ hand_id ‖ hand_mask ‖ 每座 …)
     pub salt_digest: [u8; 32],
     /// [preflop, flop, turn, river, runout] 各街第一张牌抽取前的 transcript。
@@ -370,8 +380,10 @@ pub struct ReplayEntry {
     pub status: u8,
     /// bit k = 该街确实发过牌（draw_digest[k] 有效）。
     pub streets_used: u8,
-    /// 显式填充：504 = 8×63。
-    pub _pad: [u8; 9],
+    /// 布局版本：0 = v1（同一段 288B 是 occupants），2 = v2（street_end + mask）。
+    pub layout_ver: u8,
+    /// 显式填充：504 = 8×63（**v2 不改变账户大小** → 老账户无需重建/重新 init）。
+    pub _pad: [u8; 8],
 }
 
 // ---------------------------------------------------------------------------

@@ -620,8 +620,8 @@ pub fn capture_draw_digest(replay: &mut HandReplay, hand_id: u64, k: usize, dige
     replay.entries[slot].streets_used |= 1u8 << k;
 }
 
-/// 手牌结束：补齐 replay entry 的其余字段（occupants / salt_digest /
-/// vrf_attempt_used / status）。必须在 secrets 清零前调用（attempt 来自 Deck）。
+/// 手牌结束：补齐 replay entry 的其余字段（salt_digest / vrf_attempt_used / status）。
+/// 必须在 secrets 清零前调用（attempt 来自 Deck）。layout_ver 写 2（street_end 版）。
 pub fn finalize_replay(
     replay: &mut HandReplay,
     game: &Game,
@@ -637,17 +637,35 @@ pub fn finalize_replay(
             ..Default::default()
         };
     }
-    for i in 0..MAX_SEATS {
-        entry.occupants[i] = if game.hand_mask & seat_bit(i as u8) != 0 {
-            game.seats[i].occupant
-        } else {
-            Pubkey::default()
-        };
-    }
     entry.salt_digest = current_salt_digest(&game.table.to_bytes(), game, salts);
     entry.vrf_attempt_used = deck.vrf_attempt_used;
     entry.status = status;
+    entry.layout_ver = 2;
     replay.head = replay.head.wrapping_add(1);
+}
+
+/// 记录**某条街结束时**的 transcript（§7 事件流存证的锚点）。
+/// street 用手里的 street 编号（0=preflop..3=river）；runout 结束的是最后一条下注街。
+/// **幂等**：同一街只记第一次（先到先得）—— runout 场景下"runout 前的下注街结束"
+/// 先写，随后结算路径再写同一街会被跳过，不会被 runout 的发牌事件污染。
+pub fn capture_street_end(replay: &mut HandReplay, game: &Game, street: u8) {
+    if street > 3 {
+        return;
+    }
+    let slot = replay_slot(game.hand_id);
+    let entry = &mut replay.entries[slot];
+    if entry.hand_id != game.hand_id {
+        *entry = ReplayEntry {
+            hand_id: game.hand_id,
+            ..Default::default()
+        };
+    }
+    if entry.streets_ended & (1u8 << street) != 0 {
+        return; // 已经有锚点（先到先得）
+    }
+    entry.street_end[street as usize] = game.transcript;
+    entry.streets_ended |= 1u8 << street;
+    entry.layout_ver = 2;
 }
 
 /// Write the ring-buffer proof entry for the finished hand and bump head.
@@ -779,6 +797,9 @@ fn do_settle(
         .checked_add(settlement.rake)
         .ok_or(SolpokerError::Overflow)?;
 
+    // §7：HandEnd 之前先把"最后一条下注街结束"的 transcript 锚点写进 replay
+    // （否则以弃牌/河牌结束的手，最后一条街没有 street_end 锚点）
+    capture_street_end(replay, game, game.street);
     transcript_append(
         &mut game.transcript,
         &Event::HandEnd {
@@ -878,6 +899,8 @@ fn void_hand_path(
         }
         game.transcript = st.transcript;
     }
+    // §7：HandVoid 之前补一次"最后一条下注街结束"的锚点（未发牌的手这里是空转录）
+    capture_street_end(replay, game, game.street);
     transcript_append(&mut game.transcript, &Event::HandVoid { reason });
 
     // Proof salts: whatever verifies against the stored commitments (zero for
@@ -1264,6 +1287,10 @@ fn await_street(
     let seed = deal::seed_k(&deck.vrf_out[k], &salt_digest);
     let attempt = deck.vrf_attempt_used[k];
     let mut st = DealState::resume(deck, game);
+    // §7：下一条街开始发牌之前，此刻的 transcript 就是"上一条街结束"的锚点。
+    // 注意 game.street 在发牌这一刻已经是**新街**（测试钉死：街号在发牌前推进），
+    // 所以要减一 —— 否则 0 号街（preflop）永远没有锚点。
+    capture_street_end(replay, game, game.street.saturating_sub(1));
     st.append(&Event::VrfFulfilled {
         target: target.to_core(),
         attempt,
@@ -1342,6 +1369,8 @@ fn await_runout(
     let seed = deal::seed_k(&deck.vrf_out[k], &salt_digest);
     let attempt = deck.vrf_attempt_used[k];
     let mut st = DealState::resume(deck, game);
+    // §7：runout 开始前，上一条下注街结束（transcript 锚点）
+    capture_street_end(replay, game, game.street);
     st.append(&Event::RunoutStarted);
     st.append(&Event::VrfFulfilled {
         target: CoreVrfTarget::Runout,
@@ -2334,15 +2363,20 @@ mod tests {
         assert_eq!(e.hand_id, hand_id, "槽位必须属于这一手");
         assert_eq!(e.status, PROOF_SETTLED);
         assert_eq!(e.streets_used, 0b1111, "preflop/flop/turn/river 都应记下首抽摘要");
+        // v2：四条街结束时都应有 transcript 锚点（§7 事件流存证）
+        assert_eq!(e.layout_ver, 2, "布局版本应为 v2");
+        assert_eq!(e.streets_ended, 0b1111, "四条街都应写下结束锚点");
+        assert!(e.street_end[3].iter().any(|b| *b != 0), "河牌街锚点不应为空");
 
-        // 2) salt_digest 必须能从（replay 的 occupants）+（secrets 的盐）+ occupancy_ids 复算
+        // 2) salt_digest 必须能从（Game 的 occupants —— v2 起不再存进 replay）+
+        //    （secrets 的盐）+ occupancy_ids 复算
         let proof_slot = (w.proof.head.wrapping_sub(1) % 16) as usize;
         let pe = w.proof.entries[proof_slot];
         let secrets_slot = (secrets_head(&w.proof) % 16) as usize;
         let sec = w.secrets.entries[secrets_slot];
         let mut occupants = [[0u8; 32]; MAX_SEATS];
         for i in 0..MAX_SEATS {
-            occupants[i] = e.occupants[i].to_bytes();
+            occupants[i] = w.game.seats[i].occupant.to_bytes();
         }
         let recomputed = deal::salt_digest(
             &table_bytes(),
