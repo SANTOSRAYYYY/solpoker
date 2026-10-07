@@ -118,6 +118,34 @@ export interface DealResult {
 }
 
 export function dealHand(crypto: Crypto, inputs: DealInputs): Promise<DealResult>;
+export interface ReplayVerifyInput {
+  table: string; // hex32
+  handId: string | number | bigint;
+  handMask: number;
+  button: number;
+  occupancyIds: (string | number | bigint)[];
+  occupants: (string | null)[]; // hex32 或 null
+  saltDigest: string; // hex32（链上 replay entry）
+  drawDigest: string[]; // 5 × hex32
+  streetsUsed: number;
+  vrfOut: string[]; // 5 × hex32（HandSecrets）
+  salts: string[]; // 9 × hex32（HandSecrets）
+  board: number[];
+  hole: number[][];
+}
+
+export interface ReplayVerifyResult {
+  ok: boolean;
+  draws: { card: number; expected: number; street: number; seat?: number }[];
+  diffs: string[];
+}
+
+export function dealFromReplay(
+  crypto: Crypto,
+  v: ReplayVerifyInput
+): Promise<ReplayVerifyResult>;
+export function holeOrderOf(button: number, handMask: number): number[];
+
 export function verifyVector(
   crypto: Crypto,
   vector: { name?: string; inputs: DealInputs; expected: Record<string, unknown> }

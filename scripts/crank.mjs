@@ -61,7 +61,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // HandReplay（§8.7 整手复算输入，2026-10-08）：advance 的必填账户；
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
-const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
+// sweep: remember failed attempts keyed by (table, seat, deposited, paid)`nconst sweepTried = new Set();`nconst vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
 async function sendAndConfirm(conn, ixs, signers, label, cu = null) {
@@ -172,7 +172,10 @@ async function main() {
       const occ = ledAcc.data.subarray(41, 73);
       if (occ.every((b) => b === 0)) continue; // empty seat
       const seatStatus = g[152 + i * 152 + 145];
-      if (seatStatus === 1) continue; // still seated
+      // ONLY the Left(2) state is sweepable: a fresh sit_down still shows 0
+      // (Empty) until take_seat flips it to 1, and sweeping that would evict a
+      // player who just paid in.
+      if (seatStatus !== 2) continue;
       const deposited = ledAcc.data.readBigUInt64LE(186);
       const paid = ledAcc.data.readBigUInt64LE(194);
       if (deposited <= paid) continue; // nothing to pay out

@@ -400,4 +400,91 @@ export async function readHandSecrets(
   }
 }
 
+// --------------------------------------------------------------- HandReplay
+/**
+ * 整手复算输入（§8.7，2026-10-08）。**委托账户**：数据写在 ER 上；
+ * 目前 commit_game 还没把它一起 commit 回 L1，所以要从 ER 读
+ * （公开账户免 token，实测可行）。每个 entry 504 字节，ring = 8，
+ * 槽位 = hand_id % 8。空槽的判据是 hand_id/streets/status 全零 ——
+ * 注意 **hand_id 0 是合法的一手**。
+ */
+export interface ReplayEntryView {
+  handId: bigint;
+  occupants: (PublicKey | null)[];
+  saltDigest: Uint8Array;
+  drawDigest: Uint8Array[]; // 5 × 32
+  vrfAttemptUsed: number[];
+  status: number; // 0=Settled 1=Void
+  streetsUsed: number; // bit k = draw_digest[k] 有效
+}
+
+export const REPLAY_RING = 8;
+const REPLAY_ENTRY = 504;
+
+export function replayPdaFor(tableId: number): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [new TextEncoder().encode("replay"), pdasFor(tableId).table.toBytes()],
+    PROGRAM_ID
+  )[0];
+}
+
+export function decodeHandReplay(d: Uint8Array): (ReplayEntryView | null)[] {
+  const out: (ReplayEntryView | null)[] = [];
+  for (let i = 0; i < REPLAY_RING; i++) {
+    const b = 8 + i * REPLAY_ENTRY;
+    if (b + REPLAY_ENTRY > d.length) {
+      out.push(null);
+      continue;
+    }
+    const handId = readU64(d, b);
+    const status = d[b + 493];
+    const streetsUsed = d[b + 494];
+    if (handId === 0n && status === 0 && streetsUsed === 0) {
+      out.push(null); // 空槽
+      continue;
+    }
+    out.push({
+      handId,
+      occupants: Array.from({ length: 9 }, (_, s) =>
+        isZero(d, b + 8 + s * 32, b + 8 + s * 32 + 32)
+          ? null
+          : pk(d, b + 8 + s * 32)
+      ),
+      saltDigest: d.slice(b + 296, b + 328),
+      drawDigest: Array.from({ length: 5 }, (_, k) =>
+        d.slice(b + 328 + k * 32, b + 328 + k * 32 + 32)
+      ),
+      vrfAttemptUsed: Array.from(d.slice(b + 488, b + 493)),
+      status,
+      streetsUsed,
+    });
+  }
+  return out;
+}
+
+/** 读 HandReplay：优先 ER（数据实时），回落 L1（commit 后才有）。 */
+export async function readHandReplay(
+  er: Connection,
+  l1: Connection,
+  tableId: number
+): Promise<{ entries: (ReplayEntryView | null)[]; source: "er" | "l1" } | null> {
+  try {
+    const acc = await er.getAccountInfo(replayPdaFor(tableId));
+    if (acc && acc.data.length > 8) {
+      return { entries: decodeHandReplay(acc.data), source: "er" };
+    }
+  } catch {
+    /* 回落 L1 */
+  }
+  try {
+    const acc = await l1.getAccountInfo(replayPdaFor(tableId));
+    if (acc && acc.data.length > 8) {
+      return { entries: decodeHandReplay(acc.data), source: "l1" };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export { TABLE_IDS_FILTER };

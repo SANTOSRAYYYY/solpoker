@@ -33,13 +33,15 @@ import { useWalletCtx } from "@/components/wallet-context";
 import { ER_RPC } from "@/lib/config";
 import { pdasFor } from "@/lib/solpoker-client";
 import { fmtUsdc, type GameView } from "@/lib/game-state";
-import { verifyVector, webCrypto } from "@/lib/deal-verify.mjs";
+import { verifyVector, webCrypto, dealFromReplay } from "@/lib/deal-verify.mjs";
 import { DEAL_VECTORS } from "@/lib/vectors";
 import {
-  readHandProof,
-  readHandSecrets,
   readGameLive,
+  readHandProof,
+  readHandReplay,
+  readHandSecrets,
   type ProofEntryView,
+  type ReplayEntryView,
   type SecretsEntryView,
 } from "@/lib/chain-read";
 import { scanTables, type TableInfo } from "@/lib/tables";
@@ -188,6 +190,16 @@ export default function HistoryPage() {
         conservation: { sum: string; rake: string; ok: boolean };
       }
   >({ phase: "idle" });
+  /** HandReplay（§8.7 整手复算输入；委托账户 → 从 ER 读） */
+  const [replay, setReplay] = useState<
+    { entries: (ReplayEntryView | null)[]; source: "er" | "l1" } | null
+  >(null);
+  /** 整手复算结果 */
+  const [full, setFull] = useState<
+    | { phase: "idle" }
+    | { phase: "running" }
+    | { phase: "done"; ok: boolean; draws: number; matched: number; diffs: string[] }
+  >({ phase: "idle" });
   /** 引擎自检：用页面同一套 deal-verify 跑 Stage-4 向量 */
   const [engine, setEngine] = useState<
     | { phase: "idle" }
@@ -224,14 +236,16 @@ export default function HistoryPage() {
       for (;;) {
         if (stop) return;
         try {
-          const [proof, sec, live] = await Promise.all([
+          const [proof, sec, live, rep] = await Promise.all([
             readHandProof(ctx.l1, tableId),
             readHandSecrets(ctx.l1, tableId),
             readGameLive(er, ctx.l1, tableId).catch(() => null),
+            readHandReplay(er, ctx.l1, tableId).catch(() => null),
           ]);
           setEntries(proof?.entries ?? []);
           setSecrets(sec ?? []);
           setGame(live?.game ?? null);
+          setReplay(rep);
           setSel((cur) => (cur === null && proof ? proof.entries.findIndex((e) => e) : cur));
         } catch {
           /* 下一轮 */
@@ -246,6 +260,11 @@ export default function HistoryPage() {
 
   const entry = sel !== null ? entries[sel] ?? null : null;
   const secret = sel !== null ? secrets[sel] ?? null : null;
+  /** 这一手在 replay 环里对应哪条（按 hand_id 匹配，不靠槽位猜） */
+  const replayEntry = useMemo(() => {
+    if (!entry || !replay) return null;
+    return replay.entries.find((r) => r && r.handId === entry.handId) ?? null;
+  }, [entry, replay]);
 
   const liveEntries = useMemo(
     () => entries.map((e, i) => ({ e, i })).filter((x): x is { e: ProofEntryView; i: number } => !!x.e),
@@ -499,6 +518,66 @@ export default function HistoryPage() {
                   >
                     {check.phase === "running" ? "复算中…" : "当场复算（守恒 / 盐摘要 / 种子）"}
                   </button>
+                  <button
+                    className="btn-casino btn-mint px-5 py-2.5 text-[13px]"
+                    disabled={full.phase === "running" || !replayEntry || !secret || !entry}
+                    onClick={async () => {
+                      if (!replayEntry || !secret || !entry || !game) return;
+                      setFull({ phase: "running" });
+                      try {
+                        const r = await dealFromReplay(webCrypto, {
+                          table: pdasFor(tableId!).table.toBase58(),
+                          handId: entry.handId.toString(),
+                          handMask: entry.handMask,
+                          button: entry.button,
+                          occupancyIds: entry.occupancyIds.map((x) => x.toString()),
+                          occupants: replayEntry.occupants.map((o) =>
+                            o ? o.toBase58() : null
+                          ),
+                          saltDigest: [...replayEntry.saltDigest]
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join(""),
+                          drawDigest: replayEntry.drawDigest.map((d) =>
+                            [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                          ),
+                          streetsUsed: replayEntry.streetsUsed,
+                          vrfOut: secret.vrfOut.map((d) =>
+                            [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                          ),
+                          salts: secret.salts.map((d) =>
+                            [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                          ),
+                          board: entry.board,
+                          hole: entry.hole,
+                        } as never);
+                        const matched = r.draws.filter(
+                          (d) => d.expected === undefined || d.expected === d.card
+                        ).length;
+                        setFull({
+                          phase: "done",
+                          ok: r.ok,
+                          draws: r.draws.length,
+                          matched,
+                          diffs: r.diffs,
+                        });
+                      } catch (e) {
+                        setFull({
+                          phase: "done",
+                          ok: false,
+                          draws: 0,
+                          matched: 0,
+                          diffs: [String(e instanceof Error ? e.message : e)],
+                        });
+                      }
+                    }}
+                  >
+                    {full.phase === "running" ? "整手复算中…" : "整手复算（52 张逐张比对）"}
+                  </button>
+                  {!replayEntry && (
+                    <span className="text-[11.5px] text-warn">
+                      这一手没有 replay 记录（replay 环只存最近 8 手；或该手在 init_replay 之前）
+                    </span>
+                  )}
                   <a
                     href="https://github.com/SANTOSRAYYYY/solpoker/blob/main/reference/solpoker_deal.py"
                     target="_blank"
@@ -508,6 +587,24 @@ export default function HistoryPage() {
                     参考验证器（Python）↗
                   </a>
                 </div>
+
+                {full.phase === "done" && (
+                  <div className="mt-3 rounded-xl border border-accent-500/20 bg-black/30 p-4 font-mono text-[11.5px] leading-relaxed">
+                    <div className="flex items-center gap-2">
+                      <Badge tone={full.ok ? "mint" : "danger"}>
+                        {full.ok ? "整手复算通过 ✓" : "整手复算不一致 ✗"}
+                      </Badge>
+                      <span className="text-mist-dim">
+                        逐张比对 {full.matched}/{full.draws} 张（从 VRF + 盐 + 街首摘要重抽）
+                      </span>
+                    </div>
+                    {full.diffs.slice(0, 6).map((d, i) => (
+                      <div key={i} className="mt-1 text-loss">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {check.phase === "done" && (
                   <div className="mt-4 space-y-2 rounded-xl border border-accent-500/20 bg-black/30 p-4 font-mono text-[11.5px] leading-relaxed">

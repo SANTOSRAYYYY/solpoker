@@ -375,6 +375,155 @@ export async function dealHand(crypto, inputs) {
   return out;
 }
 
+// ---------------------------------------------------------------- 从链上 replay 复算
+/**
+ * 用 HandReplay（draw_digest / salt_digest / vrf_attempt_used / occupants）
+ * + HandSecrets（vrf_out / salts）+ HandProof（board / hole / hand_mask / button）
+ * 把一手牌**逐张**重新抽出来，并与 proof 里记录的牌比对。
+ *
+ * 这是规范测试 `replay_entry_rebuilds_every_drawn_card`（Rust）的 JS 对应实现：
+ * 两边的抽取顺序、事件顺序、draw_no 编号必须完全一致。
+ *
+ * @returns {{ ok: boolean, draws: {card:number, expected:number, street:number, seat?:number}[], diffs: string[] }}
+ */
+export async function dealFromReplay(crypto, v) {
+  const table = unhex(v.table);
+  const handId = BigInt(v.handId);
+  const seats = setBits(v.handMask);
+  const n = seats.length;
+  const diffs = [];
+
+  // 1) salt_digest 独立复算（occupants 来自 replay，盐来自 HandSecrets）
+  const occupants = v.occupants.map((x) => (x ? unhex(x) : null));
+  const salts = v.salts.map((x) => unhex(x));
+  const recomputedDigest = await saltDigest(
+    crypto,
+    table,
+    handId,
+    v.handMask,
+    occupants,
+    v.occupancyIds.map((x) => BigInt(x)),
+    salts
+  );
+  if (hex(recomputedDigest) !== hex(unhex(v.saltDigest))) {
+    diffs.push(
+      `salt_digest 不一致：复算 ${hex(recomputedDigest).slice(0, 12)}… 链上 ${v.saltDigest.slice(0, 12)}…`
+    );
+  }
+
+  // 2) 逐街重放
+  const draws = [];
+  let used = 0;
+  let drawNo = 0;
+  const deckHas = (card) => (used & (1n << BigInt(card))) !== 0n;
+  const take = (card) => {
+    used |= 1n << BigInt(card);
+  };
+
+  // 内部：从给定街首摘要出发，抽 count 张牌（每张抽完追加对应的事件）
+  const rebuild = async (seed, digestStart, count, makeEvent, label) => {
+    let digest = unhex(digestStart);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const deck = newDeck().filter((c) => !deckHas(c));
+      const { card, retry } = await drawCard(crypto, seed, table, handId, drawNo, digest, deck, 0);
+      out.push({ card, retry });
+      digest = await transcriptAppend(crypto, digest, encodeEvent(makeEvent(card, drawNo, retry)));
+      drawNo += 1;
+    }
+    return out;
+  };
+
+  // --- preflop：2n 张底牌（HoleDealt），从 draw_digest[0] 出发 ---
+  const has = (k) => (v.streetsUsed & (1 << k)) !== 0;
+  if (!has(0)) {
+    diffs.push("该手没有 preflop 摘要（作废手或发牌前结束）");
+    return { ok: false, draws, diffs };
+  }
+  const seed = (k) => streetSeed(crypto, unhex(v.vrfOut[k]), unhex(v.saltDigest));
+  const seed0 = await seed(0);
+  const order = v.button >= 0 ? holeOrderOf(v.button, v.handMask) : seats;
+  const holeExpected = v.hole.map((pair) =>
+    pair.map((c) => (c >= 52 ? null : c))
+  );
+  {
+    let digest = unhex(v.drawDigest[0]);
+    for (let k = 0; k < 2 * n; k++) {
+      const seat = order[k % n];
+      const slot = Math.floor(k / n);
+      const deck = newDeck().filter((c) => !deckHas(c));
+      const { card } = await drawCard(crypto, seed0, table, handId, drawNo, digest, deck, 0);
+      take(card);
+      digest = await transcriptAppend(
+        crypto,
+        digest,
+        encodeEvent({ type: "HoleDealt", seat, draw_no: drawNo })
+      );
+      drawNo += 1;
+      const want = holeExpected[seat][slot];
+      draws.push({ card, expected: want, street: 0, seat });
+      if (want !== null && want !== card) {
+        diffs.push(`底牌 座${seat}/第${slot + 1}张：复算 ${card} ≠ 链上 ${want}`);
+      }
+    }
+  }
+
+  // --- 公共牌：由 streets_used 推出每个板位属于哪条街（不需要链上另存 board_src）---
+  // 规则：正常街 1 发 3 张、街 2/3 各 1 张；runout（k=4）覆盖剩下的所有板位。
+  const normalCount =
+    (has(1) ? 3 : 0) + (has(2) ? 1 : 0) + (has(3) ? 1 : 0);
+  const srcOf = (pos) => {
+    if (pos >= normalCount) return 4; // runout
+    if (pos < 3) return 1;
+    return pos === 3 ? 2 : 3;
+  };
+  let boardPos = 0;
+  const boardExpected = v.board;
+  for (const k of [1, 2, 3, 4]) {
+    if (!has(k)) continue;
+    let count = 0;
+    for (let p = 0; p < 5; p++) if (srcOf(p) === k) count++;
+    if (count === 0) continue;
+    const seedK = await seed(k);
+    let digest = unhex(v.drawDigest[k]);
+    const startPos = boardPos;
+    for (let i = 0; i < count; i++) {
+      const pos = startPos + i;
+      const street = pos < 3 ? 1 : pos === 3 ? 2 : 3; // 该板位实际所属街
+      const deck = newDeck().filter((c) => !deckHas(c));
+      const { card } = await drawCard(crypto, seedK, table, handId, drawNo, digest, deck, 0);
+      take(card);
+      digest = await transcriptAppend(
+        crypto,
+        digest,
+        encodeEvent({
+          type: "BoardDealt",
+          street,
+          card,
+          draw_no: drawNo,
+          vrf_src: k,
+        })
+      );
+      drawNo += 1;
+      const want = boardExpected[pos];
+      draws.push({ card, expected: want, street });
+      if (want !== undefined && want !== card) {
+        diffs.push(`公共牌 第${pos + 1}张（街${street}）：复算 ${card} ≠ 链上 ${want}`);
+      }
+    }
+    boardPos += count;
+  }
+
+  return { ok: diffs.length === 0, draws, diffs };
+}
+
+/** 底牌发放顺序：button 左侧第一位起，顺时针（与程序 deal::hole_order 同义）。 */
+export function holeOrderOf(button, handMask) {
+  const seats = setBits(handMask);
+  const start = (seats.indexOf(button) + 1) % seats.length;
+  return [...seats.slice(start), ...seats.slice(0, start)];
+}
+
 // ---------------------------------------------------------------- 向量校验
 /** 深层规范化：对象按 key 排序后再序列化（与参考实现比对时不受字段顺序影响）。 */
 function canon(v) {
