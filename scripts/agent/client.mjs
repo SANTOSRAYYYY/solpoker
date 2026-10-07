@@ -281,6 +281,20 @@ export async function ixStandUp(program, table, seat, signer) {
     .instruction();
 }
 
+export async function ixTopUp(program, { table, seat, amountMicro }) {
+  const vaultAuth = vaultAuthPda(table);
+  return program.methods
+    .topUp(seat, new BN(amountMicro))
+    .accounts({
+      table, seat: seatPda(table, seat), vaultAuth,
+      vault: getAssociatedTokenAddressSync(TUSDC_MINT, vaultAuth, true),
+      mint: TUSDC_MINT,
+      playerAta: getAssociatedTokenAddressSync(TUSDC_MINT, program.provider.wallet.publicKey),
+      payer: program.provider.wallet.publicKey,
+    })
+    .instruction();
+}
+
 export async function ixCashOut(program, table, seat, payoutAta, caller, game) {
   const vaultAuth = vaultAuthPda(table);
   return program.methods

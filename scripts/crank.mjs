@@ -184,6 +184,27 @@ async function main() {
       }
     }
 
+    // 1b) apply_deposits：Seated 座位的 L1 入金（top_up）计入 ER 筹码
+    //     （§5.2.4；仅在座位不在当前手牌中时安全计入）。
+    for (let i = 0; i < 9; i++) {
+      const seatOff = 152 + i * 152;
+      if (g[seatOff + 145] !== 1) continue; // 只处理 Seated
+      const credited = g.readBigUInt64LE(seatOff + 112);
+      if ((g.readUInt16LE(1526) & (1 << i)) !== 0) continue; // 在手牌中，等手间
+      const ledgerAcc = await er.getAccountInfo(seatPda(table, i));
+      if (!ledgerAcc) continue;
+      const deposited = ledgerAcc.data.readBigUInt64LE(186);
+      if (deposited > credited) {
+        const ix = await program.methods
+          .applyDeposits(i)
+          .accounts({ table, game, seatLedger: seatPda(table, i), caller: deployer.publicKey })
+          .instruction();
+        const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} apply_deposits[${i}]`, ER_CU);
+        console.log(`[t${tableId}] apply_deposits[${i}] (+${Number(deposited - credited) / 1e6}): ${sig.slice(0, 12)}…`);
+        return;
+      }
+    }
+
     // 2) VRF：armed(state==1) → request；Pending 超时 → retry（简化：armed 才管，
     //    履行由 oracle 自动回调，等待即可）
     if (vrfState === 1) {

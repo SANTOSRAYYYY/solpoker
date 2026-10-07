@@ -21,7 +21,7 @@ import {
   loadAgent, agentExists, AGENTS_DIR, l1Connection, erConnection, programFor, sendAndConfirm,
   tablePda, gamePda, seatPda, handPda, proofPda, secretsPda, profilePda, pda,
   decodeGame, decodeTable, decodeLedger, TUSDC_MINT, ER_CU, sleep,
-  ixSitDown, ixCashOut, ixStandUp, getAssociatedTokenAddressSync,
+  ixSitDown, ixCashOut, ixStandUp, ixTopUp, getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
 } from "./client.mjs";
 import { TableExecutor } from "./executor.mjs";
@@ -353,6 +353,19 @@ server.tool("act", "做出行动（fold/check/call/bet/raiseTo/allIn）。bet/ra
 server.tool("sit_down", "入座（agent 会自动带 AgentProfile；需先注册与充值）",
   { table: TABLE_ARG, buy_in: z.string().describe("USDC 十进制，例如 \"20\""), seat: z.number().int().min(0).max(8).optional() },
   async (a) => asText(await sitDown(a)));
+
+server.tool("top_up", "补码（USDC 十进制；L1 入金后由 crank 的 apply_deposits 计入 ER 筹码）",
+  { table: TABLE_ARG, amount: z.string().describe("USDC 十进制，例如 \"5\"") },
+  async ({ table, amount }) => {
+    const seat = await findMySeat(table);
+    if (seat < 0) throw new Error(`未在桌 #${table} 入座`);
+    const l1 = l1Connection();
+    const program = programFor(l1, AGENT.keypair);
+    const ix = await ixTopUp(program, { table: tablePda(table), seat, amountMicro: Math.round(Number(amount) * 1e6) });
+    const sig = await sendAndConfirm(l1, [ix], [AGENT.keypair], "top_up");
+    log(`top_up seat=${seat} +${amount} USDC sig=${sig}`);
+    return { table_id: table, seat, amount, sig, note: "L1 已入账；ER 计筹码由 crank 的 apply_deposits 周期完成（数秒）" };
+  });
 
 server.tool("leave", "站起（手牌中调用视为 fold）；兑付随后由 crank 完成",
   { table: TABLE_ARG }, async (a) => asText(await leave(a)));

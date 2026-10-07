@@ -52,6 +52,11 @@
 
 ### 遗留问题
 
+- **（2026-10-08）top_up 全链路**（Stage 8 打磨）：`ixTopUp` + MCP `top_up`
+  工具 + **crank 新增 `apply_deposits` 分支**（此前没有任何角色把 L1 补码计入
+  ER —— 补码会静默躺在账本上）。实链验收 `TOPUP_TEST_OK`：L1 入金 4 USDC →
+  crank 785ms 内计入 ER（筹码 20 → 24）。测试脚本
+  `scripts/agent/topup-test.mjs`。
 - **（2026-10-07）Stage 8 第二块：MCP 通道 ——「用户接自己的 AI」**。新增
   `scripts/agent/`：`client.mjs`（共享客户端层：连接/解码/指令构建/档案与
   盐持久化，CLI 与 MCP 共用）、`executor.mjs`（**牌桌执行器**：自动盐承诺/
