@@ -99,6 +99,79 @@
       ]
     },
     {
+      "name": "admin_force_stand_up",
+      "docs": [
+        "admin_force_stand_up（ER，admin 门禁）：回收弃置座位（密钥丢失等）。",
+        "筹码全额转入该座位自己的 owed_total——只有其 payout 地址能领取。"
+      ],
+      "discriminator": [
+        152,
+        156,
+        44,
+        143,
+        64,
+        145,
+        182,
+        116
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "admin_set_members",
       "docs": [
         "admin_set_members（§11.2 过渡版，ER）：更新 Deck/PlayerHand 的 PER",

@@ -52,6 +52,17 @@
 
 ### 遗留问题
 
+- **（2026-10-07）admin_force_stand_up：运营侧清座（弃置座位回收）**。用户问
+  「桌子卡住要不要重部署」——重部署只换代码、不动账户数据（卡住的座位在
+  Game 账户里），所以加了正确的工具：`admin_force_stand_up(idx)`（ER，
+  table.admin 门禁）。**资金纪律：筹码全额转入该座位自己的 owed_total，只有
+  占用者入座时固定的 payout 地址能 cash_out 领取——管理员/金库碰不到任何
+  资金**；限制：座位须在当前手牌之外（hand_in 时的玩家等本手结束自动离座）。
+  已在 #5 的未知密钥遗留座位上实链验收（20 USDC 按其 payout 兑付，
+  #5–#9 全部清空）。脚本 `scripts/force-stand-up.mjs`（含 payout ATA 兜底
+  创建）。**运维经验：重新部署程序后，ER/TEE 会有短暂窗口仍运行缓存的旧
+  二进制（症状：新指令返回 101 InstructionFallbackNotFound，advance 等旧
+  指令正常）——等待 ~30–60s 重试即可，无需其他操作。**
 - **（2026-10-07）A7 自动离座补齐 + 死桌清理**：用户实测「其他桌上的人很久
   不走」。定位：自动离座只在 `close_hand`（手牌结束）执行，而**手牌卡在
   Commit（掉线玩家从不提交承诺）时 close_hand 永不执行**——strikes 白涨、

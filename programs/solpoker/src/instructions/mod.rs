@@ -1,6 +1,7 @@
 //! Instruction handlers (ER side, design §14.2).
 
 pub mod act;
+pub mod admin_force_stand_up;
 pub mod admin_set_members;
 pub mod advance;
 pub mod apply_deposits;

@@ -650,6 +650,23 @@ pub struct InitPermissions<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// admin_force_stand_up（ER，table.admin 门禁，2026-10-07）：弃置座位回收。
+/// 资金纪律：筹码全额转入该座位自己的 owed_total，只有占用者的 payout 能
+/// 通过 cash_out 领取——管理员碰不到任何资金。座位须在手牌之外。
+#[derive(Accounts)]
+pub struct AdminForceStandUp<'info> {
+    #[account(
+        seeds = [b"table", table.table_id.to_le_bytes().as_ref()],
+        bump = table.bump,
+        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub table: Account<'info, Table>,
+    #[account(mut, seeds = [b"game", table.key().as_ref()], bump)]
+    pub game: AccountLoader<'info, Game>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
 /// admin_set_members（§11.2 过渡版，ER，table.admin 门禁）：更新 Deck 或
 /// PlayerHand[i] 的 PER 成员。权限的 authority 是被权限账户自身（创建时由
 /// PDA 签名），所以只能由本程序以 PDA invoke_signed 更新。
@@ -1075,6 +1092,12 @@ pub mod solpoker {
         member_pubkeys: Vec<Pubkey>,
     ) -> Result<()> {
         instructions::admin_set_members::handler(ctx, target_index, member_pubkeys)
+    }
+
+    /// admin_force_stand_up（ER，admin 门禁）：回收弃置座位（密钥丢失等）。
+    /// 筹码全额转入该座位自己的 owed_total——只有其 payout 地址能领取。
+    pub fn admin_force_stand_up(ctx: Context<AdminForceStandUp>, idx: u8) -> Result<()> {
+        instructions::admin_force_stand_up::handler(ctx, idx)
     }
 
     /// Test harness（Stage 2/3 保留，后续 Phase 移除）：ER 上手动 arm VRF

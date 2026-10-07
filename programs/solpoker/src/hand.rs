@@ -2277,6 +2277,23 @@ mod tests {
         fund::assert_conservation_er(&w.game).unwrap();
     }
 
+    /// admin_force_stand_up 的释放逻辑（2026-10-07）：筹码全额转 owed、
+    /// 状态 Left、字段清空；资金只归原座位的 owed（守恒不变式保持）。
+    #[test]
+    fn force_release_moves_stack_to_owed() {
+        let mut w = World::heads_up();
+        let before_owed = w.game.seats[0].owed_total;
+        fund::force_release(&mut w.game.seats[0]);
+        w.game.occupied_mask &= !1;
+        let s = &w.game.seats[0];
+        assert_eq!(s.status, fund::SEAT_LEFT);
+        assert_eq!(s.stack, 0);
+        assert_eq!(s.owed_total, before_owed + STACK);
+        assert_eq!(s.strikes, 0);
+        assert_eq!(s.salt_commit, [0u8; 32]);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
     #[test]
     fn proof_ring_wraps_after_16_entries() {
         let mut w = World::heads_up();

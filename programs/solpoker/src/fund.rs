@@ -113,6 +113,26 @@ pub fn stand_up_release(seat: &mut SeatState, deposited: u64) {
     seat.next_salt_commit = [0; 32];
 }
 
+/// 管理员清座（admin_force_stand_up，2026-10-07）：弃置座位（密钥丢失等）
+/// 的运营侧回收。**资金纪律：筹码全额转入该座位自己的 `owed_total`——只有
+/// 占用者固定的 payout 地址能通过 cash_out 领取，管理员/金库一分钱也碰不到。**
+/// `credited_total` 不动（未计入的补码留给后续 apply_deposits 归入 owed，
+/// §5.1 单调性——与 close_hand 的自动离座同款）；strikes 清零。
+pub fn force_release(seat: &mut SeatState) {
+    seat.owed_total = seat.owed_total.saturating_add(seat.stack);
+    seat.stack = 0;
+    seat.status = SEAT_LEFT;
+    seat.leave_requested = 0;
+    seat.in_hand = 0;
+    seat.street_bet = 0;
+    seat.folded = 0;
+    seat.all_in = 0;
+    seat.acted = 0;
+    seat.salt_commit = [0; 32];
+    seat.next_salt_commit = [0; 32];
+    seat.strikes = 0;
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot readers (§5.3)
 // ---------------------------------------------------------------------------
