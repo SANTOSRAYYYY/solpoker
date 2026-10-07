@@ -246,6 +246,9 @@ pub struct CommitGame<'info> {
     /// CHECK: HandSecrets（与 HandProof 配套的盐/VRF 环，一并 commit）。
     #[account(mut, seeds = [b"secrets", table.key().as_ref()], bump)]
     pub hand_secrets: AccountLoader<'info, HandSecrets>,
+    /// HandReplay（§8.7 整手复算输入，随 Game/Proof/Secrets 一起 commit 回 L1）。
+    #[account(mut, seeds = [b"replay", table.key().as_ref()], bump)]
+    pub hand_replay: AccountLoader<'info, HandReplay>,
     /// CHECK: 委托的 CommitPayer PDA，作为 intent payer 由程序 invoke_signed。
     #[account(mut, seeds = [b"commit_payer", table.key().as_ref()], bump)]
     pub commit_payer: UncheckedAccount<'info>,

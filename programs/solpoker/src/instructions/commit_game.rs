@@ -49,6 +49,9 @@ pub fn handler(ctx: Context<CommitGame>) -> Result<()> {
         ctx.accounts.game.to_account_info(),
         ctx.accounts.hand_proof.to_account_info(),
         ctx.accounts.hand_secrets.to_account_info(),
+        // §8.7: per-hand recompute inputs live in HandReplay on the ER; without
+        // committing them they would only exist while the ER holds the account.
+        ctx.accounts.hand_replay.to_account_info(),
     ])
     .build_and_invoke_signed(&[&[b"commit_payer", table_bytes.as_ref(), &[bump]]])?;
 

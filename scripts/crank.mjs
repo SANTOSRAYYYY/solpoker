@@ -61,7 +61,8 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // HandReplay（§8.7 整手复算输入，2026-10-08）：advance 的必填账户；
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
-// sweep: remember failed attempts keyed by (table, seat, deposited, paid)`nconst sweepTried = new Set();`nconst vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
+const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
+const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
 async function sendAndConfirm(conn, ixs, signers, label, cu = null) {
@@ -287,6 +288,7 @@ async function main() {
           .commitGame()
           .accounts({
             table, game, handProof: proofPda(table), handSecrets: secretsPda(table),
+            handReplay: replayPda(table),
             commitPayer: commitPayerPda(table), magicContext: MAGIC_CONTEXT,
             magicProgram: MAGIC_PROGRAM, magicFeeVault,
           })
