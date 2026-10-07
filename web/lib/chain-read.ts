@@ -425,9 +425,16 @@ export async function readHandSecrets(
  */
 export interface ReplayEntryView {
   handId: bigint;
+  /** v1：9 个 occupant（v2 起不再存，历史条目仍有） */
   occupants: (PublicKey | null)[];
   saltDigest: Uint8Array;
   drawDigest: Uint8Array[]; // 5 × 32
+  /** v2：每条街**结束**时的 transcript 锚点（§7 事件流存证；v1 条目为空） */
+  streetEnd: Uint8Array[]; // 4 × 32
+  /** v2：bit k = streetEnd[k] 有效 */
+  streetsEnded: number;
+  /** 0 = v1（occupants 版），2 = v2（street_end 版） */
+  layoutVer: number;
   vrfAttemptUsed: number[];
   status: number; // 0=Settled 1=Void
   streetsUsed: number; // bit k = draw_digest[k] 有效
@@ -460,11 +467,24 @@ export function decodeHandReplay(d: Uint8Array): (ReplayEntryView | null)[] {
     }
     out.push({
       handId,
-      occupants: Array.from({ length: 9 }, (_, s) =>
-        isZero(d, b + 8 + s * 32, b + 8 + s * 32 + 32)
-          ? null
-          : pk(d, b + 8 + s * 32)
-      ),
+      // v1：occupants 在 b+8..b+296；v2：这一段是 street_end[4] + mask + 填充。
+      // 两者靠尾部的 layout_ver（b+495）区分：0 = v1，2 = v2。
+      occupants:
+        d[b + 495] === 2
+          ? []
+          : Array.from({ length: 9 }, (_, s) =>
+              isZero(d, b + 8 + s * 32, b + 8 + s * 32 + 32)
+                ? null
+                : pk(d, b + 8 + s * 32)
+            ),
+      streetEnd:
+        d[b + 495] === 2
+          ? Array.from({ length: 4 }, (_, k) =>
+              d.slice(b + 8 + k * 32, b + 8 + k * 32 + 32)
+            )
+          : [],
+      streetsEnded: d[b + 495] === 2 ? d[b + 136] : 0,
+      layoutVer: d[b + 495],
       saltDigest: d.slice(b + 296, b + 328),
       drawDigest: Array.from({ length: 5 }, (_, k) =>
         d.slice(b + 328 + k * 32, b + 328 + k * 32 + 32)
