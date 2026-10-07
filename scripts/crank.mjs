@@ -61,6 +61,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // HandReplay（§8.7 整手复算输入，2026-10-08）：advance 的必填账户；
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
+const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
 async function sendAndConfirm(conn, ixs, signers, label, cu = null) {
@@ -161,6 +162,40 @@ async function main() {
     const handsSinceCommit = g[1550];
     const now = Math.floor(Date.now() / 1000);
 
+    // 0) sweep: clear "left but not cashed out" zombie seats. cash_out is
+    // permissionless (design X7) and the program pins the payout ATA recorded at
+    // sit_down, so the crank can only ever send the money back to its owner.
+    // This frees the seat for the next player instead of leaving it locked.
+    for (let i = 0; i < 9; i++) {
+      const ledAcc = await l1.getAccountInfo(seatPda(table, i)); // 账本在 L1（未委托）
+      if (!ledAcc) continue;
+      const occ = ledAcc.data.subarray(41, 73);
+      if (occ.every((b) => b === 0)) continue; // empty seat
+      const seatStatus = g[152 + i * 152 + 145];
+      if (seatStatus === 1) continue; // still seated
+      const deposited = ledAcc.data.readBigUInt64LE(186);
+      const paid = ledAcc.data.readBigUInt64LE(194);
+      if (deposited <= paid) continue; // nothing to pay out
+      const payout = new PublicKey(ledAcc.data.subarray(154, 186));
+      const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
+      const ixs = [];
+      if (!(await l1.getAccountInfo(payoutAta))) {
+        ixs.push(createAssociatedTokenAccountInstruction(deployer.publicKey, payoutAta, payout, TUSDC_MINT));
+      }
+      ixs.push(
+        await program.methods
+          .cashOut(i)
+          .accounts({
+            table, game, seat: seatPda(table, i), vaultAuth: vaultAuthPda(table),
+            vault: getAssociatedTokenAddressSync(TUSDC_MINT, vaultAuthPda(table), true),
+            mint: TUSDC_MINT, payoutAta, caller: deployer.publicKey,
+          })
+          .instruction()
+      );
+      const sig = await sendAndConfirm(l1, ixs, [deployer], `t${tableId} sweep cash_out[${i}]`);
+      console.log(`[t${tableId}] sweep cash_out[${i}]: ${sig.slice(0, 12)}...`);
+      return; // one action per pass
+    }
     // 1) take_seat：比较每个座位 L1 账本与 game 里的 occupancy_id
     for (let i = 0; i < 9; i++) {
       const seatOff = 152 + i * 152;
