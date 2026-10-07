@@ -247,27 +247,9 @@ if (!(await er.getAccountInfo(perm(deck)))) {
     .instruction();
   await sendAndConfirm(er, [ix], [deployer], "init_permissions (ER, 10 perms)", ER_CU);
 } else console.log("… permissions exist");
-
-// ---------- 5b. ER: PER members（§11.2 过渡模型） ----------
-// 2026-10-07 实测：TEE 现在拒绝「成功执行且写了 PER 私有账户、但签名者不是
-// 成员」的交易（InvalidWritableAccount）。crank(deployer) 签的 advance 会写
-// deck + hand0-8，所以 deployer 必须是全部 10 个私有账户的成员；占用者随后
-// 加入自己的 hand（reveal_salt 由玩家签名写自己的 hand，自读无害）。
-// deck 永远不加玩家——里面有全部盐与 VRF 输出。
-async function setMembers(targetIndex, target, memberPubkeys) {
-  const ix = await erProgram.methods
-    .adminSetMembers(targetIndex, memberPubkeys)
-    .accounts({
-      table, target, permission: perm(target), commitPayer,
-      vault: EPHEMERAL_VAULT, admin: deployer.publicKey,
-    })
-    .instruction();
-  await sendAndConfirm(er, [ix], [deployer], `set_members[${targetIndex}] (ER)`, ER_CU);
-}
-await setMembers(0, deck, [deployer.publicKey]);
-for (let i = 0; i < 9; i++) {
-  await setMembers(i + 1, hand(i), [deployer.publicKey]);
-}
+// PER 成员由程序自管（2026-10-07 §11.2 落地）：init_permissions 创建时基线
+// members=[admin]，take_seat 把占用者加入自己的 hand，stand_up 移出——
+// 不再需要 admin_set_members 引导（该指令保留为 admin 覆盖通道）。
 
 // ---------- 6. sit_down ×2 + take_seat ×2 ----------
 const playerConns = [];
@@ -294,13 +276,14 @@ for (const [i, p] of players.entries()) {
   if (g.seats[i].status !== 1) {
     const ix = await erProgram.methods
       .takeSeat(i)
-      .accounts({ table, game, seatLedger: seat(i), playerHand: hand(i), caller: deployer.publicKey })
+      .accounts({
+        table, game, seatLedger: seat(i), playerHand: hand(i),
+        permission: perm(hand(i)), commitPayer, vault: EPHEMERAL_VAULT,
+        caller: deployer.publicKey,
+      })
       .instruction();
     await sendAndConfirm(er, [ix], [deployer], `take_seat player${i} (ER)`, ER_CU);
   } else console.log(`… player${i} took seat`);
-  // 占用者加入自己 hand 的 PER 成员（reveal_salt 玩家签名写 hand 需要）；
-  // 每次运行都执行，保证重跑时成员也齐全。
-  await setMembers(i + 1, hand(i), [deployer.publicKey, p.publicKey]);
 }
 
 // ---------- helpers ----------
@@ -461,7 +444,11 @@ for (const [i, p] of players.entries()) {
     const prog = new anchor.Program(idl, providerFor(p, playerConns[i]));
     const ix = await prog.methods
       .standUp(i)
-      .accounts({ table, game, seatLedger: seat(i), signer: p.publicKey })
+      .accounts({
+        table, game, seatLedger: seat(i), playerHand: hand(i),
+        permission: perm(hand(i)), commitPayer, vault: EPHEMERAL_VAULT,
+        signer: p.publicKey,
+      })
       .instruction();
     await sendAndConfirm(playerConns[i], [ix], [p], `stand_up player${i} (ER)`, ER_CU);
   }

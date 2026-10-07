@@ -7,19 +7,21 @@
 //! 座位在当前手牌中（hand_mask 含本座位且未 fold）→ 立即 fold 语义：标记
 //! folded + leave_requested，并从 actionable / pending_to_act 掩码中移除
 //! ——这次 fold 由手牌状态机按一次普通 fold 处理（Phase 3）。不移动任何
-//! 资金计数器。
+//! 资金计数器。此分支不动 PER 成员（手牌还没结束，占用者还要读牌/reveal）。
 //!
 //! 在手牌边界（或本座位不在手牌中）→ 释放：未计入的补码直接记 owed
 //! （credited 同时追平 deposited），`owed += stack`，`stack = 0`，状态
 //! Left，清空 salt commits，并把 hands_since_commit 顶到
 //! commit_every_n_hands 以安排一次 commit（真正的 commit 由 Phase 3 的
-//! commit/heartbeat 指令触发）。结束时断言 I-ER。
+//! commit/heartbeat 指令触发）。§11.2：同时把 PlayerHand[idx] 的 PER 成员
+//! 恢复为 `[table.admin]`（占用者移出）。结束时断言 I-ER。
 
 use anchor_lang::prelude::*;
 
 use crate::auth;
 use crate::errors::SolpokerError;
 use crate::fund;
+use crate::perms;
 use crate::state::MAX_SEATS;
 use crate::StandUp;
 
@@ -67,7 +69,33 @@ pub fn handler(ctx: Context<StandUp>, idx: u8) -> Result<()> {
         // commit/heartbeat instruction fires once hands_since_commit reaches
         // commit_every_n_hands.
         game.hands_since_commit = table.commit_every_n_hands;
-        // TODO(Phase 3): clear PlayerHand[idx] PER members (§11.2).
+
+        // §11.2: PER members back to [crank(admin)]（占用者移出）。
+        let table_bytes = table.key().to_bytes();
+        let epoch_bytes = table.epoch.to_be_bytes();
+        let idx_bytes = [idx];
+        let hand_bump = [ctx.bumps.player_hand];
+        let hand_seeds: &[&[u8]] = &[
+            b"hand",
+            table_bytes.as_ref(),
+            epoch_bytes.as_ref(),
+            idx_bytes.as_ref(),
+            &hand_bump,
+        ];
+        let cp_bump = [ctx.bumps.commit_payer];
+        let cp_seeds: &[&[u8]] = &[b"commit_payer", table_bytes.as_ref(), &cp_bump];
+        let member_keys = [table.admin];
+        perms::update_members(
+            ctx.accounts.player_hand.to_account_info(),
+            ctx.accounts.permission.to_account_info(),
+            ctx.accounts.commit_payer.to_account_info(),
+            ctx.accounts.table.to_account_info(),
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.magic_program.to_account_info(),
+            ctx.accounts.permission_program.to_account_info(),
+            &[hand_seeds, cp_seeds],
+            &member_keys,
+        )?;
     }
 
     fund::assert_conservation_er(&game)?;

@@ -41,6 +41,7 @@ pub mod errors;
 pub mod fund;
 pub mod hand;
 pub mod instructions;
+pub mod perms;
 pub mod state;
 pub mod vrf;
 
@@ -767,9 +768,28 @@ pub struct TakeSeat<'info> {
     /// 手工校验。
     #[account(seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
     pub seat_ledger: UncheckedAccount<'info>,
-    /// PlayerHand PDA；Phase 2 只读校验「已清零」（PER 成员替换是 Phase 3）。
+    /// PlayerHand PDA；只读校验「已清零」+ §11.2 权限更新的被权限账户。
     #[account(seeds = [b"hand", table.key().as_ref(), &table.epoch.to_be_bytes(), &[idx]], bump)]
     pub player_hand: Account<'info, PlayerHand>,
+    /// CHECK: PlayerHand 的 PER 权限 PDA；handler 内经 perms CPI 更新。
+    #[account(mut)]
+    pub permission: UncheckedAccount<'info>,
+    /// CHECK: 委托的 commit payer PDA，付 PER 费用（ER 要求付款人已委托）。
+    #[account(
+        mut,
+        seeds = [b"commit_payer", table.key().as_ref()],
+        bump,
+    )]
+    pub commit_payer: UncheckedAccount<'info>,
+    /// CHECK: rent vault for ephemeral accounts.
+    #[account(mut, address = ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: the magic program.
+    #[account(address = ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID)]
+    pub magic_program: UncheckedAccount<'info>,
+    /// CHECK: the permission program (access control, ACLseo…)。
+    #[account(address = ephemeral_rollups_sdk::consts::PERMISSION_PROGRAM_ID)]
+    pub permission_program: UncheckedAccount<'info>,
     pub caller: Signer<'info>,
 }
 
@@ -798,6 +818,28 @@ pub struct StandUp<'info> {
     /// CHECK: SeatLedger 的 ER 只读克隆（会话鉴权 + 未计入补码；见 TakeSeat）。
     #[account(seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
     pub seat_ledger: UncheckedAccount<'info>,
+    /// CHECK: PlayerHand PDA（§11.2 释放时恢复 PER 成员的被权限账户，只读）。
+    #[account(seeds = [b"hand", table.key().as_ref(), &table.epoch.to_be_bytes(), &[idx]], bump)]
+    pub player_hand: UncheckedAccount<'info>,
+    /// CHECK: PlayerHand 的 PER 权限 PDA；释放时经 perms CPI 恢复成员。
+    #[account(mut)]
+    pub permission: UncheckedAccount<'info>,
+    /// CHECK: 委托的 commit payer PDA，付 PER 费用（ER 要求付款人已委托）。
+    #[account(
+        mut,
+        seeds = [b"commit_payer", table.key().as_ref()],
+        bump,
+    )]
+    pub commit_payer: UncheckedAccount<'info>,
+    /// CHECK: rent vault for ephemeral accounts.
+    #[account(mut, address = ephemeral_rollups_sdk::consts::EPHEMERAL_VAULT_ID)]
+    pub vault: UncheckedAccount<'info>,
+    /// CHECK: the magic program.
+    #[account(address = ephemeral_rollups_sdk::consts::MAGIC_PROGRAM_ID)]
+    pub magic_program: UncheckedAccount<'info>,
+    /// CHECK: the permission program (access control, ACLseo…)。
+    #[account(address = ephemeral_rollups_sdk::consts::PERMISSION_PROGRAM_ID)]
+    pub permission_program: UncheckedAccount<'info>,
     pub signer: Signer<'info>,
 }
 

@@ -23,7 +23,7 @@
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::access_control::instructions::CreateEphemeralPermissionCpi;
-use ephemeral_rollups_sdk::access_control::structs::EphemeralMembersArgs;
+use ephemeral_rollups_sdk::access_control::structs::{EphemeralMembersArgs, Member};
 use ephemeral_rollups_sdk::consts::PERMISSION_PROGRAM_ID;
 
 use crate::InitPermissions;
@@ -141,10 +141,18 @@ pub fn handler(ctx: Context<InitPermissions>) -> Result<()> {
             vault: vault.clone(),
             magic_program: magic_program.clone(),
             permission_program: permission_program.clone(),
-            // Deck 与空座 PlayerHand 都是 private, members = []（§4）。
+            // 基线成员 = [table.admin]（crank 角色）：deck 永不加玩家；空座
+            // hand 也只有 admin——advance 的 Anchor 写回要求 crank 是所有
+            // hand 的成员（2026-10-07 实测 InvalidWritableAccount）。占用者
+            // 由 take_seat 按 §11.2 加入自己的 hand。
             args: EphemeralMembersArgs {
                 is_private: true,
-                members: vec![],
+                members: vec![Member {
+                    flags: 0,
+                    pubkey: ephemeral_rollups_sdk::compat::Pubkey::new_from_array(
+                        ctx.accounts.admin.key().to_bytes(),
+                    ),
+                }],
             },
         }
         .invoke_signed(&[&signer_seeds, commit_payer_seeds])?;
