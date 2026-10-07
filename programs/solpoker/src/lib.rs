@@ -46,8 +46,8 @@ pub mod state;
 pub mod vrf;
 
 use state::{
-    AgentProfile, Deck, Game, HandProof, HandSecrets, OwnerAllowlist, PlayerHand, ProgramConfig,
-    SeatLedger, Table,
+    AgentProfile, Deck, Game, HandProof, HandReplay, HandSecrets, OwnerAllowlist, PlayerHand,
+    ProgramConfig, SeatLedger, Table,
 };
 
 // Program id pinned since Stage 0 deployment (docs/design/pubkeys.json); this
@@ -207,6 +207,10 @@ pub struct Advance<'info> {
         bump,
     )]
     pub hand_secrets: AccountLoader<'info, HandSecrets>,
+    /// HandReplay: per-hand recompute inputs (§8.7). PDA ["replay", table].
+    /// Optional for legacy tables — created by init_replay.
+    #[account(mut, seeds = [b"replay", table.key().as_ref()], bump)]
+    pub hand_replay: AccountLoader<'info, HandReplay>,
     #[account(mut, seeds = [b"hand", table.key().as_ref(), &table.epoch.to_be_bytes(), [0u8].as_ref()], bump)]
     pub hand0: Account<'info, PlayerHand>,
     #[account(mut, seeds = [b"hand", table.key().as_ref(), &table.epoch.to_be_bytes(), [1u8].as_ref()], bump)]
@@ -477,6 +481,24 @@ pub struct CreateSeats<'info> {
     /// CHECK: SeatLedger PDA ["seat", table, 8]；handler 派生并断言地址后创建。
     #[account(mut)]
     pub seat8: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// init_replay (L1): create HandReplay (per-hand recompute inputs, §8.7).
+/// Idempotent — handler returns Ok if the account already exists.
+#[derive(Accounts)]
+pub struct InitReplay<'info> {
+    #[account(
+        seeds = [b"table", table.table_id.to_le_bytes().as_ref()],
+        bump = table.bump,
+        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub table: Account<'info, Table>,
+    /// CHECK: HandReplay PDA ["replay", table]; handler derives and asserts the address.
+    #[account(mut)]
+    pub replay: UncheckedAccount<'info>,
     #[account(mut)]
     pub admin: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -1188,6 +1210,14 @@ pub mod solpoker {
     /// §11.1 第 1 步补（L1）：创建 PlayerHand×9（拆自 create_table，同上）。
     pub fn create_hands(ctx: Context<CreateHands>) -> Result<()> {
         instructions::create_hands::handler(ctx)
+    }
+
+    /// init_replay (L1, 2026-10-08): create the HandReplay account (full-hand
+    /// recompute inputs, §8.7). Unlike HandProof/HandSecrets this account is
+    /// OPTIONAL and can be added to live tables later: historical hands simply
+    /// have no replay entry. Idempotent — exists => Ok.
+    pub fn init_replay(ctx: Context<InitReplay>) -> Result<()> {
+        instructions::init_replay::handler(ctx)
     }
 
     /// §11.1 第 2 步（L1）：每次调用委托一个常驻账户（del_index 选择：

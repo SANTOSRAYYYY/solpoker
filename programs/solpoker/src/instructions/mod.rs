@@ -17,6 +17,7 @@ pub mod create_table;
 pub mod debug_arm_vrf;
 pub mod delegate_table;
 pub mod init_config;
+pub mod init_replay;
 pub mod init_permissions;
 pub mod request_vrf;
 pub mod retry_vrf;

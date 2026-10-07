@@ -35,6 +35,7 @@ pub fn handler(ctx: Context<Advance>, hand_id: u64) -> Result<()> {
     let mut deck = ctx.accounts.deck.load_mut()?;
     let mut proof = ctx.accounts.hand_proof.load_mut()?;
     let mut secrets = ctx.accounts.hand_secrets.load_mut()?;
+    let mut replay = ctx.accounts.hand_replay.load_mut()?;
     let mut hands: [&mut PlayerHand; MAX_SEATS] = [
         &mut ctx.accounts.hand0,
         &mut ctx.accounts.hand1,
@@ -56,6 +57,7 @@ pub fn handler(ctx: Context<Advance>, hand_id: u64) -> Result<()> {
         &mut deck,
         &mut proof,
         &mut secrets,
+        &mut replay,
         &mut hands,
         &program_id,
         now,

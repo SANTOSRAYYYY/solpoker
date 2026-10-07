@@ -43,7 +43,7 @@ use solpoker_core::vrf::VrfTarget as CoreVrfTarget;
 
 use crate::errors::SolpokerError;
 use crate::fund;
-use crate::state::{Deck, Game, HandProof, HandSecrets, PlayerHand, ProofEntry, SecretsEntry, Table, VrfSlot, VrfState, VrfTarget, MAX_SEATS};
+use crate::state::{Deck, Game, HandProof, HandReplay, HandSecrets, PlayerHand, ProofEntry, ReplayEntry, SecretsEntry, Table, VrfSlot, VrfState, VrfTarget, MAX_SEATS, REPLAY_RING};
 
 // ---------------------------------------------------------------------------
 // Game.phase (state.rs field comment pins the encoding)
@@ -595,12 +595,68 @@ fn zero_secrets(deck: &mut Deck, hands: &mut [&mut PlayerHand; MAX_SEATS], hand_
     }
 }
 
+// ---------------------------------------------------------------------------
+// HandReplay 写入（§8.7 整手复算输入；见 docs/design/hand-replay-design.md）
+// ---------------------------------------------------------------------------
+
+/// replay 槽位 = hand_id % REPLAY_RING（state.rs 的布局测试钉死同义实现）。
+#[inline]
+fn replay_slot(hand_id: u64) -> usize {
+    (hand_id % REPLAY_RING as u64) as usize
+}
+
+/// 发牌前记录「该街第一张牌抽取前」的 transcript 摘要。
+/// k = VrfTarget::deck_index()（0=preflop, 1=flop, 2=turn, 3=river, 4=runout）。
+/// 槽位首次使用时清空（旧手残留），后续调用只累加。
+pub fn capture_draw_digest(replay: &mut HandReplay, hand_id: u64, k: usize, digest: &[u8; 32]) {
+    let slot = replay_slot(hand_id);
+    if replay.entries[slot].hand_id != hand_id {
+        replay.entries[slot] = ReplayEntry {
+            hand_id,
+            ..Default::default()
+        };
+    }
+    replay.entries[slot].draw_digest[k] = *digest;
+    replay.entries[slot].streets_used |= 1u8 << k;
+}
+
+/// 手牌结束：补齐 replay entry 的其余字段（occupants / salt_digest /
+/// vrf_attempt_used / status）。必须在 secrets 清零前调用（attempt 来自 Deck）。
+pub fn finalize_replay(
+    replay: &mut HandReplay,
+    game: &Game,
+    deck: &Deck,
+    salts: &[[u8; 32]; MAX_SEATS],
+    status: u8,
+) {
+    let slot = replay_slot(game.hand_id);
+    let entry = &mut replay.entries[slot];
+    if entry.hand_id != game.hand_id {
+        *entry = ReplayEntry {
+            hand_id: game.hand_id,
+            ..Default::default()
+        };
+    }
+    for i in 0..MAX_SEATS {
+        entry.occupants[i] = if game.hand_mask & seat_bit(i as u8) != 0 {
+            game.seats[i].occupant
+        } else {
+            Pubkey::default()
+        };
+    }
+    entry.salt_digest = current_salt_digest(&game.table.to_bytes(), game, salts);
+    entry.vrf_attempt_used = deck.vrf_attempt_used;
+    entry.status = status;
+    replay.head = replay.head.wrapping_add(1);
+}
+
 /// Write the ring-buffer proof entry for the finished hand and bump head.
 /// Must run BEFORE secrets are zeroed (vrf_out/salts come from Deck).
 /// 盐与 VRF 写入配套的 HandSecrets 环（2026-10-07 拆分，见 state.rs 偏差记录）。
 fn write_proof_entry(
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     game: &Game,
     deck: &Deck,
     status: u8,
@@ -649,6 +705,9 @@ fn write_proof_entry(
         vrf_mask,
         _pad: [0; 7],
     };
+    // §8.7：把整手复算所需的输入写进 HandReplay（occupants / salt_digest /
+    // attempts / status；draw_digest 在发牌时已逐街写入）。
+    finalize_replay(replay, game, deck, salts, status);
 }
 
 /// HandSecrets 没有独立 head——与 HandProof.head 同步（拆分记录，见 state.rs）。
@@ -681,6 +740,7 @@ fn do_settle(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     now: i64,
 ) -> Result<()> {
@@ -729,7 +789,7 @@ fn do_settle(
     );
     write_proof_entry(
         proof,
-        secrets,
+        secrets,        replay,
         game,
         deck,
         PROOF_SETTLED,
@@ -762,6 +822,7 @@ fn void_hand_path(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     now: i64,
     reason: VoidReason,
@@ -832,7 +893,7 @@ fn void_hand_path(
     let hole = collect_hole(hands, hand_mask);
     write_proof_entry(
         proof,
-        secrets,
+        secrets,        replay,
         game,
         deck,
         PROOF_VOID,
@@ -991,6 +1052,7 @@ fn await_seed(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     program_id: &[u8; 32],
     now: i64,
@@ -1004,7 +1066,7 @@ fn await_seed(
                 game,
                 deck,
                 proof,
-                secrets,
+                secrets,                replay,
                 hands,
                 now,
                 VoidReason::VrfExhausted,
@@ -1041,7 +1103,7 @@ fn await_seed(
             game,
             deck,
             proof,
-            secrets,
+            secrets,            replay,
             hands,
             now,
             VoidReason::MissingSalt,
@@ -1110,6 +1172,13 @@ fn await_seed(
     st.append(&Event::StreetStart {
         street: deal::STREET_PREFLOP,
     });
+    // §8.7：记录本轮（preflop）第一张牌抽取前的 transcript（整手复算输入）
+    capture_draw_digest(
+        replay,
+        game.hand_id,
+        VrfTarget::Preflop.deck_index(),
+        &st.transcript,
+    );
     let order = deal::hole_order(button, hand_mask).ok_or(SolpokerError::BadPhase)?;
     let n = popcount(hand_mask) as usize;
     for k in 0..2 * n {
@@ -1159,6 +1228,7 @@ fn await_street(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     program_id: &[u8; 32],
     now: i64,
@@ -1176,7 +1246,7 @@ fn await_street(
                 game,
                 deck,
                 proof,
-                secrets,
+                secrets,                replay,
                 hands,
                 now,
                 VoidReason::VrfExhausted,
@@ -1199,6 +1269,8 @@ fn await_street(
         attempt,
     });
     st.append(&Event::StreetStart { street });
+    // §8.7：记录本街第一张牌抽取前的 transcript（整手复算输入）
+    capture_draw_digest(replay, game.hand_id, k, &st.transcript);
     let count = board_street.card_count();
     for _ in 0..count {
         let (card, _dn) = st.draw(&seed, table_bytes, game.hand_id, |c, dn| {
@@ -1234,6 +1306,7 @@ fn await_runout(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     program_id: &[u8; 32],
     now: i64,
@@ -1248,7 +1321,7 @@ fn await_runout(
                 game,
                 deck,
                 proof,
-                secrets,
+                secrets,                replay,
                 hands,
                 now,
                 VoidReason::VrfExhausted,
@@ -1275,6 +1348,8 @@ fn await_runout(
         attempt,
     });
     let mut dealt_streets = 0u8; // bits 1..3 for streets dealt by this runout
+    // §8.7：记录 runout 第一张牌抽取前的 transcript（整手复算输入）
+    capture_draw_digest(replay, game.hand_id, k, &st.transcript);
     while game.board_len < 5 {
         // Actual street of the next board position (dealing-protocol 鎼?.4).
         let street = match game.board_len {
@@ -1321,6 +1396,7 @@ pub fn advance(
     deck: &mut Deck,
     proof: &mut HandProof,
     secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
     hands: &mut [&mut PlayerHand; MAX_SEATS],
     program_id: &[u8; 32],
     now: i64,
@@ -1329,16 +1405,16 @@ pub fn advance(
         PHASE_IDLE => idle_to_commit(game, table, now),
         PHASE_COMMIT => commit_to_await_seed(game, deck, table, now),
         PHASE_AWAIT_SEED => {
-            await_seed(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+            await_seed(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }
         PHASE_PREFLOP | PHASE_BETTING => Ok(()), // waiting for player actions
         PHASE_AWAIT_STREET => {
-            await_street(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+            await_street(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }
         PHASE_AWAIT_RUNOUT => {
-            await_runout(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+            await_runout(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }
-        PHASE_SETTLE => do_settle(table, game, deck, proof, secrets, hands, now),
+        PHASE_SETTLE => do_settle(table, game, deck, proof, secrets, replay, hands, now),
         _ => err!(SolpokerError::BadPhase),
     }
 }
@@ -1570,6 +1646,7 @@ mod tests {
         deck: &mut Deck,
         proof: &mut HandProof,
         secrets: &mut HandSecrets,
+    replay: &mut HandReplay,
         hands: &mut [&mut PlayerHand; MAX_SEATS],
     ) {
         advance(
@@ -1578,7 +1655,7 @@ mod tests {
             game,
             deck,
             proof,
-            secrets,
+            secrets,            replay,
             hands,
             &prog(),
             NOW,
@@ -1927,6 +2004,7 @@ mod tests {
         deck: Deck,
         proof: HandProof,
         secrets: HandSecrets,
+        replay: HandReplay,
         hands: Hands,
     }
 
@@ -1940,6 +2018,7 @@ mod tests {
                 deck: sample_deck(),
                 proof: sample_proof(),
                 secrets: HandSecrets::default(),
+                replay: HandReplay::default(),
                 hands: Hands::new(),
             }
         }
@@ -1952,6 +2031,7 @@ mod tests {
                 &mut self.deck,
                 &mut self.proof,
                 &mut self.secrets,
+                &mut self.replay,
                 &mut hands,
             );
         }
@@ -2226,6 +2306,116 @@ mod tests {
         fund::assert_conservation_er(&w.game).unwrap();
     }
 
+    /// §8.7 规范测试（2026-10-08）：只用 HandReplay + HandSecrets + HandProof
+    /// 就能把每一张牌重新抽出来 —— 这正是验证器
+    /// （web/lib/deal-verify.mjs 的 dealFromReplay）要做的事，两边同构。
+    #[test]
+    fn replay_entry_rebuilds_every_drawn_card() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        assert!(w.play_street(VrfTarget::Flop, 0x91));
+        assert!(w.play_street(VrfTarget::Turn, 0x92));
+        assert!(w.play_street(VrfTarget::River, 0x93));
+        w.check_or_call();
+        w.check_or_call();
+        assert_eq!(w.game.phase, PHASE_SETTLE);
+
+        let hand_id = w.game.hand_id;
+        let board = w.game.board;
+        let hole_cards: [[u8; 2]; MAX_SEATS] =
+            core::array::from_fn(|i| w.hands.h[i].cards);
+        let button = w.game.button;
+        let hand_mask = w.game.hand_mask;
+        w.step(); // Settle 鈫?Idle：写 proof / secrets / replay
+
+        // 1) replay 槽位与字段
+        let slot = (hand_id % REPLAY_RING as u64) as usize;
+        let e = w.replay.entries[slot];
+        assert_eq!(e.hand_id, hand_id, "槽位必须属于这一手");
+        assert_eq!(e.status, PROOF_SETTLED);
+        assert_eq!(e.streets_used, 0b1111, "preflop/flop/turn/river 都应记下首抽摘要");
+
+        // 2) salt_digest 必须能从（replay 的 occupants）+（secrets 的盐）+ occupancy_ids 复算
+        let proof_slot = (w.proof.head.wrapping_sub(1) % 16) as usize;
+        let pe = w.proof.entries[proof_slot];
+        let secrets_slot = (secrets_head(&w.proof) % 16) as usize;
+        let sec = w.secrets.entries[secrets_slot];
+        let mut occupants = [[0u8; 32]; MAX_SEATS];
+        for i in 0..MAX_SEATS {
+            occupants[i] = e.occupants[i].to_bytes();
+        }
+        let recomputed = deal::salt_digest(
+            &table_bytes(),
+            hand_id,
+            hand_mask,
+            &occupants,
+            &pe.occupancy_ids,
+            &sec.salts,
+        );
+        assert_eq!(recomputed, e.salt_digest, "salt_digest 必须可复算");
+
+        // 3) 逐街重放：从 draw_digest[k] 出发重新抽牌，与 proof 的牌逐张比对
+        let mut used: u64 = 0;
+        let mut draw_no: u16 = 0;
+
+        // --- preflop（2n 张底牌，HoleDealt 事件） ---
+        let seed0 = deal::seed_k(&sec.vrf_out[VrfTarget::Preflop.deck_index()], &e.salt_digest);
+        let mut st = DealState {
+            used_mask: used,
+            draw_no,
+            transcript: e.draw_digest[VrfTarget::Preflop.deck_index()],
+        };
+        let order = deal::hole_order(button, hand_mask).unwrap();
+        let n = popcount(hand_mask) as usize;
+        let mut hole_rebuilt = [[0xFFu8; 2]; MAX_SEATS];
+        for k in 0..2 * n {
+            let seat = order[k % n];
+            let slots = k / n;
+            let (card, dn) = st.draw(&seed0, &table_bytes(), hand_id, |c, dn| {
+                Event::HoleDealt { seat, draw_no: dn }
+            });
+            assert_eq!(card, hole_cards[seat as usize][slots], "底牌第 {k} 张必须一致");
+            assert_eq!(dn, draw_no);
+            hole_rebuilt[seat as usize][slots] = card;
+            draw_no += 1;
+        }
+        used = st.used_mask;
+
+        // --- 逐街公共牌（BoardDealt 事件；street 与 vrf_src 按程序实际值） ---
+        for (target, street, count, tag) in [
+            (VrfTarget::Flop, deal::STREET_FLOP, 3usize, 0x91u8),
+            (VrfTarget::Turn, deal::STREET_TURN, 1, 0x92),
+            (VrfTarget::River, deal::STREET_RIVER, 1, 0x93),
+        ] {
+            let k = target.deck_index();
+            let seed = deal::seed_k(&sec.vrf_out[k], &e.salt_digest);
+            let mut st = DealState {
+                used_mask: used,
+                draw_no,
+                transcript: e.draw_digest[k],
+            };
+            for _ in 0..count {
+                let (card, dn) = st.draw(&seed, &table_bytes(), hand_id, |c, dn| {
+                    Event::BoardDealt {
+                        street,
+                        card: c,
+                        draw_no: dn,
+                        vrf_src: target.to_core(),
+                    }
+                });
+                let pos = (draw_no as usize) - (2 * n);
+                assert_eq!(card, board[pos], "公共牌第 {pos} 张必须一致（street {street}）");
+                assert_eq!(dn, draw_no);
+                let _ = tag;
+                draw_no += 1;
+            }
+            used = st.used_mask;
+        }
+
+        assert_eq!(hole_rebuilt[order[0] as usize], hole_cards[order[0] as usize]);
+        assert_eq!(draw_no as usize, 2 * n + 5, "共 2n+5 张（不含 runout）");
+    }
+
     /// A7 补齐（2026-10-07）：手牌卡在 Commit（无人提交盐承诺）时，第 3 次
     /// 超时自动离座；不足两人 → 手牌取消回 Idle（无投入、无证明条目）。
     #[test]
@@ -2244,6 +2434,7 @@ mod tests {
                 &mut w.deck,
                 &mut w.proof,
                 &mut w.secrets,
+                &mut w.replay,
                 &mut hands,
                 &prog(),
                 now,

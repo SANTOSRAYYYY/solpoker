@@ -52,6 +52,27 @@
 
 ### 遗留问题
 
+- **（2026-10-08）HandReplay：整手复算输入上链（程序侧落地，**未部署**）**。
+  用户选方案 B（程序升级）。设计见 `docs/design/hand-replay-design.md`：整手复算真正缺的
+  只有两个**中间摘要** —— `salt_digest` 与每条街**第一张牌抽取前**的 transcript 摘要
+  （街内后续牌的前置摘要可由牌序 + HoleDealt/BoardDealt 事件确定性重建，所以有界）。
+  **关键决策：新建独立账户 `HandReplay`（PDA `["replay", table]`，ring 8，每手 485B，
+  账户 4,048B）而不是扩 HandProof/Deck** —— 扩既有布局会让所有活桌失效；独立账户可给现有桌
+  补一次 `init_replay` 就开始记录，历史手牌只是「没有 replay entry」。捕获放在发牌过程中
+  （`capture_draw_digest` 在每条街第一张牌前调），所以 Deck 不需要加字段。
+  **本提交落地**（`cargo test --workspace` 全绿：solpoker 32 + core 90 + 7 + 1 + 1）：
+  `state.rs` 的 `HandReplay`/`ReplayEntry` + 尺寸钉子测试（504B/条、账户 4,048、槽位
+  `hand_id % 8`）；`hand.rs` 的 `capture_draw_digest`/`finalize_replay` + 3 个捕获点
+  （preflop/flop-turn-river/runout）+ 在 `write_proof_entry` 收尾写入；`lib.rs` 的
+  `Advance.hand_replay` 账户与 `init_replay` 指令（幂等，L1 建账户）；`instructions/init_replay.rs`。
+  **规范测试 `replay_entry_rebuilds_every_drawn_card`**：打完一手 → 只用 replay（draw_digest +
+  salt_digest + occupants）+ HandSecrets（VRF/盐）+ HandProof（board/hole）把每一张牌重新抽出，
+  逐张比中（含 salt_digest 从 occupants+盐的独立复算）。
+  **下一步（必须一起做，否则现有工具会挂）**：① `Advance` 新增了**必填**账户 `hand_replay` ——
+  部署新程序后，crank、agent runner、e2e/模拟脚本、`sit-test` 等所有 `advance` 调用点都要传它；
+  ② 构建 + 部署 devnet + 给现有桌补 `init_replay`（+ 委托）+ 跑一手 e2e 产出真 replay 数据；
+  ③ JS 侧：`chain-read.readHandReplay`、`deal-verify.dealFromReplay`、`/history` 的
+  「整手复算 52/52 ✓」按钮（引擎已就绪，只差入口函数）。
 - **（2026-10-08）发牌复算引擎移植 + 向量自证整齐（verify_hand 的地基）**。
   新增 `web/lib/deal-verify.mjs`：`reference/solpoker_deal.py` 的 JS 移植（salt_commitment /
   salt_digest / street_seed / first_button / encode_event 13 种事件 / transcript_init+append /
