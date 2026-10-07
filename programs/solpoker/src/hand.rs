@@ -893,6 +893,12 @@ fn idle_to_commit(game: &mut Game, table: &Table, now: i64) -> Result<()> {
 /// request itself is the permissionless request_vrf, V1 閹峰棗鍨?. On
 /// commit_timeout_s, strike the missing seats and re-time (鎼?.3 閳?the hand
 /// simply does not start; nothing was invested).
+///
+/// A7 补齐（2026-10-07）：缺承诺的座位 strike 达 max_strikes 时**在此直接
+/// 自动离座**（未开始的手牌没有任何投入，释放方式与 close_hand 相同）。此前
+/// 该路径只累积 strikes 但永不释放——手牌卡在 Commit 时 close_hand 永远不
+/// 执行，桌子会永久卡死（生产上等于「掉线玩家占座不走」）。离座后手牌不足
+/// 2 人则整个手牌取消（无投入、无发牌、不写证明条目），回到 Idle 等下一手。
 #[inline(never)]
 fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i64) -> Result<()> {
     let mut missing = 0u16;
@@ -910,13 +916,67 @@ fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i6
         return Ok(());
     }
     if now >= game.phase_deadline {
+        let mut left_any = false;
         for i in 0..MAX_SEATS {
-            if missing & seat_bit(i as u8) != 0 {
+            let bit = seat_bit(i as u8);
+            if missing & bit == 0 {
+                continue;
+            }
+            let do_leave = {
                 let s = &mut game.seats[i];
                 s.strikes = s.strikes.saturating_add(1);
+                if s.strikes >= table.max_strikes {
+                    // 手牌未开始：直接记 owed 并释放（与 close_hand 同款）。
+                    s.owed_total = s.owed_total.saturating_add(s.stack);
+                    s.stack = 0;
+                    s.status = fund::SEAT_LEFT;
+                    s.leave_requested = 0;
+                    s.in_hand = 0;
+                    s.street_bet = 0;
+                    s.folded = 0;
+                    s.all_in = 0;
+                    s.acted = 0;
+                    s.salt_commit = [0; 32];
+                    s.next_salt_commit = [0; 32];
+                    s.strikes = 0;
+                    true
+                } else {
+                    false
+                }
+            };
+            if do_leave {
+                game.occupied_mask &= !bit;
+                game.hand_mask &= !bit;
+                left_any = true;
             }
         }
-        game.phase_deadline = now + table.commit_timeout_s as i64;
+        if left_any {
+            // L1 尽快看到 owed_total（与 stand_up 同款）。
+            game.hands_since_commit = table.commit_every_n_hands;
+        }
+        if popcount(game.hand_mask) < 2 {
+            // 不足两人：本手不成立（无投入、无发牌，不写证明条目）。
+            for i in 0..MAX_SEATS {
+                if game.hand_mask & seat_bit(i as u8) != 0 {
+                    let s = &mut game.seats[i];
+                    s.salt_commit = [0; 32];
+                    s.next_salt_commit = [0; 32];
+                }
+            }
+            game.hand_mask = 0;
+            game.live_mask = 0;
+            game.actionable_mask = 0;
+            game.pending_to_act_mask = 0;
+            game.to_act = u8::MAX;
+            game.phase = PHASE_IDLE;
+            game.phase_deadline = 0;
+            game.action_deadline = 0;
+            game.hand_id = game.hand_id.saturating_add(1);
+            game.hands_since_commit = game.hands_since_commit.saturating_add(1);
+            game.vrf = VrfSlot::default();
+        } else {
+            game.phase_deadline = now + table.commit_timeout_s as i64;
+        }
     }
     Ok(())
 }
@@ -2163,6 +2223,57 @@ mod tests {
         assert_eq!(se.salts[0], salt_for(0));
         assert_eq!(se.salts[1], salt_for(1));
         assert_eq!(w.hands.h[0].cards, [0xFF; 2]);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
+    /// A7 补齐（2026-10-07）：手牌卡在 Commit（无人提交盐承诺）时，第 3 次
+    /// 超时自动离座；不足两人 → 手牌取消回 Idle（无投入、无证明条目）。
+    #[test]
+    fn commit_timeout_auto_stands_up_after_max_strikes() {
+        let mut w = World::heads_up();
+        w.step(); // Idle → Commit
+        assert_eq!(w.game.phase, PHASE_COMMIT);
+        assert_eq!(w.game.hand_mask, 0b011);
+
+        let probe = |w: &mut World, now: i64| {
+            let mut hands = w.hands.as_mut();
+            advance(
+                &w.table,
+                &table_bytes(),
+                &mut w.game,
+                &mut w.deck,
+                &mut w.proof,
+                &mut w.secrets,
+                &mut hands,
+                &prog(),
+                now,
+            )
+            .unwrap();
+        };
+        let timeout = w.table.commit_timeout_s as i64;
+
+        // 第 1、2 次超时：只累积 strikes，手牌仍等 Commit。
+        probe(&mut w, NOW + timeout + 1);
+        assert_eq!(w.game.seats[0].strikes, 1);
+        assert_eq!(w.game.seats[1].strikes, 1);
+        assert_eq!(w.game.phase, PHASE_COMMIT);
+        probe(&mut w, NOW + 2 * timeout + 2);
+        assert_eq!(w.game.seats[0].strikes, 2);
+
+        // 第 3 次：双双达 max_strikes → 自动离座；不足两人 → 取消本手回 Idle。
+        probe(&mut w, NOW + 3 * timeout + 3);
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        assert_eq!(w.game.hand_mask, 0);
+        assert_eq!(w.game.occupied_mask, 0);
+        assert_eq!(w.game.hand_id, 1);
+        for s in &w.game.seats[..2] {
+            assert_eq!(s.status, fund::SEAT_LEFT);
+            assert_eq!(s.stack, 0);
+            assert_eq!(s.owed_total, STACK); // 全额转 owed，等待 L1 commit 后 cash_out
+            assert_eq!(s.strikes, 0);
+        }
+        // 手牌从未开始：不写证明条目。
+        assert_eq!(w.proof.head, 0);
         fund::assert_conservation_er(&w.game).unwrap();
     }
 

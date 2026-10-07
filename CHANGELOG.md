@@ -52,6 +52,20 @@
 
 ### 遗留问题
 
+- **（2026-10-07）A7 自动离座补齐 + 死桌清理**：用户实测「其他桌上的人很久
+  不走」。定位：自动离座只在 `close_hand`（手牌结束）执行，而**手牌卡在
+  Commit（掉线玩家从不提交承诺）时 close_hand 永不执行**——strikes 白涨、
+  桌子永久卡死（#5 就是活例）。修复（程序 + 回归测试
+  `commit_timeout_auto_stands_up_after_max_strikes`）：Commit 超时达
+  max_strikes 的座位**就地自动离座**（未开始的手牌无投入，释放同
+  close_hand）；离座后不足 2 人 → 本手取消回 Idle（无投入、不写证明条目）。
+  crank 同时加固：Idle 无手可开时不再空转发交易（此前每秒一发）、所有 RPC
+  请求加 20s 超时（本机中继 keep-alive 假死会让循环永久挂起）。链上复验：
+  #5/#6/#7 的遗留玩家与新孤儿座位全部按预期离座；#6/#7/#8/#9 现为空桌。
+  清理工具入仓库：`table-status.mjs`（全桌体检）、`cash-out-seat.mjs`
+  （permissionless 兑付）、`stand-up-player.mjs` /
+  `cleanup-orphan-seat.mjs`（测试玩家/会话密钥离座）。#5 剩一个极早期测试
+  玩家的未知密钥座位（无法代为离座，符合「资金不可被第三方移动」设计）。
 - **（2026-10-07 用户决定）钱包通道收敛为 Privy 单通道**：SIWS 在后端开启后，
   直连钱包路径（wallet-standard，commit c9dd871）按用户要求移除，实现保留在
   git 历史中可随时恢复。当前所有钱包连接（Phantom/Solflare/Backpack/内嵌/

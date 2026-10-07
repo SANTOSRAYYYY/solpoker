@@ -1,4 +1,4 @@
-// SolPoker crank service (Stage 7): drives the deterministic phase machine on
+﻿// SolPoker crank service (Stage 7): drives the deterministic phase machine on
 // devnet-tee so browser players only ever sign their own actions.
 //
 // Loop per table (default: NEXT_PUBLIC-style env TABLE_IDS or argv):
@@ -45,6 +45,11 @@ const idl = JSON.parse(fs.readFileSync("target/idl/solpoker.json", "utf8"));
 const programId = new PublicKey(idl.address);
 
 const u32le = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+
+// RPC 请求超时保护（2026-10-07 实测：本地中继的 keep-alive 连接会假死，
+// 无超时的 fetch 会让整个 crank 循环永久挂起）。20 秒即抛，下一轮用新连接重试。
+const fetchWithTimeout = (input, init = {}) =>
+  fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(20000) });
 const tablePda = (id) => PublicKey.findProgramAddressSync([Buffer.from("table"), u32le(id)], programId)[0];
 const gamePda = (table) => PublicKey.findProgramAddressSync([Buffer.from("game"), table.toBuffer()], programId)[0];
 const seatPda = (table, i) => PublicKey.findProgramAddressSync([Buffer.from("seat"), table.toBuffer(), Buffer.from([i])], programId)[0];
@@ -88,7 +93,7 @@ async function sendAndConfirm(conn, ixs, signers, label, cu = null) {
 // ---------------------------------------------------------------------------
 async function fund(walletStr, sol = 0.05, tusdc = 25) {
   const wallet = new PublicKey(walletStr);
-  const l1 = new Connection(L1_URL, "confirmed");
+  const l1 = new Connection(L1_URL, { commitment: "confirmed", fetch: fetchWithTimeout });
   const ixs = [
     SystemProgram.transfer({
       fromPubkey: deployer.publicKey,
@@ -117,12 +122,12 @@ async function main() {
   const tableIds = (process.env.TABLE_IDS ?? process.argv[2] ?? "9")
     .split(",")
     .map((s) => Number(s.trim()));
-  const l1 = new Connection(L1_URL, "confirmed");
+  const l1 = new Connection(L1_URL, { commitment: "confirmed", fetch: fetchWithTimeout });
   const { token } = await getAuthToken(ER_BASE, deployer.publicKey, async (msg) => {
     const nacl = (await import("tweetnacl")).default;
     return nacl.sign.detached(msg, deployer.secretKey);
   });
-  const er = new Connection(`${ER_BASE}?token=${token}`, "confirmed");
+  const er = new Connection(`${ER_BASE}?token=${token}`, { commitment: "confirmed", fetch: fetchWithTimeout });
   const program = new anchor.Program(idl, new anchor.AnchorProvider(er, new anchor.Wallet(deployer), { commitment: "confirmed" }));
   const l1Program = new anchor.Program(idl, new anchor.AnchorProvider(l1, new anchor.Wallet(deployer), { commitment: "confirmed" }));
   console.log(`crank online — tables ${tableIds.join(",")}, deployer ${deployer.publicKey.toBase58().slice(0, 8)}`);
@@ -237,6 +242,16 @@ async function main() {
       // arm（AwaitStreet/AwaitRunout 的 VRF 就是这样启动的），3=Fulfilled
       // 时 advance 负责发牌。
       if ([2, 4, 6].includes(phase) && (vrfState === 1 || vrfState === 2)) return;
+      // Idle 无手可开（有筹码的 Seated 座位 < 2）时不要空转发交易——
+      // advance 会静默 no-op，每秒一发的交易纯烧手续费（2026-10-07 发现）。
+      if (phase === 0) {
+        let eligible = 0;
+        for (let i = 0; i < 9; i++) {
+          const o = 152 + i * 152;
+          if (g[o + 145] === 1 && g.readBigUInt64LE(o + 104) > 0n) eligible++;
+        }
+        if (eligible < 2) return;
+      }
       // Commit 阶段需要所有座位提交盐承诺（未齐时 advance 会报错——吞掉）
       try {
         const handAccounts = Object.fromEntries(
