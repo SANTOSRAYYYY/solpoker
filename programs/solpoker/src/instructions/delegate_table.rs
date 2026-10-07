@@ -73,6 +73,8 @@ pub fn handler(ctx: Context<DelegateTable>, validator: Pubkey, del_index: u8) ->
             epoch_bytes.as_ref(),
             idx.as_ref(),
         ],
+        // 14 = HandReplay（§8.7 整手复算输入；2026-10-08 新增，可给老桌后补）
+        14 => vec![b"replay".as_ref(), table_bytes.as_ref()],
         _ => return err!(SolpokerError::SeatMismatch),
     };
     let (expected_pda, _) = Pubkey::find_program_address(&pda_seeds, &crate::ID);

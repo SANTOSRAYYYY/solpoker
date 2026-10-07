@@ -52,7 +52,7 @@
 
 ### 遗留问题
 
-- **（2026-10-08）HandReplay：整手复算输入上链（程序侧落地，**未部署**）**。
+- **（2026-10-08）HandReplay：整手复算输入上链（程序侧落地 + **已部署 devnet**）**。
   用户选方案 B（程序升级）。设计见 `docs/design/hand-replay-design.md`：整手复算真正缺的
   只有两个**中间摘要** —— `salt_digest` 与每条街**第一张牌抽取前**的 transcript 摘要
   （街内后续牌的前置摘要可由牌序 + HoleDealt/BoardDealt 事件确定性重建，所以有界）。

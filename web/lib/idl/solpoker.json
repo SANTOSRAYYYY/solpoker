@@ -413,6 +413,33 @@
           }
         },
         {
+          "name": "hand_replay",
+          "docs": [
+            "HandReplay: per-hand recompute inputs (§8.7). PDA [\"replay\", table].",
+            "Optional for legacy tables — created by init_replay."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  108,
+                  97,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
           "name": "hand0",
           "writable": true,
           "pda": {
@@ -2950,6 +2977,63 @@
       "args": []
     },
     {
+      "name": "init_replay",
+      "docs": [
+        "init_replay (L1, 2026-10-08): create the HandReplay account (full-hand",
+        "recompute inputs, §8.7). Unlike HandProof/HandSecrets this account is",
+        "OPTIONAL and can be added to live tables later: historical hands simply",
+        "have no replay entry. Idempotent — exists => Ok."
+      ],
+      "discriminator": [
+        188,
+        123,
+        68,
+        179,
+        203,
+        96,
+        116,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "replay",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "pause_agent",
       "docs": [
         "pause_agent（X9）：主人暂停（暂停后不可入座/补码）。"
@@ -4619,6 +4703,19 @@
       ]
     },
     {
+      "name": "HandReplay",
+      "discriminator": [
+        252,
+        8,
+        68,
+        38,
+        94,
+        235,
+        27,
+        5
+      ]
+    },
+    {
       "name": "HandSecrets",
       "discriminator": [
         26,
@@ -5392,6 +5489,44 @@
       }
     },
     {
+      "name": "HandReplay",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "entries",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "ReplayEntry"
+                  }
+                },
+                8
+              ]
+            }
+          },
+          {
+            "name": "head",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "HandSecrets",
       "docs": [
         "盐与 VRF 输出的环形缓冲（从 HandProof 拆出，见 ProofEntry 的偏差记录）。",
@@ -5645,6 +5780,104 @@
               "array": [
                 "u8",
                 5
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReplayEntry",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hand_id",
+            "docs": [
+              "槽位归属：写入时与 game.hand_id 比对（0 = 空槽）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "occupants",
+            "docs": [
+              "该手 9 个 occupant —— 让「occupants + salts → salt_digest」这一步也能被验证。"
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                9
+              ]
+            }
+          },
+          {
+            "name": "salt_digest",
+            "docs": [
+              "salt_digest = sha256(\"solpoker/salts/v1\" ‖ table ‖ hand_id ‖ hand_mask ‖ 每座 …)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "draw_digest",
+            "docs": [
+              "[preflop, flop, turn, river, runout] 各街第一张牌抽取前的 transcript。"
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                5
+              ]
+            }
+          },
+          {
+            "name": "vrf_attempt_used",
+            "docs": [
+              "每个 VRF 目标实际用的 attempt（重建 VrfFulfilled 事件需要）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "docs": [
+              "0=Settled 1=Void（与 ProofEntry.status 同义）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "streets_used",
+            "docs": [
+              "bit k = 该街确实发过牌（draw_digest[k] 有效）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充：504 = 8×63。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                9
               ]
             }
           }

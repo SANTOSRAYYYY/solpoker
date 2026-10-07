@@ -58,6 +58,9 @@ const permPda = (acc) => PublicKey.findProgramAddressSync([Buffer.from("permissi
 const commitPayerPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("commit_payer"), table.toBuffer()], programId)[0];
 const proofPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("proof"), table.toBuffer()], programId)[0];
 const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("secrets"), table.toBuffer()], programId)[0];
+// HandReplay（§8.7 整手复算输入，2026-10-08）：advance 的必填账户；
+// 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
+const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
 async function sendAndConfirm(conn, ixs, signers, label, cu = null) {
@@ -282,7 +285,7 @@ async function main() {
           .advance(new BN(handId.toString()))
           .accounts({
             table, game, deck: deckPda(table), handProof: proofPda(table),
-            handSecrets: secretsPda(table), ...handAccounts,
+            handSecrets: secretsPda(table), handReplay: replayPda(table), ...handAccounts,
             caller: deployer.publicKey,
           })
           .instruction();

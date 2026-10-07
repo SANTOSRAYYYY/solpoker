@@ -47,6 +47,8 @@ const vault = getAssociatedTokenAddressSync(TUSDC_MINT, vaultAuth, true);
 const [game] = PublicKey.findProgramAddressSync([Buffer.from("game"), table.toBuffer()], programId);
 const [handProof] = PublicKey.findProgramAddressSync([Buffer.from("proof"), table.toBuffer()], programId);
 const [handSecrets] = PublicKey.findProgramAddressSync([Buffer.from("secrets"), table.toBuffer()], programId);
+// HandReplay（§8.7 整手复算输入，2026-10-08）：init_replay 创建 + delegate[14] 委托
+const [replay] = PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId);
 const [deck] = PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId);
 const [commitPayer] = PublicKey.findProgramAddressSync([Buffer.from("commit_payer"), table.toBuffer()], programId);
 const seat = (i) => PublicKey.findProgramAddressSync([Buffer.from("seat"), table.toBuffer(), Buffer.from([i])], programId)[0];
@@ -134,11 +136,21 @@ if (!(await l1.getAccountInfo(table))) {
     }).instruction();
     await sendAndConfirm(l1, [ix], [deployer], "create_hands (L1)");
   }
+  {
+    // §8.7：整手复算账户（幂等；老桌可用 scripts/init-replay.mjs 单独补）
+    const info = await l1.getAccountInfo(replay);
+    if (!info) {
+      const ix = await program.methods.initReplay().accounts({
+        table, replay, admin: deployer.publicKey,
+      }).instruction();
+      await sendAndConfirm(l1, [ix], [deployer], "init_replay (L1)");
+    } else console.log("… HandReplay exists");
+  }
 } else console.log("… table exists");
 
-// 2) 委托 ×14（每个账户单独判 DLP owner，可断点续跑）
-const targets = [commitPayer, game, handProof, handSecrets, deck, ...Array.from({ length: 9 }, (_, i) => hand(i))];
-for (let di = 0; di < 14; di++) {
+// 2) 委托 ×15（每个账户单独判 DLP owner，可断点续跑；14 = HandReplay）
+const targets = [commitPayer, game, handProof, handSecrets, deck, ...Array.from({ length: 9 }, (_, i) => hand(i)), replay];
+for (let di = 0; di < targets.length; di++) {
   const info = await l1.getAccountInfo(targets[di]);
   if (info?.owner.equals(DLP)) { console.log(`… delegate[${di}] already`); continue; }
   const ix = await program.methods
