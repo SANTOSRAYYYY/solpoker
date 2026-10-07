@@ -52,6 +52,45 @@
 
 ### 遗留问题
 
+- **（2026-10-08）UI 重设计 · 视觉稿（Solana 品牌配色 + 赌场拟物结构，等用户过目后接真实数据）**。
+  按用户拍板的四方向落地：四模块全做（大厅+导航 IA / 对局页重做 / Agent 管理 /
+  手牌历史+验证器）、Tailwind v4 + shadcn 依赖链、混合桌座位不固定（不动程序）；
+  **色调以 Solana 科技感为主**（用户提供官方 Solana Brand Assets 参照）——拟物结构
+  保留（毡桌/筹码/扑克牌/座位），材质换成深空+霓虹玻璃。
+  配色全部取自官方 brandkit（`Solana Brand Assets/Color Palettes` + `Gradient`，
+  用 System.Drawing 采样核对）：主色 #9945FF / #14F195，招牌渐变 133°
+  #9945FF 8% → #8752F3 30% → #5497D5 50% → #43B4CA 60% → #28E0B9 72% → #19FB9B 97%
+  （与 logomark 渐变定义逐字节一致），副色 Cyan #00DAFF / Pink #EB54BC /
+  Orange #FF623A / Lime #E8F180 / Lavender #B6B0FF。导航品牌标记直接用官方
+  Solana Logomark SVG（三斜杠渐变，内联为 `SolMark` 组件）。**ABC Diatype 是
+  商业授权字体，未随仓库分发**（字体栈用系统近似；如需上字体需单独谈授权）。
+  做法是**先在 `/mock/*` 出可点视觉稿**，真实 app 在 `/` 完全不受影响（Tailwind
+  只在 mock 路由的 layout 里加载；根路由继续用旧 CSS）。新增：
+  `web/app/mock/mock.css`（设计系统：@theme tokens accent(紫)/mint(绿)/cyanx/
+  felt(深紫绒面)/frame(黑曜石)/ink(深空)/mist(冷白)/chip + 拟物基元
+  `.felt`(噪点+细网格绒面)/`.rail`(黑曜石+渐变描边+霓虹辉光)/`.rail-quiet`(卡片静音版)/
+  `.pcard`(白牌面+渐变斜纹牌背)/`.chip`(Solana 配色筹码)/`.holo`(渐变描边玻璃铭牌)/
+  `.btn-brand`(招牌渐变 CTA)/`.btn-glass`/`.btn-mint`/`.btn-danger`(品牌橙)/`.btn-ghost`
+  + `bg-brand`/`text-brand`/`ring-brand` 工具类）、`mock/{layout,nav,ui,data}.tsx`，
+  五屏：`/mock/lobby`（英雄条+桌卡片/9 座迷你桌预览/筛选/我的区+Agent 卡/MCP 接入卡/
+  信任速览）、`/mock/table`（椭圆毡桌+9 座椭圆定位（我的座位固定正下方）+下注筹码+
+  倒计时圆环+行动坞（滑杆+½¾池预设）+右侧栏（底牌/本手信息/发牌证明/行动记录）+
+  弹窗示例：X11 混合桌入座确认、结算、E3 离座、A7 自动离座）、`/mock/agents`
+  （Agent 卡+注册向导+MCP 配置+安全边界）、`/mock/history`（手牌列表+详情+
+  发牌证明+事件流+三步验证器说明）、`/mock/trust`（严格按 §16 八项，每项三栏 +
+  attestation + 诚实边界）。手机宽度已适配（大厅零横向溢出；对局页横向滚动容器，
+  立式桌布局待定）。浏览器实测：五屏渲染正常（截图存档），lobby 筛选交互
+  （hydration）正常，375px 宽 scrollWidth == clientWidth。
+  **未做**：i18n 接线（导航 ZH/EN 为视觉占位）、接真实链上数据、移动端对局页专用布局。
+  dev server 在 3100。**修复（同日，用户指出导航区有两条丑东西）**：导航链接区
+  内容 591px 超出容器 571px（桌面宽也一样），浏览器因此画出原生横向滚动条
+  （浅色轨道 + 右端方块），且末尾 "TRUST" 副标被裁成一块紫色残影。修法：收紧
+  链接内边距与英文副标（1280–1920 全部 overflow=0）+ 新增 `.no-bar`
+  （`scrollbar-width:none` + `::-webkit-scrollbar{display:none}`）让窄屏仍可滑动
+  但不显示滚动条；牌桌的横向滚动容器同样处理。**顺带修掉一个更严重的 bug**：
+  mock 布局根节点的 `overflow-x-hidden` 会把容器变成滚动容器，导致吸顶导航
+  `position:sticky` 失效（滚动后导航消失）——改用 `overflow-x: clip`
+  （裁剪但不建立滚动容器），实测 scrollY=700 时 header top=0。
 - **（2026-10-08）top_up 全链路**（Stage 8 打磨）：`ixTopUp` + MCP `top_up`
   工具 + **crank 新增 `apply_deposits` 分支**（此前没有任何角色把 L1 补码计入
   ER —— 补码会静默躺在账本上）。实链验收 `TOPUP_TEST_OK`：L1 入金 4 USDC →

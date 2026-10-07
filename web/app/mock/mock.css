@@ -1,0 +1,935 @@
+/* ============================================================================
+   SolPoker — 设计系统（Solana brand kit 配色 + 赌场拟物结构）
+   ---------------------------------------------------------------------------
+   配色取自官方 Solana Brand Assets：
+     主色 Solana Purple #9945FF / Solana Green #14F195
+     招牌渐变（logomark 同款）133°：#9945FF 8% → #8752F3 30% → #5497D5 50%
+                                  → #43B4CA 60% → #28E0B9 72% → #19FB9B 97%
+     副色 Cyan #00DAFF、Pink #EB54BC、Orange #FF623A、Lime #E8F180、Lavender #B6B0FF
+   结构仍是赌场那套（毡桌/筹码/牌），材质换成深空+霓虹玻璃。
+   仅在 /mock/* 路由加载，不影响根路由现有页面。
+   ============================================================================ */
+@import "tailwindcss";
+
+@source "../";
+
+@theme {
+  /* --- Solana 主色 / 副色（品牌常量） ---------------------------------- */
+  --color-sol-purple: #9945ff;
+  --color-sol-green: #14f195;
+  --color-sol-cyan: #00daff;
+  --color-sol-pink: #eb54bc;
+  --color-sol-orange: #ff623a;
+  --color-sol-lime: #e8f180;
+  --color-sol-lav: #b6b0ff;
+
+  /* --- accent（紫）主色阶：CTA / 边框 / 高亮 --------------------------- */
+  --color-accent-100: #efe6ff;
+  --color-accent-200: #d9c8ff;
+  --color-accent-300: #bd9dff;
+  --color-accent-400: #a76bff;
+  --color-accent-500: #9945ff;
+  --color-accent-600: #7d2fe0;
+  --color-accent-700: #5f21ab;
+  --color-accent-800: #3f1673;
+  --color-accent-900: #260d45;
+
+  /* --- mint（绿）次色阶：确认 / 正向 ----------------------------------- */
+  --color-mint-100: #d9ffee;
+  --color-mint-200: #a6ffd8;
+  --color-mint-300: #6bffc0;
+  --color-mint-400: #35f9a6;
+  --color-mint-500: #14f195;
+  --color-mint-600: #0cbf74;
+  --color-mint-700: #0a8f57;
+  --color-mint-800: #075f3a;
+  --color-mint-900: #04331f;
+
+  /* --- cyan（青）信息色 ------------------------------------------------- */
+  --color-cyanx-100: #dffaff;
+  --color-cyanx-300: #80ecff;
+  --color-cyanx-500: #00daff;
+  --color-cyanx-700: #00758f;
+  --color-cyanx-900: #00313d;
+
+  /* --- 毡面 felt：深紫桌面（保留毡的质感，换成 Solana 紫） -------------- */
+  --color-felt-100: #ede7ff;
+  --color-felt-200: #d2c4ff;
+  --color-felt-300: #ab8dff;
+  --color-felt-400: #7c5ae0;
+  --color-felt-500: #4a2a94;
+  --color-felt-600: #3b1f78;
+  --color-felt-700: #251156;
+  --color-felt-800: #170a37;
+  --color-felt-900: #0d0522;
+  --color-felt-950: #070313;
+
+  /* --- 桌框 frame：黑曜石/铬（替代木纹） -------------------------------- */
+  --color-frame-100: #e8e9f5;
+  --color-frame-200: #c3c5dc;
+  --color-frame-300: #9093b2;
+  --color-frame-400: #5b5f80;
+  --color-frame-500: #3d415c;
+  --color-frame-600: #2b2d45;
+  --color-frame-700: #1e2032;
+  --color-frame-800: #14151f;
+  --color-frame-900: #0c0d14;
+
+  /* --- ink：深空背景 ---------------------------------------------------- */
+  --color-ink-950: #05050b;
+  --color-ink-900: #08080f;
+  --color-ink-800: #0c0c16;
+  --color-ink-700: #12121d;
+  --color-ink-600: #1a1a28;
+
+  /* --- 文字 mist（冷白） ------------------------------------------------ */
+  --color-mist: #f2f3ff;
+  --color-mist-2: #cfd1e6;
+  --color-mist-dim: #9fa2c0;
+  --color-mist-faint: #6d7090;
+
+  /* --- 语义 ------------------------------------------------------------- */
+  --color-win: #14f195;
+  --color-loss: #ff623a;
+  --color-warn: #e8f180;
+  --color-info: #00daff;
+
+  /* --- 筹码 ------------------------------------------------------------- */
+  --color-chip-white: #f2f3ff;
+  --color-chip-purple: #9945ff;
+  --color-chip-green: #14f195;
+  --color-chip-cyan: #00daff;
+  --color-chip-black: #1a1a28;
+
+  /* --- 字体（ABC Diatype 属商业授权，未随仓库分发；用系统近似栈） ------- */
+  --font-display: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --font-body: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+
+  /* --- 动画 ------------------------------------------------------------- */
+  --animate-chip-pop: chip-pop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.5) both;
+  --animate-card-deal: card-deal 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.25) both;
+  --animate-card-flip: card-flip 0.55s ease both;
+  --animate-breathe: breathe 2.4s ease-in-out infinite;
+  --animate-turn-ring: turn-ring 1.8s ease-out infinite;
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  --animate-sheen: sheen 6s linear infinite;
+}
+
+@keyframes chip-pop {
+  0% {
+    transform: translateY(6px) scale(0.6);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes card-deal {
+  0% {
+    transform: translate(40px, -70px) rotate(24deg) scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(0, 0) rotate(0) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes card-flip {
+  0% {
+    transform: rotateY(90deg);
+  }
+  100% {
+    transform: rotateY(0);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+@keyframes turn-ring {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(20, 241, 149, 0.5),
+      0 0 18px rgba(20, 241, 149, 0.35);
+  }
+  100% {
+    box-shadow:
+      0 0 0 16px rgba(20, 241, 149, 0),
+      0 0 18px rgba(20, 241, 149, 0.2);
+  }
+}
+@keyframes rise {
+  0% {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes sheen {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 300% 50%;
+  }
+}
+
+/* ---------------------------------------------------------------- 品牌工具 */
+/* 招牌渐变：logomark 同款（133°，紫 → 钢蓝 → 青 → 绿） */
+@utility bg-brand {
+  background-image: linear-gradient(
+    133deg,
+    #9945ff 8%,
+    #8752f3 30%,
+    #5497d5 50%,
+    #43b4ca 60%,
+    #28e0b9 72%,
+    #19fb9b 97%
+  );
+}
+@utility bg-brand-soft {
+  background-image: linear-gradient(
+    133deg,
+    rgba(153, 69, 255, 0.22) 8%,
+    rgba(84, 151, 213, 0.18) 50%,
+    rgba(25, 251, 155, 0.18) 97%
+  );
+}
+/* 渐变文字 */
+@utility text-brand {
+  background-image: linear-gradient(
+    133deg,
+    #b892ff 4%,
+    #8f7cf5 28%,
+    #56b8dd 55%,
+    #35e9ac 78%,
+    #19fb9b 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* 渐变描边（1px 渐变边框的通用写法） */
+@utility ring-brand {
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(180deg, rgba(20, 20, 32, 0.9), rgba(12, 12, 20, 0.9)),
+    linear-gradient(133deg, #9945ff 8%, #5497d5 50%, #19fb9b 97%);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+@layer components {
+  /* ==========================================================================
+     1) 房间与桌面材质
+     ========================================================================== */
+
+  /* 房间：深空黑 + 紫/绿环境光 + 细网格（科技感） */
+  .room {
+    position: relative;
+    background:
+      radial-gradient(
+        120% 65% at 50% -12%,
+        rgba(153, 69, 255, 0.22),
+        transparent 58%
+      ),
+      radial-gradient(
+        85% 55% at 88% 108%,
+        rgba(20, 241, 149, 0.1),
+        transparent 62%
+      ),
+      radial-gradient(
+        70% 45% at 8% 100%,
+        rgba(0, 218, 255, 0.07),
+        transparent 60%
+      ),
+      linear-gradient(180deg, #0a0a14 0%, #07070e 46%, #040409 100%);
+  }
+  .room::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(242, 243, 255, 0.028) 0 1px,
+        transparent 1px 72px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(242, 243, 255, 0.028) 0 1px,
+        transparent 1px 72px
+      );
+    mask-image: radial-gradient(120% 80% at 50% 0%, #000 20%, transparent 78%);
+  }
+
+  /* 毡面：深紫绒面 + 顶光 + 噪点 + 细网格 */
+  .felt {
+    position: relative;
+    background:
+      radial-gradient(
+        120% 95% at 50% 26%,
+        rgba(153, 69, 255, 0.3),
+        transparent 62%
+      ),
+      radial-gradient(
+        66% 60% at 50% 52%,
+        #4a2a94 0%,
+        #341a6e 38%,
+        #1f0f4c 70%,
+        #0d0522 100%
+      );
+    background-color: #170a37;
+    box-shadow:
+      inset 0 10px 30px rgba(0, 0, 0, 0.6),
+      inset 0 -8px 24px rgba(0, 0, 0, 0.55),
+      inset 0 0 120px rgba(153, 69, 255, 0.14);
+  }
+  .felt::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0.42;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  }
+  .felt::after {
+    content: "";
+    position: absolute;
+    inset: 9%;
+    border-radius: inherit;
+    pointer-events: none;
+    border: 1px solid rgba(242, 243, 255, 0.07);
+    background-image:
+      repeating-linear-gradient(
+        0deg,
+        rgba(242, 243, 255, 0.035) 0 1px,
+        transparent 1px 56px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        rgba(242, 243, 255, 0.035) 0 1px,
+        transparent 1px 56px
+      );
+    mask-image: radial-gradient(80% 80% at 50% 50%, #000 30%, transparent 82%);
+    box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.3);
+  }
+
+  /* 桌框：黑曜石 + 招牌渐变描边 + 霓虹外辉 */
+  .rail {
+    position: relative;
+    border: 2px solid transparent;
+    background:
+      repeating-linear-gradient(
+        100deg,
+        rgba(242, 243, 255, 0.035) 0 2px,
+        transparent 2px 16px
+      )
+        padding-box,
+      linear-gradient(180deg, #2b2d45 0%, #1a1c2b 45%, #0e0f18 100%) padding-box,
+      linear-gradient(133deg, #9945ff 8%, #5497d5 50%, #19fb9b 97%) border-box;
+    box-shadow:
+      0 30px 70px rgba(0, 0, 0, 0.8),
+      0 0 60px rgba(153, 69, 255, 0.22),
+      0 0 120px rgba(20, 241, 149, 0.08),
+      inset 0 1px 0 rgba(242, 243, 255, 0.14);
+  }
+
+  /* 静音版桌框：小尺寸卡片/列表用，只留一圈暗淡渐变描边 */
+  .rail-quiet {
+    position: relative;
+    border: 1px solid transparent;
+    background:
+      linear-gradient(180deg, #1c1e2e 0%, #10111c 100%) padding-box,
+      linear-gradient(
+          160deg,
+          rgba(153, 69, 255, 0.7) 0%,
+          rgba(242, 243, 255, 0.1) 46%,
+          rgba(25, 251, 155, 0.5) 100%
+        )
+        border-box;
+    box-shadow:
+      0 12px 28px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(242, 243, 255, 0.1);
+  }
+
+  /* 通用面板：深空玻璃 */
+  .panel {
+    background:
+      radial-gradient(
+        120% 90% at 15% 0%,
+        rgba(153, 69, 255, 0.1),
+        transparent 55%
+      ),
+      linear-gradient(180deg, rgba(22, 22, 34, 0.92), rgba(12, 12, 20, 0.94));
+    border: 1px solid rgba(242, 243, 255, 0.1);
+    border-radius: 14px;
+    box-shadow:
+      0 12px 30px rgba(0, 0, 0, 0.55),
+      inset 0 1px 0 rgba(242, 243, 255, 0.07);
+    backdrop-filter: blur(10px);
+  }
+
+  /* holo 铭牌：深色玻璃胶囊 + 渐变描边（原黄铜铭牌） */
+  .holo {
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background:
+      linear-gradient(180deg, rgba(14, 14, 24, 0.86), rgba(8, 8, 16, 0.9))
+        padding-box,
+      linear-gradient(
+        133deg,
+        rgba(153, 69, 255, 0.95) 8%,
+        rgba(84, 151, 213, 0.85) 50%,
+        rgba(25, 251, 155, 0.9) 97%
+      )
+        border-box;
+    color: #eaeaff;
+    box-shadow:
+      0 3px 12px rgba(0, 0, 0, 0.5),
+      0 0 18px rgba(153, 69, 255, 0.18),
+      inset 0 1px 0 rgba(242, 243, 255, 0.16);
+    backdrop-filter: blur(6px);
+  }
+
+  /* 中文标题：无衬线 + 字距 */
+  .title-cn {
+    font-family: var(--font-body);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+
+  /* ==========================================================================
+     2) 扑克牌
+     ========================================================================== */
+  .pcard {
+    --pc-w: 56px;
+    width: var(--pc-w);
+    height: calc(var(--pc-w) * 1.42);
+    border-radius: calc(var(--pc-w) * 0.11);
+    position: relative;
+    color: #14162b;
+    background:
+      radial-gradient(
+        120% 100% at 20% 0%,
+        rgba(255, 255, 255, 0.95),
+        transparent 42%
+      ),
+      linear-gradient(160deg, #fdfdff 0%, #eef0fb 68%, #dcdfdf 100%);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 6px 14px rgba(0, 0, 0, 0.5),
+      inset 0 0 0 1px rgba(20, 22, 43, 0.12);
+    user-select: none;
+  }
+  .pcard.red {
+    color: #d9286f;
+  }
+  .pcard .pc-r {
+    position: absolute;
+    top: 5%;
+    left: 8%;
+    font-weight: 800;
+    font-size: calc(var(--pc-w) * 0.3);
+    line-height: 1;
+  }
+  .pcard .pc-s {
+    position: absolute;
+    top: calc(5% + var(--pc-w) * 0.31);
+    left: 7%;
+    font-size: calc(var(--pc-w) * 0.28);
+    line-height: 1;
+  }
+  .pcard .pc-pip {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: calc(var(--pc-w) * 0.58);
+    opacity: 0.92;
+  }
+  .pcard .pc-r2 {
+    position: absolute;
+    right: 8%;
+    bottom: 5%;
+    transform: rotate(180deg);
+    font-weight: 800;
+    font-size: calc(var(--pc-w) * 0.24);
+  }
+  /* 牌背：深空底 + 招牌渐变斜纹 + 白内圈 */
+  .pcard-back {
+    background:
+      repeating-linear-gradient(
+        45deg,
+        rgba(242, 243, 255, 0.14) 0 2px,
+        transparent 2px 9px
+      ),
+      repeating-linear-gradient(
+        -45deg,
+        rgba(242, 243, 255, 0.14) 0 2px,
+        transparent 2px 9px
+      ),
+      linear-gradient(133deg, #6b2fd0 4%, #3f6bbf 52%, #0fbf86 100%),
+      #14142a;
+    box-shadow:
+      inset 0 0 0 calc(var(--pc-w) * 0.055) #0a0a16,
+      inset 0 0 0 calc(var(--pc-w) * 0.085) rgba(242, 243, 255, 0.75),
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 6px 14px rgba(0, 0, 0, 0.5);
+  }
+  .pcard-slot {
+    background: rgba(5, 5, 14, 0.4);
+    box-shadow:
+      inset 0 2px 6px rgba(0, 0, 0, 0.6),
+      inset 0 0 0 1px rgba(242, 243, 255, 0.08);
+    border-radius: calc(var(--pc-w) * 0.11);
+  }
+
+  /* ==========================================================================
+     3) 筹码（Solana 配色）
+     ========================================================================== */
+  .chip {
+    --chip-size: 40px;
+    --chip-face: #9945ff;
+    --chip-edge: #f2f3ff;
+    width: var(--chip-size);
+    height: var(--chip-size);
+    border-radius: 999px;
+    position: relative;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(
+        closest-side,
+        rgba(255, 255, 255, 0.3),
+        transparent 62%
+      ),
+      var(--chip-face);
+    box-shadow:
+      0 3px 0 rgba(0, 0, 0, 0.4),
+      0 6px 10px rgba(0, 0, 0, 0.45),
+      0 0 14px rgba(153, 69, 255, 0.22),
+      inset 0 2px 2px rgba(255, 255, 255, 0.45),
+      inset 0 -3px 5px rgba(0, 0, 0, 0.35);
+  }
+  .chip::before {
+    content: "";
+    position: absolute;
+    inset: 17%;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #fbfbff 0%, #e4e6f5 100%);
+    box-shadow:
+      inset 0 1px 2px rgba(0, 0, 0, 0.3),
+      0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+  .chip::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: repeating-conic-gradient(
+      from 10deg,
+      var(--chip-edge) 0 13deg,
+      transparent 13deg 45deg
+    );
+    -webkit-mask: radial-gradient(circle, transparent 0 60%, #000 61% 100%);
+    mask: radial-gradient(circle, transparent 0 60%, #000 61% 100%);
+  }
+  .chip > * {
+    position: relative;
+    z-index: 1;
+  }
+  .chip .chip-v {
+    font-weight: 800;
+    font-size: calc(var(--chip-size) * 0.3);
+    color: #241a3d;
+  }
+  .chip-white {
+    --chip-face: var(--color-chip-white);
+    --chip-edge: #9945ff;
+  }
+  .chip-purple {
+    --chip-face: var(--color-chip-purple);
+    --chip-edge: #f2f3ff;
+  }
+  .chip-green {
+    --chip-face: var(--color-chip-green);
+    --chip-edge: #0b0520;
+  }
+  .chip-cyan {
+    --chip-face: var(--color-chip-cyan);
+    --chip-edge: #0b0520;
+  }
+  .chip-black {
+    --chip-face: var(--color-chip-black);
+    --chip-edge: #14f195;
+  }
+
+  .chipstack {
+    position: relative;
+  }
+  .chipstack .cs {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* ==========================================================================
+     4) 按钮
+     ========================================================================== */
+  .btn-casino {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    user-select: none;
+    transition:
+      transform 0.08s ease,
+      filter 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .btn-casino:active {
+    transform: translateY(1px);
+  }
+  /* 主 CTA：Solana 招牌渐变 + 深色字（品牌用法） */
+  .btn-brand {
+    background-image: linear-gradient(
+      133deg,
+      #9945ff 8%,
+      #8752f3 30%,
+      #5497d5 50%,
+      #43b4ca 60%,
+      #28e0b9 72%,
+      #19fb9b 97%
+    );
+    color: #0b0620;
+    border: 1px solid rgba(25, 251, 155, 0.5);
+    font-weight: 700;
+    box-shadow:
+      0 6px 16px rgba(0, 0, 0, 0.5),
+      0 0 26px rgba(153, 69, 255, 0.35),
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+  .btn-brand:hover {
+    filter: brightness(1.07);
+  }
+  /* 次级：玻璃 */
+  .btn-glass {
+    background: linear-gradient(
+      180deg,
+      rgba(242, 243, 255, 0.12),
+      rgba(242, 243, 255, 0.04)
+    );
+    color: #eaeaff;
+    border: 1px solid rgba(242, 243, 255, 0.18);
+    box-shadow:
+      0 4px 14px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(8px);
+  }
+  .btn-glass:hover {
+    background: linear-gradient(
+      180deg,
+      rgba(242, 243, 255, 0.18),
+      rgba(242, 243, 255, 0.07)
+    );
+  }
+  /* 确认：Solana 绿 + 深字 */
+  .btn-mint {
+    background: linear-gradient(180deg, #3df7ab 0%, #0fce7e 100%);
+    color: #04241a;
+    border: 1px solid rgba(20, 241, 149, 0.55);
+    font-weight: 700;
+    box-shadow:
+      0 6px 16px rgba(0, 0, 0, 0.45),
+      0 0 24px rgba(20, 241, 149, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
+  .btn-mint:hover {
+    filter: brightness(1.06);
+  }
+  /* 危险（弃牌/吊销）：品牌橙红 */
+  .btn-danger {
+    background: linear-gradient(180deg, #ff7a52 0%, #e14a24 100%);
+    color: #2a0d05;
+    border: 1px solid rgba(255, 98, 58, 0.55);
+    font-weight: 700;
+    box-shadow:
+      0 6px 16px rgba(0, 0, 0, 0.45),
+      0 0 22px rgba(255, 98, 58, 0.26),
+      inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  }
+  .btn-danger:hover {
+    filter: brightness(1.07);
+  }
+  /* 幽灵：紫描边 */
+  .btn-ghost {
+    background: rgba(153, 69, 255, 0.1);
+    color: var(--color-accent-200);
+    border: 1px solid rgba(153, 69, 255, 0.42);
+  }
+  .btn-ghost:hover {
+    background: rgba(153, 69, 255, 0.18);
+  }
+  .btn-casino:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: grayscale(0.3);
+  }
+
+  /* ==========================================================================
+     5) 徽章 / 状态
+     ========================================================================== */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .badge-brand {
+    background: rgba(153, 69, 255, 0.16);
+    border-color: rgba(153, 69, 255, 0.5);
+    color: var(--color-accent-200);
+  }
+  .badge-mint {
+    background: rgba(20, 241, 149, 0.13);
+    border-color: rgba(20, 241, 149, 0.45);
+    color: #8ff2c4;
+  }
+  .badge-danger {
+    background: rgba(255, 98, 58, 0.15);
+    border-color: rgba(255, 98, 58, 0.45);
+    color: #ffb09d;
+  }
+  .badge-cyan {
+    background: rgba(0, 218, 255, 0.14);
+    border-color: rgba(0, 218, 255, 0.42);
+    color: #93e9ff;
+  }
+  .badge-lime {
+    background: rgba(232, 241, 128, 0.14);
+    border-color: rgba(232, 241, 128, 0.42);
+    color: #eaf3a0;
+  }
+  .badge-grad {
+    background: linear-gradient(
+      90deg,
+      rgba(153, 69, 255, 0.2),
+      rgba(25, 251, 155, 0.16)
+    );
+    border-color: rgba(153, 69, 255, 0.5);
+    color: #cdbcff;
+  }
+  .badge-plain {
+    background: rgba(242, 243, 255, 0.06);
+    border-color: rgba(242, 243, 255, 0.14);
+    color: var(--color-mist-dim);
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+  .dot-live {
+    background: var(--color-sol-green);
+    box-shadow: 0 0 8px rgba(20, 241, 149, 0.9);
+    animation: breathe 2.2s ease-in-out infinite;
+  }
+  .dot-idle {
+    background: var(--color-mist-faint);
+  }
+  .dot-warn {
+    background: var(--color-warn);
+    box-shadow: 0 0 8px rgba(232, 241, 128, 0.8);
+  }
+  .dot-dead {
+    background: #4a4d63;
+  }
+
+  /* ==========================================================================
+     6) 座位 / 行动
+     ========================================================================== */
+  .seat-plate {
+    background:
+      radial-gradient(
+        120% 100% at 30% 0%,
+        rgba(153, 69, 255, 0.16),
+        transparent 58%
+      ),
+      linear-gradient(180deg, rgba(26, 26, 40, 0.94), rgba(10, 10, 18, 0.96));
+    border: 1px solid rgba(242, 243, 255, 0.14);
+    border-radius: 12px;
+    box-shadow:
+      0 8px 20px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(242, 243, 255, 0.1);
+    backdrop-filter: blur(6px);
+  }
+  .seat-acting {
+    border-color: rgba(20, 241, 149, 0.9);
+    animation: turn-ring 1.8s ease-out infinite;
+  }
+  .seat-me {
+    border-color: rgba(153, 69, 255, 0.85);
+    box-shadow:
+      0 0 0 1px rgba(20, 241, 149, 0.35),
+      0 8px 20px rgba(0, 0, 0, 0.6),
+      0 0 26px rgba(153, 69, 255, 0.4);
+  }
+  .seat-folded {
+    opacity: 0.42;
+    filter: saturate(0.45);
+  }
+  .avatar {
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    font-weight: 700;
+    background:
+      radial-gradient(
+        120% 120% at 30% 15%,
+        rgba(242, 243, 255, 0.25),
+        transparent 48%
+      ),
+      linear-gradient(180deg, #3d2a6e 0%, #1c1240 100%);
+    color: var(--color-accent-200);
+    border: 2px solid rgba(153, 69, 255, 0.55);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+  }
+  .avatar-agent {
+    background:
+      radial-gradient(
+        120% 120% at 30% 15%,
+        rgba(242, 243, 255, 0.28),
+        transparent 48%
+      ),
+      linear-gradient(180deg, #0f7f5e 0%, #0a3f33 100%);
+    color: #9df7cf;
+    border-color: rgba(20, 241, 149, 0.6);
+  }
+
+  /* 倒计时圆环 */
+  .timer-ring {
+    --p: 0.7;
+    --tr-size: 46px;
+    width: var(--tr-size);
+    height: var(--tr-size);
+    border-radius: 999px;
+    background: conic-gradient(
+      from -90deg,
+      #9945ff 0deg,
+      #28e0b9 calc(var(--p) * 180deg),
+      #14f195 calc(var(--p) * 360deg),
+      rgba(242, 243, 255, 0.1) 0
+    );
+    display: grid;
+    place-items: center;
+    box-shadow:
+      0 2px 10px rgba(0, 0, 0, 0.55),
+      0 0 18px rgba(20, 241, 149, 0.2);
+  }
+  .timer-ring > span {
+    width: calc(var(--tr-size) - 8px);
+    height: calc(var(--tr-size) - 8px);
+    border-radius: 999px;
+    background: #0b0b16;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-mint-200);
+  }
+
+  /* ==========================================================================
+     7) 杂项
+     ========================================================================== */
+  .divider {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(153, 69, 255, 0.5),
+      rgba(25, 251, 155, 0.35),
+      transparent
+    );
+  }
+  .hp-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(242, 243, 255, 0.08);
+    overflow: hidden;
+  }
+  .hp-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--color-sol-purple), #19fb9b);
+  }
+  .code-box {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    color: #cfe8f7;
+    background: linear-gradient(180deg, #0a1018 0%, #070a11 100%);
+    border: 1px solid rgba(0, 218, 255, 0.22);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    white-space: pre;
+    tab-size: 2;
+    box-shadow: inset 0 0 24px rgba(0, 218, 255, 0.05);
+  }
+  .hairline {
+    border-top: 1px solid rgba(242, 243, 255, 0.09);
+  }
+  .scroll-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: rgba(153, 69, 255, 0.3);
+    border-radius: 999px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  /* 可横向滑动但不显示滚动条（导航、牌桌容器用） */
+  .no-bar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-bar::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
