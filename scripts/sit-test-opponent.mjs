@@ -37,7 +37,17 @@ tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }));
 tx.add(
   await program.methods
     .sitDown(SEAT_IDX, new BN(BUY_IN.toString()), p.publicKey, new BN(Math.floor(Date.now() / 1000) + 7 * 24 * 3600))
-    .accounts({ table, seat, vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey })
+    .accounts({
+      table, seat,
+      ...Object.fromEntries(
+        Array.from({ length: 9 }, (_, k) => k).filter((k) => k !== SEAT_IDX).map((k, n) => [
+          `other${n}`,
+          PublicKey.findProgramAddressSync([Buffer.from("seat"), table.toBuffer(), Buffer.from([k])], programId)[0],
+        ])
+      ),
+      agentProfile: null,
+      vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey,
+    })
     .instruction()
 );
 tx.feePayer = p.publicKey;

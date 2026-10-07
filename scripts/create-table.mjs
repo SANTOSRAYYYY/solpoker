@@ -23,12 +23,14 @@ const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH")
 
 const TABLE_ID = Number(process.argv[2]);
 if (!Number.isInteger(TABLE_ID)) {
-  console.error("用法: node scripts/create-table.mjs <tableId> [sb] [bb] [ante]");
+  console.error("用法: node scripts/create-table.mjs <tableId> [sb] [bb] [ante] [kind]");
+  console.error("      kind: 0=真人桌（默认）1=AI 桌 2=混合桌");
   process.exit(1);
 }
 const SB = BigInt(Math.round(Number(process.argv[3] ?? 0.1) * 1e6));
 const BB = BigInt(Math.round(Number(process.argv[4] ?? 0.2) * 1e6));
 const ANTE = BigInt(Math.round(Number(process.argv[5] ?? 0.02) * 1e6));
+const KIND = Number(process.argv[6] ?? 0);
 
 const deployer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync("keys/deployer.json", "utf8")))
@@ -89,15 +91,16 @@ if (!(await l1.getAccountInfo(config))) {
 
 // 1) 桌面核心账户
 if (!(await l1.getAccountInfo(table))) {
-  // vault = ATA(vault_auth, mint)：先建 ATA（deployer 付租金）
-  if (!(await l1.getAccountInfo(vault))) {
-    const tx = new Transaction().add(
-      createAssociatedTokenAccountInstruction(deployer.publicKey, vault, vaultAuth, TUSDC_MINT)
-    );
-    await sendAndConfirm(l1, [tx.instructions[0]], [deployer], "create vault ATA");
+  // 注意：vault（ATA(vault_auth, mint)）由 create_table 的 `init` 约束创建，
+  // 不要预建——预建会让 Anchor init 撞车（实测 IllegalOwner，且 ATA 的
+  // owner 是 vaultAuth PDA、无法关闭，该桌号会永久不可用）。这里做防护。
+  if (await l1.getAccountInfo(vault)) {
+    console.error(`⛔ 桌 #${TABLE_ID} 的 vault ATA 已存在但 Table 不存在（曾误预建）——`);
+    console.error(`   该桌号不可用。请换一个桌号重跑本脚本。`);
+    process.exit(1);
   }
   const args = {
-    tableId: TABLE_ID, kind: 0, sb: new BN(SB.toString()), bb: new BN(BB.toString()),
+    tableId: TABLE_ID, kind: KIND, sb: new BN(SB.toString()), bb: new BN(BB.toString()),
     ante: new BN(ANTE.toString()), minBuyInBb: 100, maxBuyInBb: 1000,
     rakeBps: 250, rakeCapBb: 3, rakeMinPotBb: 1,
     actionTimeoutS: 30, commitTimeoutS: 10, revealTimeoutS: 10,

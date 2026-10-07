@@ -168,7 +168,14 @@ for (const [i, p] of players.entries()) {
   ixs.push(
     await prog.methods
       .sitDown(i, new BN(BUY_IN), p.publicKey, new BN(Math.floor(Date.now() / 1000) + 7 * 24 * 3600))
-      .accounts({ table, seat: seat(i), vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey })
+      .accounts({
+        table, seat: seat(i),
+        ...Object.fromEntries(
+          Array.from({ length: 9 }, (_, k) => k).filter((k) => k !== i).map((k, n) => [`other${n}`, seat(k)])
+        ),
+        agentProfile: null,
+        vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey,
+      })
       .instruction()
   );
   await sendAndConfirm(l1, ixs, [p], `sit_down player${i}`);

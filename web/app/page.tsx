@@ -303,12 +303,21 @@ export default function Home() {
           .accounts({
             table: pdas.table,
             seat: pdas.seat(seatIdx),
+            // Stage 8：其余 8 个座位账本（全桌身份扫描）；人类玩家 agentProfile=null。
+            ...Object.fromEntries(
+              Array.from({ length: 9 }, (_, k) => k)
+                .filter((k) => k !== seatIdx)
+                .map((k, n) => [`other${n}`, pdas.seat(k)])
+            ),
+            agentProfile: null,
             vaultAuth: pdas.vaultAuth,
             vault: getAssociatedTokenAddressSync(TUSDC_MINT, pdas.vaultAuth, true),
             mint: TUSDC_MINT,
             playerAta,
             payer: pk,
-          })
+            // anchor-ts 对 optional 账户（Option<Account<>>）的生成类型有缺陷
+            // （null 不在类型里）；运行时 null = 不传该账户，行为正确。
+          } as never)
           .instruction()
       );
       tx.feePayer = pk;

@@ -713,6 +713,85 @@
       ]
     },
     {
+      "name": "allow_owner",
+      "docs": [
+        "allow_owner（admin）：KYC 白名单创建。"
+      ],
+      "discriminator": [
+        139,
+        245,
+        245,
+        51,
+        210,
+        14,
+        144,
+        251
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "allowlist",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  95,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "owner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "apply_deposits",
       "docs": [
         "§5.2.4（ER，permissionless）：补码入账，超额部分记 owed。断言 I-ER。"
@@ -2871,6 +2950,52 @@
       "args": []
     },
     {
+      "name": "pause_agent",
+      "docs": [
+        "pause_agent（X9）：主人暂停（暂停后不可入座/补码）。"
+      ],
+      "discriminator": [
+        148,
+        32,
+        1,
+        26,
+        147,
+        122,
+        178,
+        140
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "process_undelegation",
       "discriminator": [
         196,
@@ -2976,6 +3101,176 @@
       ]
     },
     {
+      "name": "register_agent",
+      "docs": [
+        "register_agent：agent 与主人双签，主人付租金。"
+      ],
+      "discriminator": [
+        135,
+        157,
+        66,
+        195,
+        2,
+        113,
+        175,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "agent"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "allowlist",
+          "optional": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "meta_uri",
+          "type": {
+            "array": [
+              "u8",
+              96
+            ]
+          }
+        },
+        {
+          "name": "payout_agent",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "remove_owner",
+      "docs": [
+        "remove_owner（admin）：KYC 白名单撤销。"
+      ],
+      "discriminator": [
+        153,
+        251,
+        84,
+        208,
+        33,
+        62,
+        15,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "allowlist",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  119,
+                  110,
+                  101,
+                  114,
+                  95,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "request_vrf",
       "docs": [
         "Permissionless VRF request (ER). Only succeeds when `Game.vrf` is Ready;",
@@ -3073,6 +3368,52 @@
               "address": "11111111111111111111111111111111"
             }
           ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "resume_agent",
+      "docs": [
+        "resume_agent：主人恢复。"
+      ],
+      "discriminator": [
+        124,
+        252,
+        120,
+        140,
+        221,
+        125,
+        85,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
         }
       ],
       "args": []
@@ -3242,6 +3583,52 @@
       ]
     },
     {
+      "name": "revoke_agent",
+      "docs": [
+        "revoke_agent：主人注销（不可恢复）。"
+      ],
+      "discriminator": [
+        227,
+        60,
+        209,
+        125,
+        240,
+        117,
+        163,
+        73
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "revoke_session",
       "docs": [
         "D2（L1，占用者）：撤销 session_key。"
@@ -3267,6 +3654,126 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "set_agent_payout",
+      "docs": [
+        "set_agent_payout：主人改 payout（只影响之后的入座，X7）。"
+      ],
+      "discriminator": [
+        10,
+        98,
+        239,
+        14,
+        116,
+        13,
+        65,
+        192
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "payout_agent",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_agent_status",
+      "docs": [
+        "set_agent_status（admin）：封禁/解封（合规）。"
+      ],
+      "discriminator": [
+        31,
+        193,
+        64,
+        189,
+        114,
+        155,
+        164,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "banned",
+          "type": "bool"
+        }
+      ]
     },
     {
       "name": "set_session",
@@ -3346,6 +3853,40 @@
         {
           "name": "seat",
           "writable": true
+        },
+        {
+          "name": "other0",
+          "docs": [
+            "owner+dish+idx 并为不同座位。"
+          ]
+        },
+        {
+          "name": "other1"
+        },
+        {
+          "name": "other2"
+        },
+        {
+          "name": "other3"
+        },
+        {
+          "name": "other4"
+        },
+        {
+          "name": "other5"
+        },
+        {
+          "name": "other6"
+        },
+        {
+          "name": "other7"
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "可选：agent 身份档案（PDA [\"agent\", signer]）；不传 = 真人入座。"
+          ],
+          "optional": true
         },
         {
           "name": "vault_auth",
@@ -3901,6 +4442,71 @@
       ]
     },
     {
+      "name": "update_agent",
+      "docs": [
+        "update_agent：主人更新显示名/资料。"
+      ],
+      "discriminator": [
+        85,
+        2,
+        178,
+        9,
+        119,
+        139,
+        102,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "profile.agent",
+                "account": "AgentProfile"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "meta_uri",
+          "type": {
+            "array": [
+              "u8",
+              96
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "vrf_callback",
       "docs": [
         "VRF fulfillment callback. Authenticated by the scoped VRF identity PDA",
@@ -3961,6 +4567,19 @@
   ],
   "accounts": [
     {
+      "name": "AgentProfile",
+      "discriminator": [
+        60,
+        227,
+        42,
+        24,
+        0,
+        87,
+        86,
+        205
+      ]
+    },
+    {
       "name": "Deck",
       "discriminator": [
         192,
@@ -4010,6 +4629,19 @@
         235,
         93,
         190
+      ]
+    },
+    {
+      "name": "OwnerAllowlist",
+      "discriminator": [
+        179,
+        74,
+        39,
+        158,
+        3,
+        125,
+        95,
+        184
       ]
     },
     {
@@ -4205,6 +4837,26 @@
       "code": 6027,
       "name": "BadFeeVault",
       "msg": "commit"
+    },
+    {
+      "code": 6028,
+      "name": "AgentNotActive",
+      "msg": "agent"
+    },
+    {
+      "code": 6029,
+      "name": "SameOwner",
+      "msg": "agent"
+    },
+    {
+      "code": 6030,
+      "name": "AlreadySeated",
+      "msg": "seat"
+    },
+    {
+      "code": 6031,
+      "name": "AgentProfileMismatch",
+      "msg": "agent"
     }
   ],
   "types": [
@@ -4239,6 +4891,79 @@
           },
           {
             "name": "AllIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentProfile",
+      "docs": [
+        "Agent 身份档案（配套文档一 §2.1）。PDA [\"agent\", agent_pubkey]，L1，永不",
+        "委托；注册由 agent 与主人双签、主人付租金。`name`/`meta_uri` 一律视为",
+        "不可信文本（前端与工具按纯文本渲染，不进日志）。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent",
+            "docs": [
+              "agent 自己的钱包：付款、签 sit_down、读底牌。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "docs": [
+              "主人钱包（主网须在 OwnerAllowlist 内）。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "payout_kind",
+            "docs": [
+              "0=Owner（默认，X7）1=Agent；只有主人能改，只影响之后的入座。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "AGENT_ACTIVE | AGENT_PAUSED | AGENT_REVOKED | AGENT_BANNED"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "显示名（不可信文本）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "meta_uri",
+            "docs": [
+              "可选：模型、作者、主页（不可信文本）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                96
+              ]
+            }
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -4691,6 +5416,26 @@
                 16
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "OwnerAllowlist",
+      "docs": [
+        "主网 KYC 白名单条目。PDA [\"owner_ok\", owner]，admin 创建。存在即通过",
+        "（删除账户 = 撤销）。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

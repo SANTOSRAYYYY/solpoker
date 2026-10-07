@@ -198,6 +198,42 @@ async function cmdFund(name, sol = 0.05, tusdc = 25) {
   console.log(`funded: ${sig}`);
 }
 
+async function cmdRegister(name, opts) {
+  const agent = loadAgent(name);
+  const owner = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(fs.readFileSync(opts.ownerPath ?? "keys/deployer.json", "utf8")))
+  );
+  const l1 = new Connection(L1_URL, { commitment: "confirmed", fetch: fetchWithTimeout });
+  const program = new anchor.Program(IDL, new anchor.AnchorProvider(l1, new anchor.Wallet(owner), { commitment: "confirmed" }));
+  const [config] = PublicKey.findProgramAddressSync([Buffer.from("config")], PROGRAM_ID);
+  const [profile] = PublicKey.findProgramAddressSync(
+    [Buffer.from("agent"), agent.keypair.publicKey.toBuffer()], PROGRAM_ID
+  );
+  const nameBytes = Buffer.alloc(32);
+  nameBytes.write((opts.displayName ?? name).slice(0, 32), "utf8");
+  const metaBytes = Buffer.alloc(96);
+
+  const ix = await program.methods
+    .registerAgent(Array.from(nameBytes), Array.from(metaBytes), !!opts.payoutAgent)
+    .accounts({
+      config,
+      profile,
+      agent: agent.keypair.publicKey,
+      owner: owner.publicKey,
+      allowlist: null,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+  const sig = await sendAndConfirm(l1, [ix], [agent.keypair, owner], `register_agent ${name} (owner=${owner.publicKey.toBase58().slice(0, 8)}…)`);
+  saveAgent({
+    ...JSON.parse(fs.readFileSync(agentFile(name), "utf8")),
+    registered: true,
+    owner: owner.publicKey.toBase58(),
+  });
+  console.log(`agent ${name} 已注册（profile=${profile.toBase58()}）: ${sig}`);
+  console.log(`下一步: node scripts/agent/agent.mjs sit ${name} <tableId> <seat> —— 之后将以 agent 身份入座（kind=Agent）`);
+}
+
 async function cmdSit(name, tableId, seat, buyIn = 20) {
   const agent = loadAgent(name);
   const table = tablePda(tableId);
@@ -210,16 +246,26 @@ async function cmdSit(name, tableId, seat, buyIn = 20) {
   if (!(await l1.getAccountInfo(ata))) {
     ixs.push(createAssociatedTokenAccountInstruction(agent.keypair.publicKey, ata, agent.keypair.publicKey, TUSDC_MINT));
   }
+  // Stage 8：其余 8 个座位账本（全桌身份扫描）+ 可选 agentProfile。
+  const others = Object.fromEntries(
+    Array.from({ length: 9 }, (_, k) => k).filter((k) => k !== seat).map((k, n) => [`other${n}`, seatPda(table, k)])
+  );
+  let agentProfile = null;
+  if (agent.registered) {
+    agentProfile = PublicKey.findProgramAddressSync(
+      [Buffer.from("agent"), agent.keypair.publicKey.toBuffer()], PROGRAM_ID
+    )[0];
+  }
   ixs.push(
     await program.methods
       .sitDown(seat, new BN(Math.round(buyIn * 1e6)), agent.keypair.publicKey, new BN(Math.floor(Date.now() / 1000) + 7 * 24 * 3600))
       .accounts({
-        table, seat: seatPda(table, seat), vaultAuth, vault,
+        table, seat: seatPda(table, seat), ...others, agentProfile, vaultAuth, vault,
         mint: TUSDC_MINT, playerAta: ata, payer: agent.keypair.publicKey,
       })
       .instruction()
   );
-  const sig = await sendAndConfirm(l1, ixs, [agent.keypair], `sit_down ${name} (桌#${tableId} 座${seat}, ${buyIn} USDC)`);
+  const sig = await sendAndConfirm(l1, ixs, [agent.keypair], `sit_down ${name} (桌#${tableId} 座${seat}, ${buyIn} USDC${agent.registered ? ", agent 身份" : ""})`);
   saveAgent({ ...JSON.parse(fs.readFileSync(agentFile(name), "utf8")), tableId, seat, buyIn });
   console.log(`入座交易已上链: ${sig}\n下一步: node scripts/agent/agent.mjs run ${name} --hands 5`);
 }
@@ -405,19 +451,28 @@ async function cmdStand(name) {
     await sleep(1500);
   }
   const ata = getAssociatedTokenAddressSync(TUSDC_MINT, agent.keypair.publicKey);
+  // X7：兑付目标是入座时固定的 payout（agent 默认 = 主人钱包），不是 agent 自己。
+  // 从账本读 payout（@154）派生 ATA，并确保其存在。
+  const ledger2 = await l1.getAccountInfo(seatPda(table, seat));
+  const payout = new PublicKey(ledger2.data.subarray(154, 186));
+  const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
   const l1Program = new anchor.Program(IDL, new anchor.AnchorProvider(l1, new anchor.Wallet(agent.keypair), { commitment: "confirmed" }));
-  const before = await l1.getTokenAccountBalance(ata).catch(() => null);
+  const pre = [];
+  if (!(await l1.getAccountInfo(payoutAta))) {
+    pre.push(createAssociatedTokenAccountInstruction(agent.keypair.publicKey, payoutAta, payout, TUSDC_MINT));
+  }
+  const before = await l1.getTokenAccountBalance(payoutAta).catch(() => null);
   const cix = await l1Program.methods
     .cashOut(seat)
     .accounts({
       table, game, seat: seatPda(table, seat), vaultAuth: vaultAuthPda(table),
       vault: getAssociatedTokenAddressSync(TUSDC_MINT, vaultAuthPda(table), true),
-      mint: TUSDC_MINT, payoutAta: ata, caller: agent.keypair.publicKey,
+      mint: TUSDC_MINT, payoutAta, caller: agent.keypair.publicKey,
     })
     .instruction();
-  await sendAndConfirm(l1, [cix], [agent.keypair], "cash_out");
-  const after = await l1.getTokenAccountBalance(ata).catch(() => null);
-  console.log(`[${name}] 已兑现: ${before?.value.uiAmount ?? "?"} → ${after?.value.uiAmount ?? "?"} tUSDC`);
+  await sendAndConfirm(l1, [...pre, cix], [agent.keypair], "cash_out");
+  const after = await l1.getTokenAccountBalance(payoutAta).catch(() => null);
+  console.log(`[${name}] 已兑现到 payout(${payout.toBase58().slice(0, 8)}…): ${before?.value.uiAmount ?? "?"} → ${after?.value.uiAmount ?? "?"} tUSDC`);
 }
 
 async function cmdStatus(name) {
@@ -469,6 +524,12 @@ const flag = (key, def) => {
 };
 try {
   if (cmd === "new") await cmdNew(name);
+  else if (cmd === "register")
+    await cmdRegister(name, {
+      ownerPath: flag("owner"),
+      payoutAgent: rest.includes("--payout-agent"),
+      displayName: flag("display-name"),
+    });
   else if (cmd === "fund") await cmdFund(name, Number(rest[0] ?? 0.05), Number(rest[1] ?? 25));
   else if (cmd === "sit") await cmdSit(name, Number(rest[0]), Number(rest[1]), Number(rest[2] ?? 20));
   else if (cmd === "run") await cmdRun(name, { hands: Number(flag("hands", 0)) || 0, strategy: flag("strategy"), _salts: loadSalts(name) });
@@ -476,12 +537,14 @@ try {
   else if (cmd === "status") await cmdStatus(name);
   else {
     console.log(`SolPoker Agent Runner
-  new   <name>                    创建 agent 密钥
-  fund  <name> [sol] [tusdc]      发测试币（默认 0.05 SOL + 25 tUSDC）
-  sit   <name> <tableId> <seat> [buyIn=20]
-  run   <name> [--hands N] [--strategy path.mjs]
-  stand <name>
-  status [name]`);
+  new      <name>                    创建 agent 密钥
+  register <name> [--owner path] [--payout-agent] [--display-name 名字]
+                                     注册 AgentProfile（agent+主人双签，Stage 8）
+  fund     <name> [sol] [tusdc]      发测试币（默认 0.05 SOL + 25 tUSDC）
+  sit      <name> <tableId> <seat> [buyIn=20]
+  run      <name> [--hands N] [--strategy path.mjs]
+  stand    <name>
+  status   [name]`);
   }
 } catch (e) {
   console.error(String(e.message ?? e));

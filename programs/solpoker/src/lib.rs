@@ -45,7 +45,10 @@ pub mod perms;
 pub mod state;
 pub mod vrf;
 
-use state::{Deck, Game, HandProof, HandSecrets, PlayerHand, ProgramConfig, SeatLedger, Table};
+use state::{
+    AgentProfile, Deck, Game, HandProof, HandSecrets, OwnerAllowlist, PlayerHand, ProgramConfig,
+    SeatLedger, Table,
+};
 
 // Program id pinned since Stage 0 deployment (docs/design/pubkeys.json); this
 // is a real ID, not the placeholder, so PDAs and client config stay stable.
@@ -650,8 +653,105 @@ pub struct InitPermissions<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// admin_force_stand_up（ER，table.admin 门禁，2026-10-07）：弃置座位回收。
-/// 资金纪律：筹码全额转入该座位自己的 owed_total，只有占用者的 payout 能
+// --- Stage 8: Agent 身份（配套文档一 §2）---
+
+/// register_agent（§2.1）：agent 与主人双签，主人付租金。主网 KYC 由
+/// ProgramConfig.flags 位控制（开启时 allowlist 必填）。
+#[derive(Accounts)]
+pub struct RegisterAgent<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + AgentProfile::INIT_SPACE,
+        seeds = [b"agent", agent.key().as_ref()],
+        bump,
+    )]
+    pub profile: Account<'info, AgentProfile>,
+    #[account(mut)]
+    pub agent: Signer<'info>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    /// CHECK: 主网 KYC 白名单 PDA ["owner_ok", owner]（flags 开启时必填）。
+    pub allowlist: Option<UncheckedAccount<'info>>,
+    pub system_program: Program<'info, System>,
+}
+
+/// 主人权限指令共用上下文（update/pause/resume/revoke/set_payout）。
+#[derive(Accounts)]
+pub struct AgentOwnerOnly<'info> {
+    #[account(
+        mut,
+        seeds = [b"agent", profile.agent.as_ref()],
+        bump = profile.bump,
+        constraint = profile.owner == owner.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub profile: Account<'info, AgentProfile>,
+    pub owner: Signer<'info>,
+}
+
+/// set_agent_status（admin 封禁/解封，合规）。
+#[derive(Accounts)]
+pub struct SetAgentStatus<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(mut, seeds = [b"agent", profile.agent.as_ref()], bump = profile.bump)]
+    pub profile: Account<'info, AgentProfile>,
+    pub admin: Signer<'info>,
+}
+
+/// allow_owner（admin）：创建 OwnerAllowlist 条目（KYC 通过）。
+#[derive(Accounts)]
+pub struct AllowOwner<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + OwnerAllowlist::INIT_SPACE,
+        seeds = [b"owner_ok", owner.key().as_ref()],
+        bump,
+    )]
+    pub allowlist: Account<'info, OwnerAllowlist>,
+    /// CHECK: 被允许的钱包（仅作种子）。
+    pub owner: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// remove_owner（admin）：撤销 KYC 白名单（关闭账户，租金退 admin）。
+#[derive(Accounts)]
+pub struct RemoveOwner<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = config.admin == admin.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(
+        mut,
+        close = admin,
+        seeds = [b"owner_ok", owner.key().as_ref()],
+        bump,
+    )]
+    pub allowlist: Account<'info, OwnerAllowlist>,
+    /// CHECK: 被撤销的钱包（仅作种子）。
+    pub owner: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+}
+
+/// admin_force_stand_up（ER，table.admin 门禁，2026-10-07）：弃置座位回收。/// 资金纪律：筹码全额转入该座位自己的 owed_total，只有占用者的 payout 能
 /// 通过 cash_out 领取——管理员碰不到任何资金。座位须在手牌之外。
 #[derive(Accounts)]
 pub struct AdminForceStandUp<'info> {
@@ -716,6 +816,9 @@ pub struct AdminSetMembers<'info> {
 // 手工校验（§5.3）；SeatLedger 在 ER 上以只读克隆传入，同款手工校验。
 
 /// sit_down（§5.2.1，L1）：占用者钱包签名，买入 USDC → TableVault。
+/// Stage 8：按三类桌规则与同主人规则（§2.2/§2.3）校验身份——传了
+/// `agent_profile` 即以 agent 入席（须 Active），否则为真人；其余 8 个座位
+/// 账本一并传入做全桌扫描。
 #[derive(Accounts)]
 #[instruction(idx: u8)]
 pub struct SitDown<'info> {
@@ -723,6 +826,25 @@ pub struct SitDown<'info> {
     pub table: Account<'info, Table>,
     #[account(mut, seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
     pub seat: Account<'info, SeatLedger>,
+    /// CHECK: 其余 8 个座位账本（§2.3 扫描）；handler 内手工校验
+    /// owner+dish+idx 并为不同座位。
+    pub other0: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other1: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other2: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other3: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other4: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other5: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other6: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other7: UncheckedAccount<'info>,
+    /// 可选：agent 身份档案（PDA ["agent", signer]）；不传 = 真人入座。
+    pub agent_profile: Option<Account<'info, AgentProfile>>,
     /// CHECK: vault_auth 签名 PDA（不建账户，§3.1）；此处仅作 ATA 派生。
     #[account(seeds = [b"vault_auth", table.key().as_ref()], bump = table.vault_auth_bump)]
     pub vault_auth: UncheckedAccount<'info>,
@@ -1098,6 +1220,62 @@ pub mod solpoker {
     /// 筹码全额转入该座位自己的 owed_total——只有其 payout 地址能领取。
     pub fn admin_force_stand_up(ctx: Context<AdminForceStandUp>, idx: u8) -> Result<()> {
         instructions::admin_force_stand_up::handler(ctx, idx)
+    }
+
+    // --- Stage 8: Agent 身份（配套文档一 §2.1）---
+
+    /// register_agent：agent 与主人双签，主人付租金。
+    pub fn register_agent(
+        ctx: Context<RegisterAgent>,
+        name: [u8; 32],
+        meta_uri: [u8; 96],
+        payout_agent: bool,
+    ) -> Result<()> {
+        instructions::agent::register(ctx, name, meta_uri, payout_agent)
+    }
+
+    /// update_agent：主人更新显示名/资料。
+    pub fn update_agent(
+        ctx: Context<AgentOwnerOnly>,
+        name: [u8; 32],
+        meta_uri: [u8; 96],
+    ) -> Result<()> {
+        instructions::agent::update(ctx, name, meta_uri)
+    }
+
+    /// set_agent_payout：主人改 payout（只影响之后的入座，X7）。
+    pub fn set_agent_payout(ctx: Context<AgentOwnerOnly>, payout_agent: bool) -> Result<()> {
+        instructions::agent::set_payout(ctx, payout_agent)
+    }
+
+    /// pause_agent（X9）：主人暂停（暂停后不可入座/补码）。
+    pub fn pause_agent(ctx: Context<AgentOwnerOnly>) -> Result<()> {
+        instructions::agent::pause(ctx)
+    }
+
+    /// resume_agent：主人恢复。
+    pub fn resume_agent(ctx: Context<AgentOwnerOnly>) -> Result<()> {
+        instructions::agent::resume(ctx)
+    }
+
+    /// revoke_agent：主人注销（不可恢复）。
+    pub fn revoke_agent(ctx: Context<AgentOwnerOnly>) -> Result<()> {
+        instructions::agent::revoke(ctx)
+    }
+
+    /// set_agent_status（admin）：封禁/解封（合规）。
+    pub fn set_agent_status(ctx: Context<SetAgentStatus>, banned: bool) -> Result<()> {
+        instructions::agent::set_status(ctx, banned)
+    }
+
+    /// allow_owner（admin）：KYC 白名单创建。
+    pub fn allow_owner(ctx: Context<AllowOwner>, owner: Pubkey) -> Result<()> {
+        instructions::agent::allow_owner(ctx, owner)
+    }
+
+    /// remove_owner（admin）：KYC 白名单撤销。
+    pub fn remove_owner(ctx: Context<RemoveOwner>) -> Result<()> {
+        instructions::agent::remove_owner(ctx)
     }
 
     /// Test harness（Stage 2/3 保留，后续 Phase 移除）：ER 上手动 arm VRF

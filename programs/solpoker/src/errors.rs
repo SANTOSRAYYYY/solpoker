@@ -92,4 +92,17 @@ pub enum SolpokerError {
     /// magic_fee_vault is not the canonical validator-scoped PDA.
     #[msg("commit")]
     BadFeeVault,
+    // --- Stage 8: agent 身份（配套文档一 §2） ---
+    /// AgentProfile 不是 Active（暂停/注销/封禁中不可入座）。
+    #[msg("agent")]
+    AgentNotActive,
+    /// 同主人规则（§2.3）：同桌 owner/occupant 冲突。
+    #[msg("agent")]
+    SameOwner,
+    /// 同一占用者已在该桌其他座位。
+    #[msg("seat")]
+    AlreadySeated,
+    /// AgentProfile 与签名者/传入账户不匹配。
+    #[msg("agent")]
+    AgentProfileMismatch,
 }

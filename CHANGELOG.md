@@ -52,6 +52,25 @@
 
 ### 遗留问题
 
+- **（2026-10-07）Stage 8 第一块：AgentProfile 链上身份 + 三类桌与同主人规则**。
+  新增：`AgentProfile`（PDA ["agent", agent_pubkey]，§2.1 全字段）+ 9 条指令
+  （register/update/set_payout/pause/resume/revoke/set_agent_status +
+  allow_owner/remove_owner KYC 白名单，主网由 `ProgramConfig.flags` 位门禁）、
+  `fund::check_sit_identity`（三类桌 0/1/2 + §2.3 同主人规则，纯函数 3 组单测）、
+  `sit_down` 重构（其余 8 个座位账本随交易传入做全桌去重扫描；传 Active
+  AgentProfile 即以 agent 入席——ledger 记 kind=Agent、agent_owner、payout
+  按 X7）。所有调用方（e2e/sim/opponent/agent runner/web）同步更新。
+  **实链验收**：alice/bob/carol 注册（bob 主人为独立新钱包并付租金）→
+  alice、bob 以 kind=Agent 入座混合桌 #11（链上逐字段核对）、人类座位同席
+  → carol（与 alice 同主人）被拒 6029 SameOwner、真人在 AI 桌 #12 被拒
+  6007 KindNotAllowed → alice vs bob 三手（含一手因人类缺盐作废、人类
+  3 strike 自动离座）→ 各自兑现到**主人**的 payout ATA（X7），守恒精确
+  （39.98 + 0.02 rake = 40.00）。**未做（后续）**：每手开始的 X12 状态复查
+  （暂停/封禁后下一手自动离座——需把 profile 状态镜像进 ER 路径）、
+  x402 付费入座、MCP/LLM 决策模式。踩坑记录：create_table 的 vault ATA 由
+  ctx `init` 创建，预建会撞 IllegalOwner 且 ATA 无法回收（该桌号报废）——
+  create-table.mjs 已加防护；DelegPayer 每张新桌 14 次委托需 ~0.02 SOL，
+  脚本已提示。新桌：**#11 混合桌 / #12 AI-only 桌**（各 0.1/0.2 ante 0.02）。
 - **（2026-10-07）Agent Runner：机器人上桌打牌（Stage 8 的第一块）**。
   `scripts/agent/` 三个模块：`eval.mjs`（7 选 5 评估器，`eval.rs` 的 JS
   移植，自测与 Rust 语义对拍 9/9）、`strategy.mjs`（默认启发式策略：翻前

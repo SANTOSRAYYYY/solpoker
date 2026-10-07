@@ -12,7 +12,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::SolpokerError;
-use crate::state::{Game, SeatLedger, SeatState, MAX_SEATS};
+use crate::state::{AgentProfile, Game, SeatLedger, SeatState, AGENT_ACTIVE, MAX_SEATS};
 
 /// 0.01 USDC at 6 decimals: sit_down / top_up granularity (§5.2.1, §5.2.3).
 pub const CENT: u64 = 10_000;
@@ -21,14 +21,17 @@ pub const MAX_SESSION_TTL_S: i64 = 7 * 24 * 60 * 60;
 
 // Table.status
 pub const TABLE_ACTIVE: u8 = 0;
-// Table.kind
+// Table.kind（三类桌，配套文档一 §2.2）：0=真人桌 1=AI 桌 2=混合桌
+pub const TABLE_KIND_HUMAN_ONLY: u8 = 0;
 pub const TABLE_KIND_AGENT_ONLY: u8 = 1;
+pub const TABLE_KIND_MIXED: u8 = 2;
 // SeatState.status
 pub const SEAT_EMPTY: u8 = 0;
 pub const SEAT_SEATED: u8 = 1;
 pub const SEAT_LEFT: u8 = 2;
 // SeatLedger.kind
 pub const KIND_HUMAN: u8 = 0;
+pub const KIND_AGENT: u8 = 1;
 // Game.phase
 pub const PHASE_IDLE: u8 = 0;
 
@@ -131,6 +134,69 @@ pub fn force_release(seat: &mut SeatState) {
     seat.salt_commit = [0; 32];
     seat.next_salt_commit = [0; 32];
     seat.strikes = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Agent 身份校验（Stage 8，配套文档一 §2.2/§2.3；纯函数可单测）
+// ---------------------------------------------------------------------------
+
+/// 入座身份校验。`agent = Some(profile)` 按 agent 入席（须 Active）；
+/// `None` 按真人。`ledgers` 为该桌全部 9 个座位的 L1 账本。
+///
+/// 规则（§2.2 三类桌 + §2.3 同主人）：
+/// - 真人桌（0）只许真人；AI 桌（1）只许 agent；混合桌（2）两者皆可；
+/// - 所有桌：同一 occupant 不得已在该桌其他座位；
+/// - AI/混合桌：新 agent 的 owner 不得等于任一已坐 agent 的 owner；
+/// - 混合桌：新 agent 的 owner 不得等于任一已坐真人的 occupant；
+/// - 混合桌：新真人的 occupant 不得等于任一已坐 agent 的 owner。
+pub fn check_sit_identity(
+    table_kind: u8,
+    caller: &Pubkey,
+    agent: Option<&AgentProfile>,
+    ledgers: &[SeatLedger],
+) -> Result<()> {
+    let agent_owner = match agent {
+        Some(p) => {
+            require!(p.status == AGENT_ACTIVE, SolpokerError::AgentNotActive);
+            require_keys_eq!(p.agent, *caller, SolpokerError::AgentProfileMismatch);
+            Some(p.owner)
+        }
+        None => None,
+    };
+    match table_kind {
+        TABLE_KIND_HUMAN_ONLY => require!(agent_owner.is_none(), SolpokerError::KindNotAllowed),
+        TABLE_KIND_AGENT_ONLY => require!(agent_owner.is_some(), SolpokerError::KindNotAllowed),
+        TABLE_KIND_MIXED => {}
+        _ => return err!(SolpokerError::KindNotAllowed),
+    }
+
+    for l in ledgers.iter() {
+        if l.occupant == Pubkey::default() {
+            continue;
+        }
+        // 所有桌：同一 occupant 不得已在该桌其他座位。
+        require_keys_neq!(l.occupant, *caller, SolpokerError::AlreadySeated);
+        match (agent_owner, l.kind) {
+            (Some(owner), KIND_AGENT) => {
+                // AI/混合桌：主人不得与任一已坐 agent 的主人相同。
+                require_keys_neq!(owner, l.agent_owner, SolpokerError::SameOwner);
+            }
+            (Some(owner), KIND_HUMAN) => {
+                require!(table_kind == TABLE_KIND_MIXED, SolpokerError::KindNotAllowed);
+                // 混合桌：agent 的主人不得是任一已坐真人。
+                require_keys_neq!(owner, l.occupant, SolpokerError::SameOwner);
+            }
+            (None, KIND_AGENT) => {
+                require!(table_kind == TABLE_KIND_MIXED, SolpokerError::KindNotAllowed);
+                // 混合桌：真人不得是任一已坐 agent 的主人。
+                require_keys_neq!(*caller, l.agent_owner, SolpokerError::SameOwner);
+            }
+            (None, _) => {}
+            // 防御：账本 kind 非法值（正常写入恒为 Human/Agent）。
+            (Some(_), _) => return err!(SolpokerError::KindNotAllowed),
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +353,7 @@ pub fn required_vault_backing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::VrfSlot;
+    use crate::state::{VrfSlot, AGENT_BANNED, AGENT_PAUSED, AGENT_REVOKED};
 
     const BB: u64 = 100_000; // 0.10 USDC big blind
     const MIN_BB: u16 = 100;
@@ -342,6 +408,98 @@ mod tests {
             paid_total: 0,
             bump: 255,
         }
+    }
+
+    // --- Stage 8 §2.2/§2.3：入座身份校验 -------------------------------------
+
+    fn profile(agent: Pubkey, owner: Pubkey, status: u8) -> AgentProfile {
+        AgentProfile {
+            agent,
+            owner,
+            payout_kind: 0,
+            status,
+            name: [0u8; 32],
+            meta_uri: [0u8; 96],
+            registered_at: 0,
+            bump: 255,
+        }
+    }
+
+    fn led(occupant: Pubkey, kind: u8, agent_owner: Pubkey) -> SeatLedger {
+        SeatLedger {
+            occupant,
+            kind,
+            agent_owner,
+            ..sample_ledger(0)
+        }
+    }
+
+    #[test]
+    fn sit_identity_table_kinds() {
+        let human = Pubkey::new_unique();
+        let agent_kp = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let p = profile(agent_kp, owner, AGENT_ACTIVE);
+        let empty: Vec<SeatLedger> = vec![];
+
+        // 真人桌（0）：真人可坐、agent 拒绝
+        assert!(check_sit_identity(TABLE_KIND_HUMAN_ONLY, &human, None, &empty).is_ok());
+        assert!(check_sit_identity(TABLE_KIND_HUMAN_ONLY, &agent_kp, Some(&p), &empty).is_err());
+        // AI 桌（1）：agent 可坐、真人拒绝
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p), &empty).is_ok());
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &human, None, &empty).is_err());
+        // 混合桌（2）：两者皆可
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &agent_kp, Some(&p), &empty).is_ok());
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &human, None, &empty).is_ok());
+    }
+
+    #[test]
+    fn sit_identity_same_owner_rules() {
+        let owner = Pubkey::new_unique();
+        let other_owner = Pubkey::new_unique();
+        let agent_kp = Pubkey::new_unique();
+        let p = profile(agent_kp, owner, AGENT_ACTIVE);
+
+        // 已坐 agent（owner 相同）→ 新 agent 被拒（AI 桌与混合桌都适用）
+        let seated = vec![led(Pubkey::new_unique(), KIND_AGENT, owner)];
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p), &seated).is_err());
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &agent_kp, Some(&p), &seated).is_err());
+        // owner 不同 → 通过
+        let seated2 = vec![led(Pubkey::new_unique(), KIND_AGENT, other_owner)];
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p), &seated2).is_ok());
+
+        // 混合桌：新 agent 的 owner == 已坐真人 → 拒绝
+        let human_seated = vec![led(owner, KIND_HUMAN, Pubkey::default())];
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &agent_kp, Some(&p), &human_seated).is_err());
+
+        // 混合桌：新真人的 occupant == 已坐 agent 的 owner → 拒绝
+        // （seated 里的 agent 主人正是 owner）
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &owner, None, &seated).is_err());
+        // 无关真人 → 通过
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &Pubkey::new_unique(), None, &seated2).is_ok());
+    }
+
+    #[test]
+    fn sit_identity_rejects_inactive_and_duplicate() {
+        let owner = Pubkey::new_unique();
+        let agent_kp = Pubkey::new_unique();
+        // 非 Active（暂停/封禁/注销）一律拒绝
+        for st in [AGENT_PAUSED, AGENT_REVOKED, AGENT_BANNED] {
+            let p = profile(agent_kp, owner, st);
+            assert!(
+                check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p), &[]).is_err(),
+                "status {st} 必须拒绝"
+            );
+        }
+        // 同一 occupant 已在该桌其他座位 → 拒绝（任何桌型）
+        let p = profile(agent_kp, owner, AGENT_ACTIVE);
+        let dup = vec![led(agent_kp, KIND_AGENT, owner)];
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p), &dup).is_err());
+        let dup_human = vec![led(agent_kp, KIND_HUMAN, Pubkey::default())];
+        assert!(check_sit_identity(TABLE_KIND_MIXED, &agent_kp, None, &dup_human).is_err());
+        // profile 与签名者不匹配 → 拒绝
+        let p2 = profile(Pubkey::new_unique(), owner, AGENT_ACTIVE);
+        assert!(check_sit_identity(TABLE_KIND_AGENT_ONLY, &agent_kp, Some(&p2), &[]).is_err());
     }
 
     // --- buy-in bounds & CENT multiples (§5.2.1 / §5.2.3) ---

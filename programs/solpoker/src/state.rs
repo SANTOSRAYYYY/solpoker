@@ -484,3 +484,48 @@ impl VrfSlot {
         self.requested_at = core.requested_at();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Agent 身份（Stage 8 / 配套文档一 §2.1）
+// ---------------------------------------------------------------------------
+
+/// ProgramConfig.flags 位：开启后 register_agent 要求 OwnerAllowlist 存在
+/// （主网 KYC 白名单；devnet 保持 0）。
+pub const FLAG_REQUIRE_OWNER_KYC: u32 = 1 << 0;
+
+/// AgentProfile.status
+pub const AGENT_ACTIVE: u8 = 0;
+pub const AGENT_PAUSED: u8 = 1;
+pub const AGENT_REVOKED: u8 = 2;
+pub const AGENT_BANNED: u8 = 3;
+
+/// Agent 身份档案（配套文档一 §2.1）。PDA ["agent", agent_pubkey]，L1，永不
+/// 委托；注册由 agent 与主人双签、主人付租金。`name`/`meta_uri` 一律视为
+/// 不可信文本（前端与工具按纯文本渲染，不进日志）。
+#[account]
+#[derive(InitSpace)]
+pub struct AgentProfile {
+    /// agent 自己的钱包：付款、签 sit_down、读底牌。
+    pub agent: Pubkey,
+    /// 主人钱包（主网须在 OwnerAllowlist 内）。
+    pub owner: Pubkey,
+    /// 0=Owner（默认，X7）1=Agent；只有主人能改，只影响之后的入座。
+    pub payout_kind: u8,
+    /// AGENT_ACTIVE | AGENT_PAUSED | AGENT_REVOKED | AGENT_BANNED
+    pub status: u8,
+    /// 显示名（不可信文本）。
+    pub name: [u8; 32],
+    /// 可选：模型、作者、主页（不可信文本）。
+    pub meta_uri: [u8; 96],
+    pub registered_at: i64,
+    pub bump: u8,
+}
+
+/// 主网 KYC 白名单条目。PDA ["owner_ok", owner]，admin 创建。存在即通过
+/// （删除账户 = 撤销）。
+#[account]
+#[derive(InitSpace)]
+pub struct OwnerAllowlist {
+    pub owner: Pubkey,
+    pub bump: u8,
+}

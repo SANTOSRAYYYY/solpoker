@@ -265,9 +265,14 @@ for (const [i, p] of players.entries()) {
   // SeatLedger: disc(8) + table(32) + idx(1) + occupant(32) at offset 41.
   const occupied = ledger && !ledger.data.subarray(41, 73).every((b) => b === 0);
   if (!occupied) {
+    // Stage 8：sit_down 需带其余 8 个座位账本（§2.3 全桌身份扫描）；
+    // 人类玩家 agentProfile 传 null。
+    const others = Object.fromEntries(
+      Array.from({ length: 9 }, (_, k) => k).filter((k) => k !== i).map((k, n) => [`other${n}`, seat(k)])
+    );
     const ix = await l1prog.methods
       .sitDown(i, new BN(BUY_IN), p.publicKey, new BN(sessionExpires))
-      .accounts({ table, seat: seat(i), vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey })
+      .accounts({ table, seat: seat(i), ...others, agentProfile: null, vaultAuth, vault, mint: TUSDC_MINT, playerAta: ata, payer: p.publicKey })
       .instruction();
     await sendAndConfirm(l1, [ix], [p], `sit_down player${i} (L1, ${BUY_IN / 1e6} tUSDC)`);
   } else console.log(`… player${i} seated`);
