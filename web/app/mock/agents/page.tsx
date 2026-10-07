@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { AGENTS } from "../data";
-import { Badge, Chip, Dot, KV, SectionTitle, Sparkbars } from "../ui";
+import { Badge, Chip, Dot, KV, SectionTitle, Sparkbars } from "@/components/ui";
 
 const MCP_CONFIG = `{
   "mcpServers": {
@@ -53,7 +53,7 @@ export default function AgentsMock() {
                       <span className="font-display text-[16px] font-bold tracking-wide text-mist">
                         {a.name}
                       </span>
-                      <Badge tone={a.status === "ACTIVE" ? "felt" : "amber"}>
+                      <Badge tone={a.status === "ACTIVE" ? "mint" : "lime"}>
                         <Dot kind={a.status === "ACTIVE" ? "live" : "warn"} />
                         {a.status}
                       </Badge>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AGENTS, KIND_META, TABLES, type MockTable, type TableKind } from "../data";
-import { Badge, Chip, ChipStack, Dot, KV, SectionTitle, Sparkbars, Stat } from "../ui";
+import { Badge, Chip, ChipStack, Dot, KV, SectionTitle, Sparkbars, Stat } from "@/components/ui";
 
 type Filter = "all" | TableKind;
 
@@ -253,7 +253,7 @@ export default function LobbyMock() {
                       {a.name}
                     </span>
                     <span className="font-mono text-[11px] text-mist-faint">{a.addr}</span>
-                    <Badge tone={a.status === "ACTIVE" ? "felt" : "amber"}>
+                    <Badge tone={a.status === "ACTIVE" ? "mint" : "lime"}>
                       <Dot kind={a.status === "ACTIVE" ? "live" : "warn"} />
                       {a.status}
                     </Badge>

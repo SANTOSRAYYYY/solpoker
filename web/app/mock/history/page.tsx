@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { HANDS } from "../data";
-import { Badge, Chip, Dot, KV, PlayingCard, SectionTitle, type Suit } from "../ui";
+import { Badge, Chip, Dot, KV, PlayingCard, SectionTitle, type Suit } from "@/components/ui";
 
 const EVENTS = [
   ["HandStarted", "手牌开始 · 5rTn…q2Fs", "VRF 槽位 88 请求"],

@@ -52,6 +52,47 @@
 
 ### 遗留问题
 
+- **（2026-10-08）UI 接真实数据：五个正式页面全部落地（/、/table/[id]、/agents、/trust、/history）**。
+  视觉稿经用户确认（"可以非常好"）后按「大厅 → 对局页 → Agent → 信任 → 手牌验证」逐屏接入链上数据。
+  **主题**：`web/app/mock/mock.css` → `web/app/theme.css` 挂到**根布局**（全局 Tailwind + Solana
+  设计系统），`mock/ui.tsx` → `web/components/ui.tsx` 供正式页复用；旧 `/`（738 行单页）与旧
+  `/trust` 删除，`table.css` 删除。
+  **链上读层 `web/lib/chain-read.ts`（新增，全部实测核对）**：SeatLedger 203B
+  （occupant@41/occupancy_id@73/kind@81/agent_owner@82/payout@154/deposited@186/paid@194）、
+  AgentProfile 211B（owner@40/status@73/name@74）、HandProof 3728B（entries[16]×232B @8，head@3720，
+  `head % 16` 环形缓冲、HandSecrets 同槽 456B）、Game 1552B；`findMySeats`/`findAgentSeats`
+  用 gPA（dataSize + memcmp@41 / @82）一次拿到「我的座位 / 我 agent 的座位」。
+  **重要发现：ER（devnet-tee）对公开账户允许无 token 读取**（game 账户 tokenless 200；
+  PER 私有 PlayerHand 无 token 返回 null——隐私边界实测成立）。因此大厅/观战/历史页读的是
+  **ER 实时状态**（回落 L1 快照），只有行动/自己的底牌才需要 TEE 会话。
+  **大厅 `/`**：真实桌列表（类型/盲注/买入区间=bb 倍数×bb/在座/待兑现/AI 数）、实时手号与底池、
+  我的座位（gPA）、我的 agent 卡、MCP 接入卡、信任速览。
+  **对局页 `/table/[id]`**（旧页交易路径完整移植：Privy 单通道钱包、TEE 会话门、session key、
+  ER 交易纪律、入座一笔签名含 ATA+预充+买入、兑现/离座）：新设计 + 真实 9 座（我的座位恒在正下方）、
+  座位三态（Seated / Left「已离座·待兑现」/ 空座可点选）、下注筹码、行动者倒计时圆环、
+  行动坞（跟注额/加注滑杆/½¾池与底池预设/全下，金额走 parseUsdcInput）、右侧栏（底牌/本手信息/
+  发牌证明：事件链+VRF+盐提交揭示状态/行动记录：由观测到的状态变化生成，不造假）、
+  离座确认（E3）、混合桌 X11 确认（入座面板内勾选）、`?demo=1` 免登录排版走查。
+  **Agent 页 `/agents`**：AgentProfile 列表（状态/收益去向/在座桌号）+ 主人权限操作
+  （暂停/恢复/吊销/改 payout，都是 L1 钱包签名）+ **浏览器内注册向导**（本地生成密钥 →
+  下载 JSON → 双签注册）——钱包不支持部分签名交易时回落到 CLI。
+  **信任页 `/trust`**：按设计 §16 八项重写（每项三栏 + 真实链接：repo/solscan/TEE 文档），
+  加 attestation 与「诚实边界」。
+  **手牌验证 `/history`**：HandProof 环形缓冲逐手展示（牌面/每座 delta/抽水/事件链摘要/hand_mask），
+  **当场复算**（浏览器 WebCrypto）：守恒 Σdeltas = −rake（真实数据已验证：−0.22+0.21 = −0.01 ✓）、
+  salt_digest、逐街 seed；对**当前手**还能把盐承诺与链上 Game.seats[i].salt_commit 逐一比对。
+  明确写出「整手 52 张复算还需要重放 L1 交易历史（transcript_digest 是每张牌的抽取输入）」——
+  这是 `verify_hand` 工具的下一步，参考 `reference/solpoker_deal.py`。
+  **修复**：① `Array.from({length:9}).filter((i)=>…)` 里 `i` 是元素（undefined）不是索引
+  → `occupancyIds[undefined].toString()` 崩溃（历史页选中真实手牌时报「Cannot read properties
+  of undefined」）；② `?demo=1` 在 render 期读 `window.location.search` 造成 hydration 失败
+  （改为 effect 内设置）；③ 买入区间显示用 `minBuyBb/100` 算错（应为 `minBuyBb × bb`）；
+  ④ 座位 status=2（Left）此前被当成在座（改为独立「已离座·待兑现」态 + 在座只数 status=1）；
+  ⑤ 错误边界加「显示堆栈」，新增 `?debug=1` 诊断面板（捕获 window 错误/unhandledrejection/
+  console.error + 边界错误）。
+  **验证**：`npx tsc --noEmit` 干净（`.next/types` 里指向已删除旧页的陈旧条目除外）；
+  10 条路由全部 200；浏览器实测：大厅真实 7 桌（SEATED 5 / ESCROW 100.00 tUSDC）、
+  对局页真实 3 座 + ER 实时标注、历史页真实 4 手（#1/#2/#5/#6）且守恒复算通过、无 hydration/运行时错误。
 - **（2026-10-08）UI 重设计 · 视觉稿（Solana 品牌配色 + 赌场拟物结构，等用户过目后接真实数据）**。
   按用户拍板的四方向落地：四模块全做（大厅+导航 IA / 对局页重做 / Agent 管理 /
   手牌历史+验证器）、Tailwind v4 + shadcn 依赖链、混合桌座位不固定（不动程序）；

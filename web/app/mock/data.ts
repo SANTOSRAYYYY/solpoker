@@ -1,12 +1,12 @@
 /* 视觉稿演示数据（全部为本地假数据，与链上状态无关） */
 
-import type { ChipColor } from "./ui";
+
 
 export type TableKind = "human" | "mixed" | "agent";
 
 export const KIND_META: Record<
   TableKind,
-  { zh: string; en: string; tone: "plain" | "sol" | "blue" }
+  { zh: string; en: string; tone: "plain" | "grad" | "cyan" }
 > = {
   human: { zh: "真人桌", en: "HUMAN", tone: "plain" },
   mixed: { zh: "混合桌", en: "MIXED", tone: "grad" },
@@ -238,7 +238,7 @@ export type FeedItem = {
   t: string;
   who: string;
   what: string;
-  tone?: "gold" | "felt" | "red" | "plain" | "blue";
+  tone?: "brand" | "mint" | "danger" | "plain" | "cyan";
 };
 
 export const FEED: FeedItem[] = [
@@ -246,21 +246,21 @@ export const FEED: FeedItem[] = [
   { t: "00:12", who: "lin", what: "小盲 0.1 入池" },
   { t: "00:12", who: "σ-agent", what: "大盲 0.2 入池" },
   { t: "00:13", who: "系统", what: "前注 0.02 × 5", tone: "plain" },
-  { t: "00:15", who: "我", what: "加注到 0.8", tone: "gold" },
-  { t: "00:17", who: "kai", what: "弃牌", tone: "red" },
-  { t: "00:18", who: "sora", what: "弃牌", tone: "red" },
-  { t: "00:19", who: "momo", what: "跟注 0.8", tone: "felt" },
-  { t: "00:20", who: "lin", what: "跟注 0.7", tone: "felt" },
-  { t: "00:21", who: "σ-agent", what: "跟注 0.6", tone: "felt" },
+  { t: "00:15", who: "我", what: "加注到 0.8", tone: "brand" },
+  { t: "00:17", who: "kai", what: "弃牌", tone: "danger" },
+  { t: "00:18", who: "sora", what: "弃牌", tone: "danger" },
+  { t: "00:19", who: "momo", what: "跟注 0.8", tone: "mint" },
+  { t: "00:20", who: "lin", what: "跟注 0.7", tone: "mint" },
+  { t: "00:21", who: "σ-agent", what: "跟注 0.6", tone: "mint" },
   { t: "00:23", who: "系统", what: "翻牌 7♥ K♠ 3♦ 已揭示", tone: "cyan" },
-  { t: "00:25", who: "我", what: "下注 2.0", tone: "gold" },
-  { t: "00:27", who: "momo", what: "弃牌", tone: "red" },
-  { t: "00:28", who: "lin", what: "弃牌", tone: "red" },
-  { t: "00:30", who: "σ-agent", what: "跟注 2.0", tone: "felt" },
+  { t: "00:25", who: "我", what: "下注 2.0", tone: "brand" },
+  { t: "00:27", who: "momo", what: "弃牌", tone: "danger" },
+  { t: "00:28", who: "lin", what: "弃牌", tone: "danger" },
+  { t: "00:30", who: "σ-agent", what: "跟注 2.0", tone: "mint" },
   { t: "00:32", who: "系统", what: "转牌 7♣ 已揭示", tone: "cyan" },
   { t: "00:35", who: "我", what: "过牌" },
-  { t: "00:38", who: "σ-agent", what: "全下 19.6", tone: "red" },
-  { t: "00:39", who: "系统", what: "等待你的行动 · 剩 14s", tone: "gold" },
+  { t: "00:38", who: "σ-agent", what: "全下 19.6", tone: "danger" },
+  { t: "00:39", who: "系统", what: "等待你的行动 · 剩 14s", tone: "brand" },
 ];
 
 /* ------------------------------------------------------------- 手牌历史 */
@@ -272,8 +272,8 @@ export type MockHand = {
   pot: number;
   delta: number;
   board: [string, string][];
-  mine: [string, string];
-  shown?: { name: string; cards: [string, string] }[];
+  mine: [string, string][];
+  shown?: { name: string; cards: [string, string][] }[];
   verified: boolean;
   sig: string;
 };

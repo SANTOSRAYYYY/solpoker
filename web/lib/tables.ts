@@ -17,6 +17,13 @@ export interface TableInfo {
   bb: bigint;
   ante: bigint;
   blindsText: string;
+  /** 买入区间（bb 倍数；u16 @103/@105） */
+  minBuyBb: number;
+  maxBuyBb: number;
+  /** 行动/承诺/揭示超时（秒；u16 @113/@115/@117） */
+  actionTimeoutS: number;
+  commitTimeoutS: number;
+  revealTimeoutS: number;
 }
 
 const u32le = (n: number) => {
@@ -50,6 +57,7 @@ export async function scanTables(conn: Connection): Promise<TableInfo[]> {
     const sb = u64(79);
     const bb = u64(87);
     const ante = u64(95);
+    const u16 = (o: number) => d[o] | (d[o + 1] << 8);
     out.push({
       id,
       pubkey: addrs[id],
@@ -60,6 +68,11 @@ export async function scanTables(conn: Connection): Promise<TableInfo[]> {
       bb,
       ante,
       blindsText: `${fmtUsdc(sb)} / ${fmtUsdc(bb)}${ante > 0n ? ` (ante ${fmtUsdc(ante)})` : ""}`,
+      minBuyBb: u16(103),
+      maxBuyBb: u16(105),
+      actionTimeoutS: u16(113),
+      commitTimeoutS: u16(115),
+      revealTimeoutS: u16(117),
     });
   }
   return out.sort((a, b) => a.id - b.id);

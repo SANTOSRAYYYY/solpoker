@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { BOARD, FEED, HOLE, TABLE_SEATS, type MockSeat } from "../data";
-import { Badge, Chip, ChipStack, Dot, KV, PlayingCard, SectionTitle, SolMark } from "../ui";
+import { Badge, Chip, ChipStack, Dot, KV, PlayingCard, SectionTitle, SolMark } from "@/components/ui";
 
 const POT = 33.2;
 const MY_CALL = 16.0;
@@ -318,13 +318,13 @@ function Sidebar() {
               <span className="shrink-0 text-mist-faint">{f.who}</span>
               <span
                 className={
-                  f.tone === "gold"
+                  f.tone === "brand"
                     ? "text-accent-200"
-                    : f.tone === "red"
+                    : f.tone === "danger"
                       ? "text-loss"
-                      : f.tone === "felt"
+                      : f.tone === "mint"
                         ? "text-win"
-                        : f.tone === "blue"
+                        : f.tone === "cyan"
                           ? "text-sol-purple"
                           : "text-mist-dim"
                 }

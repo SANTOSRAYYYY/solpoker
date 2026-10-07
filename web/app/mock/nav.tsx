@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Badge, Dot, SolMark } from "./ui";
+import { Badge, Dot, SolMark } from "@/components/ui";
 
 const NAV = [
   { href: "/mock/lobby", zh: "大厅", en: "LOBBY" },
