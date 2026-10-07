@@ -188,6 +188,11 @@ async function main() {
       // (Empty) until take_seat flips it to 1, and sweeping that would evict a
       // player who just paid in.
       if (seatStatus !== 2) continue;
+      // 而且必须是**同一任占用者**：账本的 occupancy_id == Game 座位的 occupancy_id。
+      // 否则就是"新人刚坐下、Game 座位还停在上一任的 Left"——那不是僵尸，不能动。
+      const gameOcc = g.readBigUInt64LE(152 + i * 152 + 96);
+      const ledOcc = ledAcc.data.readBigUInt64LE(73);
+      if (gameOcc !== ledOcc) continue;
       const deposited = ledAcc.data.readBigUInt64LE(186);
       const paid = ledAcc.data.readBigUInt64LE(194);
       if (deposited <= paid) continue; // nothing to pay out

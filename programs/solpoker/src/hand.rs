@@ -158,6 +158,32 @@ pub fn transcript_append(digest: &mut [u8; 32], event: &Event) {
 }
 
 // ---------------------------------------------------------------------------
+// §7 事件流存证：规范事件 emit（验证器据此从 ER 交易日志重建行动序列）
+// ---------------------------------------------------------------------------
+
+/// event_tag：0 = 主动行动（act），1 = 超时自动行动（claim_timeout）。
+pub const EVENT_TAG_ACTION: u8 = 0;
+pub const EVENT_TAG_TIMEOUT: u8 = 1;
+
+/// 玩家行动 / 超时自动行动的**规范事件**（与写进 transcript 的 Event 同值）。
+/// 公开数据：金额、座号、行动类型——结算后本就按 §8.7 公开；不含盐、不含牌面。
+/// 验证用途：把这些事件按序追加到 draw_digest[k]，应复现 street_end[k]；
+/// 全部追加 + HandEnd 后应复现 transcript_final。
+#[event]
+pub struct HandEventLog {
+    pub hand_id: u64,
+    /// 该手内事件序号（action_seq，Timeout 也占一号）——仅信息性，验证按日志顺序。
+    pub seq: u32,
+    /// 0=Action 1=Timeout
+    pub event_tag: u8,
+    pub seat: u8,
+    /// Action: kind 0..5（fold/check/call/bet/raise/allin）；Timeout: auto_kind（0=fold,1=check）
+    pub kind: u8,
+    /// Action: call=实际支付额、bet/raise/allin=目标额；Timeout 恒 0
+    pub amount: u64,
+}
+
+// ---------------------------------------------------------------------------
 // DealState 閳?persisted twin of core's DrawMachine/DealSession
 // ---------------------------------------------------------------------------
 
@@ -465,7 +491,7 @@ pub fn apply_action(
         CoreAction::RaiseTo(t) => (ActionKind::Raise, t),
         CoreAction::AllIn => (ActionKind::AllIn, allin_target),
     };
-    // 鎼?.3: a voluntary action clears the seat's timeout strikes.
+    // §8.3: a voluntary action clears the seat's timeout strikes.
     engine.seats[idx as usize].strikes = 0;
 
     sync_game_from_engine(game, &engine);
@@ -477,6 +503,17 @@ pub fn apply_action(
             amount,
         },
     );
+    // §7 事件流存证：把**规范事件**（程序实际写进 transcript 的那个）emit 成日志，
+    // 让验证器能从 ER 交易日志重建行动序列并与 street_end / transcript_final 对账。
+    // 这些是结算后本就公开的数据（§8.7），不含盐、不含未揭示的牌。
+    emit!(HandEventLog {
+        hand_id: game.hand_id,
+        seq: game.action_seq,
+        event_tag: EVENT_TAG_ACTION,
+        seat: idx,
+        kind: kind as u8,
+        amount,
+    });
     game.action_seq = game
         .action_seq
         .checked_add(1)
@@ -509,6 +546,15 @@ pub fn apply_claim_timeout(table: &Table, game: &mut Game, now: i64) -> Result<(
     // Strikes are NOT cleared (engine incremented them); no voluntary action.
     sync_game_from_engine(game, &engine);
     transcript_append(&mut game.transcript, &Event::Timeout { seat, auto_kind });
+    // §7：超时自动行动同样进 transcript，也要 emit（验证器不能从 act 交易里看到它）
+    emit!(HandEventLog {
+        hand_id: game.hand_id,
+        seq: game.action_seq,
+        event_tag: EVENT_TAG_TIMEOUT,
+        seat,
+        kind: auto_kind as u8,
+        amount: 0,
+    });
     game.action_seq = game
         .action_seq
         .checked_add(1)

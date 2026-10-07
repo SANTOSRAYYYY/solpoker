@@ -146,6 +146,44 @@ export function dealFromReplay(
 ): Promise<ReplayVerifyResult>;
 export function holeOrderOf(button: number, handMask: number): number[];
 
+export interface ActionStreamEvent {
+  seq?: number;
+  /** 0 = 主动行动（Action）1 = 超时自动（Timeout） */
+  tag: number;
+  seat: number;
+  /** Action: 0..5（fold/check/call/bet/raise/allin）；Timeout: 0=fold 1=check */
+  kind: number;
+  amount: number | bigint;
+}
+
+export interface ActionStreamInput {
+  table: string;
+  handId: string | number | bigint;
+  handMask: number;
+  button: number;
+  saltDigest: string;
+  drawDigest: string[];
+  streetEnd: string[]; // 4 × hex32
+  streetsUsed: number;
+  vrfOut: string[];
+  vrfAttemptUsed: number[];
+  events: ActionStreamEvent[];
+  /** HandEnd 复算需要：deltas（proof 的 9 个）与 rake */
+  deltas?: (string | number | bigint)[];
+  rake?: string | number | bigint;
+  transcriptFinal?: string;
+}
+
+export function verifyActionStream(
+  crypto: Crypto,
+  v: ActionStreamInput
+): Promise<{
+  ok: boolean;
+  perStreet: { street: number; actions: number; closed: boolean }[];
+  diffs: string[];
+  consumed: number;
+}>;
+
 export function verifyVector(
   crypto: Crypto,
   vector: { name?: string; inputs: DealInputs; expected: Record<string, unknown> }

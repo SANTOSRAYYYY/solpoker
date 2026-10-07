@@ -524,6 +524,134 @@ export function holeOrderOf(button, handMask) {
   return [...seats.slice(start), ...seats.slice(0, start)];
 }
 
+// ---------------------------------------------------------------- 行动流验证（§7）
+/**
+ * 用链下/交易日志里拿到的**规范行动事件**验证每一街：
+ *   从 draw_digest[k] 出发 → 追加该街的发牌事件（由 proof 的牌确定性给出）
+ *   → 逐条追加行动事件 → 当摘要等于 street_end[k] 时该街闭合，进入下一街；
+ * 最后追加 HandEnd{result, deltas, rake} → 应等于 transcript_final。
+ *
+ * 事件来源见 web/lib/act-log.mjs（程序把规范事件 emit 成 ER 交易日志）。
+ * `event_tag`：0 = 主动行动（Event::Action），1 = 超时自动（Event::Timeout）。
+ */
+export async function verifyActionStream(crypto, v) {
+  const table = unhex(v.table);
+  const handId = BigInt(v.handId);
+  const seats = setBits(v.handMask);
+  const n = seats.length;
+  const diffs = [];
+  const has = (k) => (v.streetsUsed & (1 << k)) !== 0;
+  const seed = (k) => streetSeed(crypto, unhex(v.vrfOut[k]), unhex(v.saltDigest));
+
+  // 事件列表（顺序即发生顺序）
+  const evs = v.events.map((e) => ({ ...e }));
+  let ei = 0;
+  let used = 0n;
+  let drawNo = 0;
+  const take = (card) => (used |= 1n << BigInt(card));
+  const deckHas = (card) => (used & (1n << BigInt(card))) !== 0n;
+
+  const encodeActionEvent = (e) =>
+    e.tag === 1
+      ? encodeEvent({ type: "Timeout", seat: e.seat, auto_kind: e.kind })
+      : encodeEvent({ type: "Action", seat: e.seat, kind: e.kind, amount: e.amount });
+
+  // --- 0 号街（preflop）：底牌 + 该街行动 ---
+  let digest = unhex(v.drawDigest[0]);
+  if (!has(0)) {
+    diffs.push("该手没有 preflop 首抽摘要，无法验证行动流");
+    return { ok: false, perStreet: [], diffs, consumed: 0 };
+  }
+  const seed0 = await seed(0);
+  const order = holeOrderOf(v.button, v.handMask);
+  for (let k = 0; k < 2 * n; k++) {
+    const seat = order[k % n];
+    const deck = newDeck().filter((c) => !deckHas(c));
+    const { card } = await drawCard(crypto, seed0, table, handId, drawNo, digest, deck, 0);
+    take(card);
+    digest = await transcriptAppend(
+      crypto,
+      digest,
+      encodeEvent({ type: "HoleDealt", seat, draw_no: drawNo })
+    );
+    drawNo += 1;
+  }
+  const perStreet = [];
+  {
+    const before = ei;
+    let closed = false;
+    while (ei < evs.length) {
+      digest = await transcriptAppend(crypto, digest, encodeActionEvent(evs[ei]));
+      ei += 1;
+      if (hex(digest) === hex(unhex(v.streetEnd[0]))) {
+        closed = true;
+        break;
+      }
+    }
+    perStreet.push({ street: 0, actions: ei - before, closed });
+    if (!closed) diffs.push(`街 0：追加 ${ei - before} 条行动后仍未匹配 street_end[0]`);
+  }
+
+  // --- 1..3 街 ---
+  for (let k = 1; k <= 3; k++) {
+    if (!has(k)) break;
+    // 街头事件：VrfFulfilled(k, attempt) + StreetStart(k)（与程序发牌前追加的一致）
+    const attempt = v.vrfAttemptUsed[k] || 1;
+    const target = ["Preflop", "Flop", "Turn", "River", "Runout"][k];
+    if (ei > evs.length) break;
+    // 从上一条街的锚点继续：追加 VRF + 街头，再发牌
+    let d = hex(digest) === hex(unhex(v.streetEnd[k - 1])) ? digest : digest; // 已在锚点上
+    d = await transcriptAppend(crypto, d, encodeEvent({ type: "VrfFulfilled", target: k, attempt }));
+    d = await transcriptAppend(crypto, d, encodeEvent({ type: "StreetStart", street: k }));
+    const seedK = await seed(k);
+    const count = k === 1 ? 3 : 1;
+    for (let i = 0; i < count; i++) {
+      const deck = newDeck().filter((c) => !deckHas(c));
+      const { card } = await drawCard(crypto, seedK, table, handId, drawNo, d, deck, 0);
+      take(card);
+      const street = k === 1 ? 1 : k === 2 ? 2 : 3;
+      d = await transcriptAppend(
+        crypto,
+        d,
+        encodeEvent({ type: "BoardDealt", street, card, draw_no: drawNo, vrf_src: k })
+      );
+      drawNo += 1;
+    }
+    digest = d;
+    const before = ei;
+    let closed = false;
+    while (ei < evs.length) {
+      digest = await transcriptAppend(crypto, digest, encodeActionEvent(evs[ei]));
+      ei += 1;
+      if (hex(digest) === hex(unhex(v.streetEnd[k]))) {
+        closed = true;
+        break;
+      }
+    }
+    perStreet.push({ street: k, actions: ei - before, closed });
+    if (!closed) diffs.push(`街 ${k}：追加 ${ei - before} 条行动后仍未匹配 street_end[${k}]`);
+  }
+
+  // --- 收尾：HandEnd（deltas 由 proof 给出，rake 同理）→ transcript_final ---
+  if (v.transcriptFinal && v.deltas) {
+    const end = await transcriptAppend(
+      crypto,
+      digest,
+      encodeEvent({ type: "HandEnd", result: 0, deltas: v.deltas.map((x) => BigInt(x)), rake: BigInt(v.rake ?? 0) })
+    );
+    if (hex(end) !== hex(unhex(v.transcriptFinal))) {
+      diffs.push(
+        `事件流 → transcript_final 不一致（复算 ${hex(end).slice(0, 12)}… 链上 ${v.transcriptFinal.slice(0, 12)}…）`
+      );
+    }
+  }
+
+  const leftover = evs.length - ei;
+  if (leftover > 0) diffs.push(`还有 ${leftover} 条事件未被任何街消费（可能是下一手的）`);
+
+  return { ok: diffs.length === 0, perStreet, diffs, consumed: ei };
+}
+
 // ---------------------------------------------------------------- 向量校验
 /** 深层规范化：对象按 key 排序后再序列化（与参考实现比对时不受字段顺序影响）。 */
 function canon(v) {
