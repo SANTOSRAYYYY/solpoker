@@ -52,6 +52,30 @@
 
 ### 遗留问题
 
+- **（2026-10-08）整手复算闭环：链上存证 → 浏览器逐张复算通过（9/9）**。
+  从零建成"发牌可验证"的完整链路，**实链证据**：
+  - 程序两次部署：`61hGftv1d7x…`（HandReplay 账户 + init_replay + advance 账户表）、
+    `5yKznAbk…`（commit_game 带上 HandReplay + 程序扩容 20480）；
+  - 7 张老桌 `init_replay` + `delegate_table[14]` 全部成功（DelegPayer 付租金）；
+  - 混合桌 **#14**（0.1/0.2/ante 0.02，kind=2）由 bob（agent 身份，座 0）+
+    carol（真人身份，座 1）打出一手**正常结算**的牌（手 #1，bob 19.58 → 39.4）；
+  - 链上 `HandReplay` 该手条目：`salt_digest=e488fb50…741e`、四街 `draw_digest`
+    （k0=fb83…bbe / k1=8ed1…f63 / k2=e75b…8c9 / k3=c203…e47d）、`occupants` 两个、
+    `vrf_attempt_used=[1,1,1,1,0]`、`streets_used=0b1111`；
+  - `/history`「整手复算（52 张逐张比对）」**实测通过：逐张 9/9**（单挑 = 4 底牌 + 5 公共牌）；
+    `salt_digest` 独立复算（occupants + 盐）也命中链上值。
+  验证链条：链上盐与 VRF → 链上四条街首摘要 → 每张牌重新推导并与链上 proof 逐张相等。
+  **过程中修掉**：`used` 位图 Number 起步与 BigInt 混型崩溃；页面把 table PDA / occupants
+  传成 base58（引擎要 hex，两次同类错误，最后用探针脚本按 "replay.occupants +
+  proof.occupancy_ids + secrets.salts + table + hand_id + hand_mask" 逐字节复现链上值定位）；
+  `proof`/`secrets` 是委托账户而页面只读 L1（改为 ER 优先、L1 回落）。
+  **顺带完成**：僵尸座位自动清算（crank sweep，实测清 8+ 座位、退回 40+ tUSDC）、
+  crank 并行读提速、VRF 超时重试（`retry_vrf`，把"AwaitSeed 必作废"变成"打完三条街"）、
+  `quick-sit.mjs`（真人身份入座）、座位死态成因记录。
+  **仍差**：① replay 环（8 手）外的旧手牌无法整手复算；②「事件流 → transcript_final」
+  无法独立验证（事件流无界、未存证，见 hand-replay-design.md 新增章节）；
+  ③ 座位死态的程序级修复（`cash_out` 的释放条件依赖 L1 快照，快照陈旧时座位卡住 ——
+  当前用"先 commit 再 sweep"的运营手段绕开）。
 - **（2026-10-08）HandReplay：整手复算输入上链（程序侧落地 + **已部署 devnet**）**。
   用户选方案 B（程序升级）。设计见 `docs/design/hand-replay-design.md`：整手复算真正缺的
   只有两个**中间摘要** —— `salt_digest` 与每条街**第一张牌抽取前**的 transcript 摘要

@@ -62,6 +62,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
 const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
+const zombieTables = new Set(); // tables whose sweep hit a stuck seat -> force a commit_game to refresh the L1 snapshot
 const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
@@ -168,6 +169,11 @@ async function main() {
     // permissionless (design X7) and the program pins the payout ATA recorded at
     // sit_down, so the crank can only ever send the money back to its owner.
     // This frees the seat for the next player instead of leaving it locked.
+    //
+    // 注意：cash_out 的"释放座位"分支依赖 **L1 快照**（snap_seat.status==Left 且
+    // credited/owed 全部结清）。快照陈旧时座位会卡住（死态：账本还有 occupant，
+    // sit_down 报 6008）。所以发现僵尸候选而快照又陈旧时，先催一次 commit_game
+    // （就在手与手之间做，正好符合 §10 的时机要求），下一轮再清。
     // 座位账本一次并行读完（9 个串行 RPC 是每轮延迟的主要来源）
     const sweepAccs = await Promise.all(
       Array.from({ length: 9 }, (_, i) => l1.getAccountInfo(seatPda(table, i)))
@@ -208,10 +214,12 @@ async function main() {
         const sig = await sendAndConfirm(l1, ixs, [deployer], `t${tableId} sweep cash_out[${i}]`);
         console.log(`[t${tableId}] sweep cash_out[${i}]: ${sig.slice(0, 12)}...`);
       } catch (e) {
-        // Program-rejected seat (e.g. the dead state: ledger clean but the Game seat
-        // still Left): remember it for this snapshot so we do not retry every pass
-        // (each retry burns a fee and spams the log).
+        // Program-rejected seat (e.g. the dead state: ledger still occupied because the
+        // L1 snapshot is stale, so cash_out refuses to release): remember it for this
+        // snapshot and, if a hand is not in progress, force a commit so the next pass
+        // sees a fresh snapshot and can release it.
         sweepTried.add(sweepKey);
+        zombieTables.add(tableId);
         console.log(`[t${tableId}] sweep skip[${i}]: ${String(e.message ?? e).slice(0, 90)}`);
       }
       return; // one action per pass
@@ -321,12 +329,14 @@ async function main() {
       return;
     }
 
-    // 4) commit：hands_since_commit 达到阈值且不在手牌中
-    if (phase === 0 && handsSinceCommit > 0) {
+    // 4) commit：hands_since_commit 达到阈值且不在手牌中；
+    //    另外——如果本轮在 sweep 里碰到卡住的座位（zombieCandidate），也催一次 commit：
+    //    cash_out 释放座位依赖 L1 快照，快照刷新后下一轮就能把座位真正清出来。
+    if (phase === 0 && (handsSinceCommit > 0 || zombieTables.has(tableId))) {
       // Table 布局：commit_every_n_hands @123（state.rs 字段序；145B 账户）。
       const tableAcc = await l1.getAccountInfo(table);
       const commitEvery = tableAcc ? tableAcc.data[123] : 255;
-      if (handsSinceCommit >= commitEvery) {
+      if (handsSinceCommit >= commitEvery || zombieTables.has(tableId)) {
         const [magicFeeVault] = PublicKey.findProgramAddressSync(
           [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()], DLP
         );
@@ -341,6 +351,11 @@ async function main() {
           .instruction();
         const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} commit_game`, ER_CU);
         console.log(`[t${tableId}] commit_game: ${sig.slice(0, 12)}…`);
+        // 快照刷新完成：清掉该桌的 zombie 标记与 sweepTried 键，让下一轮真正去释放座位
+        zombieTables.delete(tableId);
+        for (const k of [...sweepTried]) {
+          if (k.startsWith(`${tableId}:`)) sweepTried.delete(k);
+        }
         return;
       }
     }
