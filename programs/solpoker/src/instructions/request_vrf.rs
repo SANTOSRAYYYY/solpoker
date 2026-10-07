@@ -31,7 +31,7 @@ use crate::vrf;
 use crate::RequestVrf;
 
 pub fn handler(ctx: Context<RequestVrf>) -> Result<()> {
-    let game = &mut ctx.accounts.game;
+    let mut game = ctx.accounts.game.load_mut()?;
     let table = &ctx.accounts.table;
 
     // Ready → Pending via the core state machine. core_replay() is None only
@@ -71,7 +71,7 @@ pub fn handler(ctx: Context<RequestVrf>) -> Result<()> {
                 is_writable: true,
             },
             SerializableAccountMeta {
-                pubkey: game.key(),
+                pubkey: ctx.accounts.game.key(),
                 is_signer: false,
                 is_writable: true,
             },

@@ -1,43 +1,66 @@
-//! advance — deterministic state advancement stub (design §6.2, §14.2).
+//! advance — deterministic phase machine (design §6.1/§6.2, ER, permissionless).
 //!
-//! Stage 2 slice: the real transitions (freeze hand_mask, set button, post
-//! blinds, deal hole/board cards, settle, void) land in Stage 4/5 on top of
-//! the solpoker-core phase machine. This stub pins down the arm hook: when the
-//! state machine decides the next step needs a VRF draw, advance arms the slot
-//! (Ready). The actual queue CPI never happens here — the permissionless
-//! `request_vrf` instruction does it (V1 拆分), so queue congestion cannot roll
-//! back a completed betting action.
+//! One transition per call; keepers and clients chain calls. The full machine
+//! lives in `hand::advance` (pure, unit-tested); this handler only does
+//! account plumbing and the I-ER assertion. Phases: Idle → Commit (freeze
+//! hand_mask) → AwaitSeed (arm VRF_0) → deal hole → Preflop/Betting ⇄
+//! AwaitStreet/AwaitRunout → Settle/Void → Idle. VRF queue CPIs never happen
+//! here (V1 拆分: request_vrf/retry_vrf do them; advance only arms the slot).
 //!
-//! The arm transition itself goes through `solpoker_core::vrf::VrfSlot::arm`
-//! (idempotent per core rules; refuses to overwrite an in-flight request).
+//! CU note (§7.4): Settle runs evaluation + distribution + proof + secret
+//! zeroing in this single instruction for Stage 6; if CU measurement exceeds
+//! the budget, split Settle into "evaluate & pin" and "distribute" — the
+//! phase boundary already isolates it.
+//!
+//! Stack note: Game / Deck / HandProof are zero-copy AccountLoader accounts —
+//! `load_mut()` reads/writes them in place, so this handler's frame no longer
+//! carries the ≈1.5KB Game / ≈11KB HandProof borsh deserialization buffers
+//! that previously blew the 4096-byte SBF stack budget.
 
 use anchor_lang::prelude::*;
 
 use crate::errors::SolpokerError;
-use crate::state::{Game, VrfTarget};
+use crate::fund;
+use crate::hand;
+use crate::state::{PlayerHand, MAX_SEATS};
 use crate::Advance;
 
-/// Stage 4/5 replaces this with the real §6.1 phase-machine decision
-/// (AwaitSeed/AwaitStreet/AwaitRunout → which street's VRF, if any) implemented
-/// in solpoker-core. Returning None means "no VRF needed for this advance".
-#[allow(dead_code)] // exercised by Stage 4/5's real advance; stub for the arm hook only
-fn next_vrf_target_stub(_game: &Game) -> Option<VrfTarget> {
-    None
-}
+pub fn handler(ctx: Context<Advance>, hand_id: u64) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let table = &ctx.accounts.table;
+    let mut game = ctx.accounts.game.load_mut()?;
 
-pub fn handler(ctx: Context<Advance>) -> Result<()> {
-    let game = &mut ctx.accounts.game;
+    require!(hand_id == game.hand_id, SolpokerError::StaleAction);
 
-    if let Some(target) = next_vrf_target_stub(game) {
-        let mut core_slot = game
-            .vrf
-            .core_replay()
-            .ok_or(SolpokerError::VrfArmRejected)?;
-        core_slot
-            .arm(target.to_core())
-            .map_err(|_| SolpokerError::VrfArmRejected)?;
-        game.vrf.sync_from_core(&core_slot);
-    }
+    let mut deck = ctx.accounts.deck.load_mut()?;
+    let mut proof = ctx.accounts.hand_proof.load_mut()?;
+    let mut secrets = ctx.accounts.hand_secrets.load_mut()?;
+    let mut hands: [&mut PlayerHand; MAX_SEATS] = [
+        &mut ctx.accounts.hand0,
+        &mut ctx.accounts.hand1,
+        &mut ctx.accounts.hand2,
+        &mut ctx.accounts.hand3,
+        &mut ctx.accounts.hand4,
+        &mut ctx.accounts.hand5,
+        &mut ctx.accounts.hand6,
+        &mut ctx.accounts.hand7,
+        &mut ctx.accounts.hand8,
+    ];
 
+    let program_id = crate::ID.to_bytes();
+    let table_bytes = table.key().to_bytes();
+    hand::advance(
+        table,
+        &table_bytes,
+        &mut game,
+        &mut deck,
+        &mut proof,
+        &mut secrets,
+        &mut hands,
+        &program_id,
+        now,
+    )?;
+
+    fund::assert_conservation_er(&game)?;
     Ok(())
 }

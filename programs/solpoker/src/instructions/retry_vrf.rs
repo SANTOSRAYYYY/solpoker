@@ -22,7 +22,7 @@ use crate::vrf;
 use crate::RetryVrf;
 
 pub fn handler(ctx: Context<RetryVrf>) -> Result<()> {
-    let game = &mut ctx.accounts.game;
+    let mut game = ctx.accounts.game.load_mut()?;
     let table = &ctx.accounts.table;
 
     let Some(mut core_slot) = game.vrf.core_replay() else {
@@ -56,7 +56,7 @@ pub fn handler(ctx: Context<RetryVrf>) -> Result<()> {
                         is_writable: true,
                     },
                     SerializableAccountMeta {
-                        pubkey: game.key(),
+                        pubkey: ctx.accounts.game.key(),
                         is_signer: false,
                         is_writable: true,
                     },

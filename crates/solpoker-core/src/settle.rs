@@ -152,6 +152,35 @@ where
     }
     let gross_total: u64 = pots.iter().map(|p| p.gross).sum();
 
+    // ---- 3.5) 并入无 eligible 的死层（2026-10-07 proptest 发现的漏洞修复）----
+    // eligible 掩码随层级嵌套：live 玩家 contrib ≥ L_{i+1} ⟹ contrib ≥ L_i，
+    // 即 elig(T_{i+1}) ⊆ elig(T_i)，所以无 eligible 的层只可能构成顶部后缀——
+    // 典型场景：深筹码在前几条街重注后在后街 check-fold（能 check 时 fold 是
+    // 合法动作），其超过所有 live 玩家投入的层级里全是 folded 的钱。真实扑克
+    // 没有 all-in 边界就没有边池：这些钱归仍在场的玩家，绝不归 fold 者。
+    // 修复前该后缀会落入下方的贡献者兜底分支，把池分给 folded 座位（proptest
+    // `rake_total_monotone_across_hands` 种子 cc 0654468554… 抓到：contrib
+    // [20000,100000,·,140000,·,·,·,140000], live={1}，两个 folded 深筹码
+    // "赢下" 80000）。把死层并入最高的有 eligible 的层，与真实扑克一致。
+    if let Some(first_dead) = pots.iter().position(|p| p.eligible_mask == 0) {
+        debug_assert!(
+            pots[first_dead..].iter().all(|p| p.eligible_mask == 0),
+            "eligible 嵌套：无 eligible 的层必为连续顶部后缀"
+        );
+        if first_dead > 0 {
+            let mut carry = 0u64;
+            for pot in pots.drain(first_dead..) {
+                carry += pot.gross;
+            }
+            let top = pots.last_mut().unwrap();
+            top.gross += carry;
+            top.net += carry; // 此时 net == gross（rake 尚未扣）。
+        }
+        // first_dead == 0（所有层都无 eligible）在本引擎不可达：盲注强制
+        // 投入，live 的非盲注玩家也必然跟过 BB，live ≥ 1 总有人 contrib > 0。
+        // 真到达时下方 live 兜底分支保证守恒。
+    }
+
     // ---- 4) rake（§7.2：no-flop-no-drop；2.5%，3BB 封顶，向下取整到 CENT）----
     let rake = if engine.flop_dealt && gross_total > engine.bb {
         let pct = ((gross_total as u128 * 25 / 1000) as u64) / CENT * CENT;
@@ -179,7 +208,7 @@ where
     // 奇数筹码起点：button 左侧第一位（§7.1）。
     let anchor = next_clockwise(engine.button, hand_mask).unwrap_or(engine.button);
     let mut awards = [0u64; MAX_SEATS as usize];
-    for (idx, pot) in pots.iter_mut().enumerate() {
+    for pot in pots.iter_mut() {
         let winners: Vec<u8> = if showdown {
             // eligible 中持有有效底牌者比 7 选 5；folded 玩家永不 eligible。
             let mut best: Option<R> = None;
@@ -221,9 +250,9 @@ where
             }
             winners
         };
-        // 理论不可达：引擎规则保证每个层级内必有 live 玩家（fold 时面对的注额
-        // 必有 live 玩家匹配，未跟注差额又已退回）。保底分给该层贡献者，
-        // 保证守恒且绝不除零。
+        // 死层并入后每层必有 eligible（见 3.5 节）；eligible 兜底理论上不再
+        // 触发。最后的 live 兜底只在本不该出现的 first_dead == 0 情形保证守恒，
+        // 且绝不把池分给 folded 座位。
         let mut winners = winners;
         if winners.is_empty() {
             for s in 0..MAX_SEATS {
@@ -234,7 +263,7 @@ where
         }
         if winners.is_empty() {
             for s in 0..MAX_SEATS {
-                if contrib[s as usize] >= levels[idx] {
+                if live_mask & seat_bit(s) != 0 {
                     winners.push(s);
                 }
             }
@@ -489,6 +518,46 @@ mod tests {
     }
 
     // --- 边池与 folded 贡献 ----------------------------------------------------
+
+    #[test]
+    fn folded_excess_tier_merges_down_never_pays_folders() {
+        // 2026-10-07 proptest（rake_total_monotone_across_hands，种子
+        // cc 0654468554…）发现的真实漏洞：深筹码在后街 check-fold（合法动作），
+        // 其超过 live 玩家投入的层级全是 folded 的钱——修复前兜底分支把该层
+        // 分给了 folded 座位。正确行为（真实扑克，无 all-in 边界即无边池）：
+        // 并入下层，归仍在场的玩家。
+        //
+        // seat0(folded)=2BB，seat1(live)=10BB，seat3/seat7(folded)=14BB。
+        // 并列最高（2×14BB）→ 无未跟注退回。层级 2/10/14BB：14BB 层无 eligible。
+        let bb = CENT;
+        let mut e = direct_engine(
+            &[(0, 2 * bb), (1, 10 * bb), (3, 14 * bb), (7, 14 * bb)],
+            &[0, 3, 7],
+            4,
+            bb,
+            true,
+        );
+        let hole = hole_cards_for(&[(1, hole(12, 11))]);
+        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        // 死层并入：2 层变 1 层……准确说 3 层 → 2 层：P0=2BB×4=8BB，
+        // P1=(10-2)BB×3 + (14-10)BB×2 = 24BB + 8BB = 32BB。
+        assert_eq!(s.pots.len(), 2);
+        assert_eq!(s.pots[0].gross, 8 * bb);
+        assert_eq!(s.pots[1].gross, 32 * bb);
+        for pot in &s.pots {
+            assert_eq!(pot.eligible_mask, 0b010);
+            assert_eq!(pot.winner_mask, 0b010, "folded 座位永不为赢家");
+        }
+        // rake = min(floor_cent(40BB × 2.5%), 3BB) = 1BB，从 P0 扣。
+        assert_eq!(s.rake, bb);
+        // live 的 seat1 通吃 39BB；folded 座位分文不得。
+        assert_eq!(s.awards[1], 39 * bb);
+        assert_eq!(s.awards[0], 0);
+        assert_eq!(s.awards[3], 0);
+        assert_eq!(s.awards[7], 0);
+        // 守恒：Σ awards + rake == Σ 投入。
+        assert_eq!(s.awards.iter().sum::<u64>() + s.rake, 40 * bb);
+    }
 
     #[test]
     fn side_pots_folded_contribute_but_never_eligible() {

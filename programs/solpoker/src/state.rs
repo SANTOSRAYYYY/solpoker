@@ -1,12 +1,31 @@
-//! Account state. Minimal fields per design §3.2 (field set fixed; sizes and
-//! ordering are finalized in Stage 5–6). All times are `Clock::unix_timestamp`
-//! seconds; all integers serialized big-endian where they enter hashes/seeds.
+//! Account state — full Stage 6 model (design §3.2; field set follows the
+//! design exactly, sizes/ordering finalized here). All amounts are u64 base
+//! units, all times are `Clock::unix_timestamp` seconds; integers serialized
+//! big-endian where they enter hashes/seeds.
 //!
 //! VRF 状态机一律委托 `solpoker-core`（§6.2 V1 拆分）：链上 `VrfSlot` 只是
 //! core 槽位的可序列化镜像，且**不保存 randomness**——未公开的 VRF 输出只存在于
 //! 私有 Deck 账户（§3.2 字段纪律、§8.8）。镜像通过 `core_replay` 重放构造出
 //! core `VrfSlot` 调用其 `arm`/`request`/`fulfill`/`retry`，再用 `sync_from_core`
 //! 把结果状态写回，规则只有 core 一份。
+//!
+//! 决策记录（Stage 6 Phase 1）：Game 不再携带 `events: EventLog`，只保留
+//! `transcript` 链式哈希——v1 的规范事件流可由 HandProof 的 ProofEntry 加上
+//! Game 的公开字段重放推导；若后续需要完整事件字节，放在 ProofEntry 相邻的
+//! 存储里，不进 Game。
+//!
+//! Zero-copy 决策记录（链上硬化重构）：Game / HandProof / Deck 改为
+//! `#[account(zero_copy)]` Pod 账户——SBF 4096 字节栈预算装不下 borsh 的
+//! 栈上反序列化（Game ≈ 1.5KB、HandProof ≈ 11KB），handler 帧与帧覆盖直接
+//! 超限。所有内嵌类型（SeatState / ProofEntry / VrfSlot）同步改为
+//! `#[zero_copy]`（`#[repr(C)]` + bytemuck Pod），字段按对齐降序排列、显式
+//! 填充位补齐到对齐整数倍（bytemuck Pod derive 在编译期断言无隐式填充）。
+//! bool 不是 Pod，一律改 u8（0/1）；无数据枚举（VrfState / VrfTarget）用
+//! `#[repr(u8)]` + 手工 unsafe impl Pod（账户数据只由本程序经
+//! `sync_from_core`/`Default` 写入，判别值恒合法——见各 impl 的 SAFETY 注记）。
+//! Anchor 1.0 的 `#[account(zero_copy)]` 仍保留 8 字节 discriminator，账户
+//! 布局 = discriminator ‖ repr(C) 字节；init 用 `space = 8 + size_of::<T>()`，
+//! handler 里 `load_init()`，其余指令 `load()`/`load_mut()`。
 
 use anchor_lang::prelude::*;
 
@@ -16,52 +35,312 @@ pub const MAX_SEATS: usize = 9;
 /// name it explicitly — `validator: None` is never used.
 pub const TEE_VALIDATOR: Pubkey = pubkey!("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
 
-/// L1 table configuration. Never delegated; carries the tunable VRF timeouts
-/// (E1: vrf_timeout_s = 10, vrf_max_attempts = 3) so Stage 2 latency
-/// measurements can adjust them on-chain instead of in code.
+// ---------------------------------------------------------------------------
+// L1 accounts
+// ---------------------------------------------------------------------------
+
+/// Global program configuration (design §3.2). PDA ["config"], L1, never
+/// delegated. Created once by `init_config`.
+#[account]
+#[derive(InitSpace)]
+pub struct ProgramConfig {
+    pub admin: Pubkey,
+    /// rake 可能付到 ATA(treasury, mint)。
+    pub treasury: Pubkey,
+    /// MTEW…；委托时显式传入，禁止 None。
+    pub tee_validator: Pubkey,
+    /// 仅 D5 标准模式使用；原子模式不需要。
+    pub gateway: Pubkey,
+    /// PAUSED | ESCAPE_SUPPORTED | …
+    pub flags: u32,
+    pub version: u16,
+    pub bump: u8,
+    pub deleg_payer_bump: u8,
+}
+
+/// L1 table configuration (design §3.2). PDA ["table", table_id (u32 LE)].
+/// Never delegated; carries every tunable so parameters live on-chain, not in
+/// code (§2 设计原则 5)。
 #[account]
 #[derive(InitSpace)]
 pub struct Table {
     pub table_id: u32,
-    /// Stage 2/3 test-harness gate: create_table / delegate_game /
-    /// debug_arm_vrf require this key's signature.
+    /// Stage 6 过渡期保留：create_table / delegate_table / debug_arm_vrf 仍以
+    /// 此 key 的签名为门禁；生产鉴权（ProgramConfig.admin）在后续 Phase 接入。
     pub admin: Pubkey,
-    /// Seconds after `VrfSlot.requested_at` before anyone may call retry_vrf.
+    /// 0=Human 1=AgentOnly 2=Mixed
+    pub kind: u8,
+    pub max_seats: u8,
+    /// 0=Active 1=Maintenance 2=Escaping 3=Escaped
+    pub status: u8,
+    /// tUSDC / Circle USDC；create_table 拒绝非 classic SPL-Token mint
+    /// （Token-2022 转账手续费 / transfer hook 扩展，E4 之后再支持）。
+    pub mint: Pubkey,
+    pub sb: u64,
+    pub bb: u64,
+    pub ante: u64,
+    pub min_buy_in_bb: u16,
+    pub max_buy_in_bb: u16,
+    pub rake_bps: u16,
+    pub rake_cap_bb: u16,
+    pub rake_min_pot_bb: u16,
+    pub action_timeout_s: u16,
+    pub commit_timeout_s: u16,
+    pub reveal_timeout_s: u16,
     pub vrf_timeout_s: u16,
-    /// Maximum request attempts per street (first request is attempt 1).
     pub vrf_max_attempts: u8,
-    /// Incremented after an escape (§5.4); part of the Deck PDA seeds.
+    pub max_strikes: u8,
+    pub commit_every_n_hands: u8,
+    /// 有资金在桌、又没有新 commit 时的心跳间隔（秒）。
+    pub heartbeat_s: u32,
+    /// 快照超过这么久没更新，才允许发起逃生（秒）。
+    pub escape_stale_s: u32,
+    /// 已划到 treasury 的 rake 累计（只增）。
+    pub rake_swept_total: u64,
+    /// 逃生后 +1（§5.4）；是 Deck / PlayerHand PDA seeds 的一部分。
     pub epoch: u16,
+    pub bump: u8,
+    pub vault_auth_bump: u8,
+    pub commit_payer_bump: u8,
+}
+
+/// L1 半边座位账本（design §3.2 / D1）。PDA ["seat", table, idx (u8)]，
+/// **永不委托**；金额跨层只增不减，按差额入账。
+#[account]
+#[derive(InitSpace)]
+pub struct SeatLedger {
+    pub table: Pubkey,
+    pub idx: u8,
+    /// Pubkey::default() 表示空座。
+    pub occupant: Pubkey,
+    /// 每次新入座 +1。
+    pub occupancy_id: u64,
+    /// 0=Human 1=Agent
+    pub kind: u8,
+    /// kind = Agent 时等于 AgentProfile.owner。
+    pub agent_owner: Pubkey,
+    /// D2 会话 key。
+    pub session_key: Pubkey,
+    pub session_expires_at: i64,
+    /// X7：cash_out 只付 ATA(payout, mint)；入座时固定。
+    pub payout: Pubkey,
+    /// 入座与补码的累计（跨所有占用者，只增）。
+    pub deposited_total: u64,
+    /// cash_out 的累计（只增）。
+    pub paid_total: u64,
     pub bump: u8,
 }
 
-/// ER game state (public). While delegated, the account owner is the
-/// delegation program, hence the `owner` override on the field.
-#[account]
-#[derive(InitSpace)]
+// ---------------------------------------------------------------------------
+// ER accounts (delegated to TEE_VALIDATOR)
+// ---------------------------------------------------------------------------
+
+/// ER game state (design §3.2). PDA ["game", table]，公开。While delegated,
+/// the account owner is the delegation program on L1; ER 上的克隆归本程序所有。
+///
+/// Zero-copy Pod（见模块头决策记录）。字段按对齐降序排列：32 字节数组 →
+/// u64/i64 → VrfSlot → SeatState×9 → u32 → u16 → 小数组 → u8 标志；总大小
+/// 1544 字节（8 的整数倍，无隐式填充）。`button_initialized` /
+/// `maintenance_requested` 是 u8（0/1）。
+#[account(zero_copy)]
+#[repr(C)]
 pub struct Game {
     pub table: Pubkey,
+    /// 事件流链式哈希；v1 不存完整事件字节（见模块头决策记录）。
+    pub transcript: [u8; 32],
     pub hand_id: u64,
-    /// Board cards as dealt (public once dealt). Stage 4 fills the draw logic.
-    pub board: [u8; 5],
-    pub board_len: u8,
-    /// VRF request slot (design §3.2). Mirror of `solpoker_core::vrf::VrfSlot`
-    /// WITHOUT the randomness field — secrets never live in public accounts.
+    /// 本手所有投入（含 ante）。
+    pub pot: u64,
+    pub current_bet: u64,
+    pub last_full_raise: u64,
+    pub action_deadline: i64,
+    pub phase_deadline: i64,
+    /// 累计 rake（只增）。
+    pub rake_total: u64,
+    pub last_commit_at: i64,
+    /// VRF request slot (design §3.2)。solpoker-core `VrfSlot` 的公开镜像，
+    /// 不带 randomness——秘密绝不落在公开账户（§3.2 字段纪律）。
     pub vrf: VrfSlot,
-    /// Seat ledger stubs (Stage 5 fills the rest of SeatState).
     pub seats: [SeatState; MAX_SEATS],
+    /// X8：本手内每个改变局面的事件 +1，每手开始归零；act 必须带上。
+    pub action_seq: u32,
+    pub occupied_mask: u16,
+    pub hand_mask: u16,
+    pub live_mask: u16,
+    pub actionable_mask: u16,
+    pub pending_to_act_mask: u16,
+    pub board: [u8; 5],
+    /// 每张公共牌来自哪个 VRF（deck_index 编码）。
+    pub board_src: [u8; 5],
+    /// 0=Idle 1=Commit 2=AwaitSeed 3=Preflop 4=AwaitStreet 5=Betting
+    /// 6=AwaitRunout 7=Settle 8=Void
+    pub phase: u8,
+    pub street: u8,
+    pub button: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub button_initialized: u8,
+    pub board_len: u8,
+    pub to_act: u8,
+    pub hands_since_commit: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub maintenance_requested: u8,
 }
 
-/// Core VRF slot states (solpoker-core `VrfState`), serialized into Game.
+/// ER 半边座位账本（design §3.2 / D1），内嵌在 Game 里。Zero-copy Pod；
+/// `folded` / `all_in` / `acted` / `leave_requested` 是 u8（0/1）。`_pad0`
+/// 把结构补齐到 152 字节（8 的整数倍）。
+#[zero_copy]
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct SeatState {
+    pub occupant: Pubkey,
+    /// 承诺值公开；盐本身在私有 PlayerHand 里，不在这里。
+    pub salt_commit: [u8; 32],
+    pub next_salt_commit: [u8; 32],
+    pub occupancy_id: u64,
+    pub stack: u64,
+    /// 已计入筹码的入座与补码累计（只增）。
+    pub credited_total: u64,
+    /// 已释放、等待 L1 兑付的累计（只增）。
+    pub owed_total: u64,
+    pub in_hand: u64,
+    pub street_bet: u64,
+    /// 0=Human 1=Agent
+    pub kind: u8,
+    /// 0=Empty 1=Seated 2=Left
+    pub status: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub folded: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub all_in: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub acted: u8,
+    pub strikes: u8,
+    /// u8（0/1；bool 不是 Pod）。
+    pub leave_requested: u8,
+    /// 显式填充：152 = 8×19。
+    pub _pad0: u8,
+}
+
+/// ER deck state (private account, members = [] per §4). PDA
+/// ["deck", table, epoch (u16 BE)]。只有 VRF 回调与发牌/结算指令可写。
+///
+/// Stage 6 Phase 3 起携带 §3.2/§8.8 的整手秘密与抽牌状态：`salts`（AwaitSeed
+/// 从 PlayerHand 复制，供后续各街重算 seed_k）、`used_mask`（已抽牌位图，
+/// 核心 `DrawMachine` 剩余牌堆的持久化形式）、`draw_no`（一手内连续编号）。
+/// 三者让跨指令的确定性重建成为可能——`advance` 每次用它们 + Game.transcript
+/// 把抽牌机状态恢复出来，逐字节对齐 `solpoker_core::deal`（hand.rs 有 parity
+/// 测试钉死）。手牌结束（Settle/Void）时全部清零。
+///
+/// Zero-copy Pod；总大小 472 字节（8 的整数倍）。
+#[account(zero_copy)]
+#[repr(C)]
+pub struct Deck {
+    pub hand_id: u64,
+    /// 已抽出的牌位图（bit c = 牌 c 已发出）。
+    pub used_mask: u64,
+    /// 下一张牌的 draw_no（§8.4，一手内连续编号）。
+    pub draw_no: u16,
+    /// Raw VRF outputs per draw: [preflop, flop, turn, river, runout].
+    /// Written only by `vrf_callback`; never logged (§15). Cleared at hand end.
+    pub vrf_out: [[u8; 32]; 5],
+    /// 本手已揭示的盐（AwaitSeed 校验通过后从 PlayerHand 复制）。
+    pub salts: [[u8; 32]; MAX_SEATS],
+    /// Which attempt produced each entry (for HandProof audit, §8.7).
+    pub vrf_attempt_used: [u8; 5],
+    /// 显式填充：472 = 8×59。
+    pub _pad: u8,
+}
+
+/// ER 私有底牌账户（design §3.2）。PDA ["hand", table, epoch (u16 BE), idx]，
+/// is_private = true，members = [当前占用者钱包]（空座时 members = []，
+/// 换人按 §11.2 顺序替换）。体积很小，保持 borsh。
+#[account]
+#[derive(InitSpace)]
+pub struct PlayerHand {
+    pub hand_id: u64,
+    /// 0xFF 表示没有牌。
+    pub cards: [u8; 2],
+    /// D6：揭示交易只写这里。
+    pub salt: [u8; 32],
+    pub salt_hand_id: u64,
+}
+
+/// ER 公开手牌证明环形缓冲（design §3.2）。PDA ["proof", table]，16 手环形。
+/// Zero-copy Pod；拆分后总大小 16×232 + 8 = 3,720 字节（盐/VRF 在 HandSecrets）。
+#[account(zero_copy)]
+#[repr(C)]
+#[derive(Default)]
+pub struct HandProof {
+    pub entries: [ProofEntry; 16],
+    pub head: u8,
+    /// 显式填充。
+    pub _pad: [u8; 7],
+}
+
+/// 单手结算/作废的证明（元数据部分）。**设计偏差记录（2026-10-07）**：
+/// 设计的 ProofEntry 是单账户 680B×16 ≈ 10.9KB——超过 CPI create_account
+/// 的 10,240B 上限，且委托程序的 buffer 同样受限，链上无法创建/委托。所以
+/// 把「盐与 VRF 输出」拆到 HandSecrets（["secrets", table]），本结构只留
+/// 元数据；验证一手牌时两个账户都要读（§8.7 步骤 2 改为从 HandSecrets 取盐
+/// 和 VRF）。公开的数据一字节不少。
+/// Zero-copy Pod；`_pad` 把结构补齐到 232 字节（8 的整数倍）。
+#[zero_copy]
+#[derive(Default, Debug)]
+pub struct ProofEntry {
+    pub hand_id: u64,
+    pub rake: u64,
+    pub settled_at: i64,
+    pub occupancy_ids: [u64; MAX_SEATS],
+    pub deltas: [i64; MAX_SEATS],
+    pub transcript_final: [u8; 32],
+    pub hole: [[u8; 2]; MAX_SEATS],
+    pub hand_mask: u16,
+    pub board: [u8; 5],
+    /// 0=Settled 1=Void
+    pub status: u8,
+    pub button: u8,
+    /// 显式填充：232 = 8×29。
+    pub _pad: [u8; 5],
+}
+
+/// 盐与 VRF 输出的环形缓冲（从 HandProof 拆出，见 ProofEntry 的偏差记录）。
+/// PDA ["secrets", table]。16 条，与 HandProof.head 同步推进。
+#[account(zero_copy)]
+#[repr(C)]
+#[derive(Default)]
+pub struct HandSecrets {
+    pub entries: [SecretsEntry; 16],
+}
+
+/// 每手的盐与 VRF（456 字节 × 16 = 7,296 + 8 = 7,304，低于 10,240 上限）。
+#[zero_copy]
+#[derive(Default, Debug)]
+pub struct SecretsEntry {
+    pub salts: [[u8; 32]; MAX_SEATS],
+    pub vrf_out: [[u8; 32]; 5],
+    /// 用到了哪几个 VRF（bit i = deck_index i）。
+    pub vrf_mask: u8,
+    /// 显式填充：456 = 8×57。
+    pub _pad: [u8; 7],
+}
+
+// ---------------------------------------------------------------------------
+// VRF slot mirror (unchanged — see module docs)
+// ---------------------------------------------------------------------------
+
+/// Core VRF slot states (solpoker-core `VrfState`), persisted inside Game.
 /// Lifecycle per §6.2 / §9: act/advance sets Ready (arm), request_vrf sets
 /// Pending, vrf_callback sets Fulfilled (randomness in Deck), advance
 /// consumes Fulfilled and resets to Idle; retry exhaustion lands on Void and
 /// the settlement path voids the hand.
 ///
-/// 注意：不给变体写显式判别值。borsh 1.x（Anchor 1.0 的序列化后端）要求
-/// 带显式判别的枚举必须额外声明 `use_discriminant`，而这里的序列化值
-/// 不进任何哈希——线上编码由 `VrfTarget::to_core().to_u8()` 显式给出。
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
+/// `#[repr(u8)]`（判别值 0..=4，与 borsh 时代顺序一致）。bytemuck 不为枚举
+/// derive Pod，下面手工 impl：
+// SAFETY: 无数据枚举 + repr(u8)，大小 1 无填充；账户数据只会由本程序经
+// `sync_from_core` / `VrfSlot::default` 写入（判别值恒在 0..=4），init/zero
+// 清零后读到 Idle（0，合法）。除账户字节外没有任何途径构造越界判别值。
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum VrfState {
     Idle,
     Ready,
@@ -70,10 +349,16 @@ pub enum VrfState {
     Void,
 }
 
+unsafe impl bytemuck::Zeroable for VrfState {}
+// SAFETY: 见类型文档——单字节 repr(u8) 无数据枚举，写入侧恒为合法判别值。
+unsafe impl bytemuck::Pod for VrfState {}
+
 /// Which VRF draw a street needs. Wire encoding MUST match
 /// `solpoker_core::vrf::VrfTarget::to_u8` (Preflop=0..Runout=4) because it
 /// feeds `caller_seed` (pinned CI vector in solpoker-core).
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
+/// `#[repr(u8)]` + 手工 Pod impl（SAFETY 注记同 VrfState）。
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum VrfTarget {
     Preflop,
     Flop,
@@ -81,6 +366,10 @@ pub enum VrfTarget {
     River,
     Runout,
 }
+
+unsafe impl bytemuck::Zeroable for VrfTarget {}
+// SAFETY: 见类型文档——单字节 repr(u8) 无数据枚举，写入侧恒为合法判别值。
+unsafe impl bytemuck::Pod for VrfTarget {}
 
 impl VrfTarget {
     /// Index into `Deck.vrf_out` / `Deck.vrf_attempt_used`
@@ -129,21 +418,26 @@ impl VrfTarget {
 
 /// Public mirror of the core VRF slot (see module docs). `attempt` is 1-based
 /// (core convention). `requested_at` is 0 unless state == Pending.
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
+/// Zero-copy Pod；`_pad` 把结构补齐到 16 字节。
+#[zero_copy]
+#[derive(Debug, PartialEq, Eq)]
 pub struct VrfSlot {
+    pub requested_at: i64,
     pub state: VrfState,
     pub target: VrfTarget,
     pub attempt: u8,
-    pub requested_at: i64,
+    /// 显式填充：16 = 8×2。
+    pub _pad: [u8; 5],
 }
 
 impl Default for VrfSlot {
     fn default() -> Self {
         VrfSlot {
+            requested_at: 0,
             state: VrfState::Idle,
             target: VrfTarget::Preflop,
             attempt: 0,
-            requested_at: 0,
+            _pad: [0; 5],
         }
     }
 }
@@ -189,28 +483,4 @@ impl VrfSlot {
         self.attempt = core.attempt();
         self.requested_at = core.requested_at();
     }
-}
-
-/// ER seat ledger stub (design §3.2 / D1). Stage 5 adds the remaining fields
-/// (occupant, status, in_hand, street_bet, folded, strikes, salt commits, ...).
-#[derive(
-    AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, Default, InitSpace,
-)]
-pub struct SeatState {
-    pub stack: u64,
-    pub credited_total: u64,
-    pub owed_total: u64,
-}
-
-/// ER deck state (private account, members = [] per §4). Only the VRF
-/// fulfillment callback and dealing instructions may write here.
-#[account]
-#[derive(InitSpace)]
-pub struct Deck {
-    pub hand_id: u64,
-    /// Raw VRF outputs per draw: [preflop, flop, turn, river, runout].
-    /// Written only by `vrf_callback`; never logged (§15). Cleared at hand end.
-    pub vrf_out: [[u8; 32]; 5],
-    /// Which attempt produced each entry (for HandProof audit, §8.7).
-    pub vrf_attempt_used: [u8; 5],
 }

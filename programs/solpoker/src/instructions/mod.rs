@@ -1,10 +1,28 @@
 //! Instruction handlers (ER side, design §14.2).
 
+pub mod act;
+pub mod admin_set_members;
 pub mod advance;
+pub mod apply_deposits;
+pub mod audit_table;
+pub mod cash_out;
+pub mod claim_timeout;
+pub mod commit_game;
+pub mod commit_salt;
+pub mod create_hands;
+pub mod create_seats;
 pub mod create_table;
 pub mod debug_arm_vrf;
-pub mod delegate_game;
+pub mod delegate_table;
+pub mod init_config;
 pub mod init_permissions;
 pub mod request_vrf;
 pub mod retry_vrf;
+pub mod reveal_salt;
+pub mod session;
+pub mod sit_down;
+pub mod stand_up;
+pub mod sweep_rake;
+pub mod take_seat;
+pub mod top_up;
 pub mod vrf_callback;

@@ -1,0 +1,2201 @@
+﻿//! Game-loop shared logic (design 鎼? 閹靛澧濋悩鑸碘偓浣规簚, 鎼? 鐟欏嫬鍨鏇熸惛閹恒儳鍤? 鎼? 閸欐垹澧濋崡蹇氼唴).
+//!
+//! Everything here is pure (no CPI, no Clock 閳?`now` is passed in) so the
+//! whole phase machine is unit-testable in-memory; the instruction handlers
+//! only do account plumbing and then call into this module.
+//!
+//! Two mirror disciplines:
+//!
+//! - **Engine mirror** (same pattern as the VrfSlot mirror): [`engine_from_game`]
+//!   rebuilds a `solpoker_core::engine::Engine` from the persisted Game fields
+//!   (seats + masks + bets), the core applies one transition, and
+//!   [`sync_game_from_engine`] writes the result back. Rules live only in core.
+//! - **Deal driver**: `solpoker_core::deal::DealSession` is an in-memory
+//!   machine and cannot persist between instructions. [`DealState`] is its
+//!   persisted twin: `(used_mask, draw_no, transcript)` stored across `Deck`
+//!   and `Game`, rebuilt at every `advance`, and driving the exact same draw
+//!   math via core's public `draw_value` / `rejection_threshold` /
+//!   `hole_order` / `seed_k` / `salt_digest` with events encoded by core's
+//!   `Event::encode`. The `#[cfg(test)]` parity test pins byte-for-byte
+//!   equality of cards and transcripts against `DealSession`.
+//!
+//! CU budget note (design 鎼?.4): settlement (up to 9 鑴?21 five-card
+//! evaluations + pot math + proof write + secret zeroing) runs in ONE
+//! `advance` instruction for Stage 6. If CU measurement blows the budget, the
+//! deterministic split is "evaluate & pin result" then "distribute" 閳?the
+//! phase machine already isolates Settle as its own transition, so the split
+//! is a local change to [`advance`].
+//!
+//! Transcript layout note: `Game.transcript` stores only the rolling chain
+//! hash (Stage 6 Phase 1 decision 閳?full event bytes are re-derivable from
+//! HandProof + public fields).
+
+use anchor_lang::prelude::*;
+use sha2::{Digest, Sha256};
+use solpoker_core::deal::{
+    self, BoardStreet, Event, ForcedBetKind, HandInputs, HandResult, VoidReason,
+};
+use solpoker_core::engine::{ActOutcome, Action as CoreAction, Engine, EngineSeat};
+use solpoker_core::eval;
+use solpoker_core::seats::{next_clockwise, popcount, seat_bit};
+use solpoker_core::settle;
+use solpoker_core::vrf::VrfTarget as CoreVrfTarget;
+
+use crate::errors::SolpokerError;
+use crate::fund;
+use crate::state::{Deck, Game, HandProof, HandSecrets, PlayerHand, ProofEntry, SecretsEntry, Table, VrfSlot, VrfState, VrfTarget, MAX_SEATS};
+
+// ---------------------------------------------------------------------------
+// Game.phase (state.rs field comment pins the encoding)
+// ---------------------------------------------------------------------------
+
+pub const PHASE_IDLE: u8 = 0;
+pub const PHASE_COMMIT: u8 = 1;
+pub const PHASE_AWAIT_SEED: u8 = 2;
+pub const PHASE_PREFLOP: u8 = 3;
+pub const PHASE_AWAIT_STREET: u8 = 4;
+pub const PHASE_BETTING: u8 = 5;
+pub const PHASE_AWAIT_RUNOUT: u8 = 6;
+pub const PHASE_SETTLE: u8 = 7;
+// 8 = Void is transient: voiding completes inside one advance call and the
+// phase returns to Idle; the u8 encoding reserves 8 for it (state.rs).
+
+/// ProofEntry.status
+pub const PROOF_SETTLED: u8 = 0;
+pub const PROOF_VOID: u8 = 1;
+
+// ---------------------------------------------------------------------------
+// Engine mirror
+// ---------------------------------------------------------------------------
+
+/// Game 閳?core Engine. `flop_dealt` is not persisted on Game; it is exactly
+/// "the flop is on the board" (board_len >= 3), which also covers the preflop
+/// runout case (advance deals all five cards 閳?rake then applies, 鎼?.1 note in
+/// core engine docs).
+pub fn engine_from_game(game: &Game, sb: u64, bb: u64, ante: u64) -> Engine {
+    let mut seats = [EngineSeat::default(); MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        let s = &game.seats[i];
+        seats[i] = EngineSeat {
+            stack: s.stack,
+            in_hand: s.in_hand,
+            street_bet: s.street_bet,
+            in_hand_mask: game.hand_mask & seat_bit(i as u8) != 0,
+            folded: s.folded != 0,
+            all_in: s.all_in != 0,
+            acted: s.acted != 0,
+            strikes: s.strikes,
+            leave_requested: s.leave_requested != 0,
+        };
+    }
+    Engine {
+        seats,
+        button: game.button,
+        occupied_mask: game.occupied_mask,
+        hand_mask: game.hand_mask,
+        live_mask: game.live_mask,
+        actionable_mask: game.actionable_mask,
+        pending_to_act_mask: game.pending_to_act_mask,
+        pot: game.pot,
+        current_bet: game.current_bet,
+        last_full_raise: game.last_full_raise,
+        to_act: game.to_act,
+        street: game.street,
+        sb,
+        bb,
+        ante,
+        flop_dealt: game.board_len >= 3,
+        runout_needed: game.phase == PHASE_AWAIT_RUNOUT,
+        finished: game.phase == PHASE_SETTLE,
+    }
+}
+
+/// Core Engine 閳?Game (seat money/flags + masks + bet state + street).
+pub fn sync_game_from_engine(game: &mut Game, e: &Engine) {
+    for i in 0..MAX_SEATS {
+        let s = &mut game.seats[i];
+        let es = &e.seats[i];
+        s.stack = es.stack;
+        s.in_hand = es.in_hand;
+        s.street_bet = es.street_bet;
+        s.folded = es.folded as u8;
+        s.all_in = es.all_in as u8;
+        s.acted = es.acted as u8;
+        s.strikes = es.strikes;
+        s.leave_requested = es.leave_requested as u8;
+    }
+    game.live_mask = e.live_mask;
+    game.actionable_mask = e.actionable_mask;
+    game.pending_to_act_mask = e.pending_to_act_mask;
+    game.pot = e.pot;
+    game.current_bet = e.current_bet;
+    game.last_full_raise = e.last_full_raise;
+    game.to_act = e.to_act;
+    game.street = e.street;
+}
+
+// ---------------------------------------------------------------------------
+// Transcript (byte-identical to solpoker_core::deal::Transcript, persisted)
+// ---------------------------------------------------------------------------
+
+/// transcript_0 = sha256("solpoker/transcript/v1" 閳?program_id 閳?table 閳?hand_id).
+pub fn transcript_init(program_id: &[u8; 32], table: &[u8; 32], hand_id: u64) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"solpoker/transcript/v1");
+    h.update(program_id);
+    h.update(table);
+    h.update(hand_id.to_be_bytes());
+    h.finalize().into()
+}
+
+/// transcript_{n+1} = sha256(transcript_n 閳?event.encode()).
+pub fn transcript_append(digest: &mut [u8; 32], event: &Event) {
+    let enc = event.encode();
+    let mut h = Sha256::new();
+    h.update(*digest);
+    h.update(&enc);
+    *digest = h.finalize().into();
+}
+
+// ---------------------------------------------------------------------------
+// DealState 閳?persisted twin of core's DrawMachine/DealSession
+// ---------------------------------------------------------------------------
+
+/// The draw-machine state that must survive between instructions.
+/// `used_mask`/`draw_no` live in `Deck`, `transcript` in `Game`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DealState {
+    pub used_mask: u64,
+    pub draw_no: u16,
+    pub transcript: [u8; 32],
+}
+
+/// The `index`-th card (0-based, ascending) not yet drawn.
+fn nth_free_card(used_mask: u64, index: usize) -> u8 {
+    let mut seen = 0usize;
+    for card in 0..deal::DECK_SIZE as u8 {
+        if used_mask & (1u64 << card) == 0 {
+            if seen == index {
+                return card;
+            }
+            seen += 1;
+        }
+    }
+    unreachable!("index < remaining count by construction");
+}
+
+impl DealState {
+    pub fn new(program_id: &[u8; 32], table: &[u8; 32], hand_id: u64) -> Self {
+        Self {
+            used_mask: 0,
+            draw_no: 0,
+            transcript: transcript_init(program_id, table, hand_id),
+        }
+    }
+
+    /// Resume from persisted state (AwaitStreet/AwaitRunout advances).
+    pub fn resume(deck: &Deck, game: &Game) -> Self {
+        Self {
+            used_mask: deck.used_mask,
+            draw_no: deck.draw_no,
+            transcript: game.transcript,
+        }
+    }
+
+    /// Persist back into Deck + Game.
+    pub fn store(&self, deck: &mut Deck, game: &mut Game) {
+        deck.used_mask = self.used_mask;
+        deck.draw_no = self.draw_no;
+        game.transcript = self.transcript;
+    }
+
+    pub fn append(&mut self, event: &Event) {
+        transcript_append(&mut self.transcript, event);
+    }
+
+    /// One draw, byte-identical to `solpoker_core::deal::DrawMachine::draw`:
+    /// sample against the CURRENT transcript (with rejection sampling), then
+    /// append `make_event(card, draw_no)` and advance draw_no.
+    pub fn draw(
+        &mut self,
+        seed: &[u8; 32],
+        table: &[u8; 32],
+        hand_id: u64,
+        make_event: impl FnOnce(u8, u16) -> Event,
+    ) -> (u8, u16) {
+        let mut retry = 0u16;
+        loop {
+            let n = (deal::DECK_SIZE as u64 - self.used_mask.count_ones() as u64) as usize;
+            debug_assert!(n >= 1, "deck exhausted");
+            let v = deal::draw_value(seed, table, hand_id, self.draw_no, retry, &self.transcript);
+            if v < deal::rejection_threshold(n) {
+                retry += 1;
+                continue;
+            }
+            let index = (v % n as u64) as usize;
+            let card = nth_free_card(self.used_mask, index);
+            self.used_mask |= 1u64 << card;
+            let draw_no = self.draw_no;
+            self.draw_no += 1;
+            self.append(&make_event(card, draw_no));
+            return (card, draw_no);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Forced bets (event plan, amounts byte-identical to Engine::post_forced_bets)
+// ---------------------------------------------------------------------------
+
+/// Canonical ForcedBet event sequence (dealing-protocol 鎼?.3/鎼?.4): all antes
+/// from `next_clockwise(button)` clockwise, then SB, then BB. Amounts are
+/// `min(due, remaining stack)` 閳?exactly what `Engine::post_forced_bets`
+/// moves, so the events match the engine mirror one-to-one.
+pub fn forced_bet_events(
+    stacks: &[u64; MAX_SEATS],
+    hand_mask: u16,
+    button: u8,
+    sb: u64,
+    bb: u64,
+    ante: u64,
+) -> Vec<Event> {
+    let heads_up = popcount(hand_mask) == 2;
+    let sb_seat = if heads_up {
+        button
+    } else {
+        next_clockwise(button, hand_mask).expect("hand_mask non-empty")
+    };
+    let bb_seat = next_clockwise(sb_seat, hand_mask).expect("hand_mask non-empty");
+    let mut remaining = *stacks;
+    let mut out = Vec::new();
+    // Antes: from button's left, clockwise.
+    let mut s = next_clockwise(button, hand_mask).expect("hand_mask non-empty");
+    for _ in 0..popcount(hand_mask) {
+        let pay = ante.min(remaining[s as usize]);
+        remaining[s as usize] -= pay;
+        out.push(Event::ForcedBet {
+            seat: s,
+            kind: ForcedBetKind::Ante,
+            amount: pay,
+        });
+        s = next_clockwise(s, hand_mask).expect("hand_mask non-empty");
+    }
+    let sb_pay = sb.min(remaining[sb_seat as usize]);
+    remaining[sb_seat as usize] -= sb_pay;
+    out.push(Event::ForcedBet {
+        seat: sb_seat,
+        kind: ForcedBetKind::SmallBlind,
+        amount: sb_pay,
+    });
+    let bb_pay = bb.min(remaining[bb_seat as usize]);
+    out.push(Event::ForcedBet {
+        seat: bb_seat,
+        kind: ForcedBetKind::BigBlind,
+        amount: bb_pay,
+    });
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Salts
+// ---------------------------------------------------------------------------
+
+/// Verify one hand_mask seat's revealed salt against its stored commitment
+/// (鎼?.2 step 4). `table` is the Table account address.
+pub fn verify_seat_salt(
+    table: &[u8; 32],
+    hand_id: u64,
+    seat: &crate::state::SeatState,
+    hand: &PlayerHand,
+) -> bool {
+    hand.salt_hand_id == hand_id
+        && hand.salt != [0u8; 32]
+        && seat.salt_commit != [0u8; 32]
+        && deal::salt_commitment(table, hand_id, &seat.occupant.to_bytes(), &hand.salt)
+            == seat.salt_commit
+}
+
+/// Build core `HandInputs` from Game + revealed salts + VRF outputs.
+/// Canonical HandStart shape (dealing-protocol 鎼?.3): seats outside hand_mask
+/// carry zero stacks/occupancy_ids.
+pub fn hand_inputs(
+    program_id: &[u8; 32],
+    table: &[u8; 32],
+    game: &Game,
+    salts: &[[u8; 32]; MAX_SEATS],
+    vrf: &[[u8; 32]; 5],
+) -> HandInputs {
+    let mut stacks = [0u64; MAX_SEATS];
+    let mut occupancy_ids = [0u64; MAX_SEATS];
+    let mut occupants = [[0u8; 32]; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        if game.hand_mask & seat_bit(i as u8) != 0 {
+            stacks[i] = game.seats[i].stack;
+            occupancy_ids[i] = game.seats[i].occupancy_id;
+            occupants[i] = game.seats[i].occupant.to_bytes();
+        }
+    }
+    HandInputs {
+        program_id: *program_id,
+        table: *table,
+        hand_id: game.hand_id,
+        hand_mask: game.hand_mask,
+        stacks,
+        occupancy_ids,
+        occupants,
+        salts: *salts,
+        vrf: *vrf,
+    }
+}
+
+/// salt_digest for the current hand from persisted salts (Deck copy).
+pub fn current_salt_digest(
+    table: &[u8; 32],
+    game: &Game,
+    salts: &[[u8; 32]; MAX_SEATS],
+) -> [u8; 32] {
+    let mut occupancy_ids = [0u64; MAX_SEATS];
+    let mut occupants = [[0u8; 32]; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        occupancy_ids[i] = game.seats[i].occupancy_id;
+        occupants[i] = game.seats[i].occupant.to_bytes();
+    }
+    deal::salt_digest(
+        table,
+        game.hand_id,
+        game.hand_mask,
+        &occupants,
+        &occupancy_ids,
+        salts,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// VRF slot helpers (mirror pattern, same as debug_arm_vrf)
+// ---------------------------------------------------------------------------
+
+/// arm the slot for `target` via the core state machine.
+pub fn arm_vrf(game: &mut Game, target: VrfTarget) -> Result<()> {
+    let mut core_slot = game
+        .vrf
+        .core_replay()
+        .ok_or(SolpokerError::VrfArmRejected)?;
+    core_slot
+        .arm(target.to_core())
+        .map_err(|_| SolpokerError::VrfArmRejected)?;
+    game.vrf.sync_from_core(&core_slot);
+    Ok(())
+}
+
+/// Consume a Fulfilled slot: reset the mirror to Idle (core `VrfSlot::reset`).
+pub fn reset_vrf(game: &mut Game) {
+    game.vrf = VrfSlot::default();
+}
+
+// ---------------------------------------------------------------------------
+// act / claim_timeout
+// ---------------------------------------------------------------------------
+
+/// Shared outcome resolution after a successful engine action (鎼?.1):
+/// finished 閳?Settle; runout 閳?arm Runout + AwaitRunout; street end 閳?/// AwaitStreet (advance arms the street VRF 閳?the street transition itself is
+/// advance's job); otherwise refresh the action deadline for the next actor.
+fn resolve_outcome(game: &mut Game, table: &Table, outcome: &ActOutcome, now: i64) -> Result<()> {
+    if outcome.hand_finished {
+        game.phase = PHASE_SETTLE;
+        game.action_deadline = 0;
+    } else if outcome.runout_started {
+        arm_vrf(game, VrfTarget::Runout)?;
+        game.phase = PHASE_AWAIT_RUNOUT;
+        game.action_deadline = 0;
+    } else if outcome.street_ended {
+        game.phase = PHASE_AWAIT_STREET;
+        game.action_deadline = 0;
+    } else {
+        game.action_deadline = now + table.action_timeout_s as i64;
+    }
+    Ok(())
+}
+
+fn require_betting_phase(game: &Game) -> Result<()> {
+    require!(
+        game.phase == PHASE_PREFLOP || game.phase == PHASE_BETTING,
+        SolpokerError::BadPhase
+    );
+    Ok(())
+}
+
+/// `act` (鎼?.1): one engine action + canonical Action event + seq bump.
+/// Caller has already authenticated seat `idx` and checked hand_id/action_seq.
+pub fn apply_action(
+    table: &Table,
+    game: &mut Game,
+    idx: u8,
+    action: CoreAction,
+    now: i64,
+) -> Result<()> {
+    require_betting_phase(game)?;
+    require!(
+        (idx as usize) < MAX_SEATS && game.hand_mask & seat_bit(idx) != 0,
+        SolpokerError::BadAction
+    );
+    let street_bet_before = game.seats[idx as usize].street_bet;
+    let stack_before = game.seats[idx as usize].stack;
+    // Event amounts are computed from PRE-act state: a street-ending action
+    // lets the engine reset street_bet (close_streets), so post-act reads
+    // cannot recover them. call = actual amount paid (min(owe, stack), the
+    // engine's Call rule); all-in = the target street_bet + stack.
+    let call_pay = game
+        .current_bet
+        .saturating_sub(street_bet_before)
+        .min(stack_before);
+    let allin_target = street_bet_before + stack_before;
+    let mut engine = engine_from_game(game, table.sb, table.bb, table.ante);
+    let outcome = engine
+        .act(idx, action)
+        .map_err(|_| SolpokerError::BadAction)?;
+
+    // Canonical Action event amount (dealing-protocol 搂6.3): call = actual
+    // amount paid; bet/raise/all-in = the street_bet target reached.
+    use solpoker_core::deal::ActionKind;
+    let (kind, amount) = match action {
+        CoreAction::Fold => (ActionKind::Fold, 0),
+        CoreAction::Check => (ActionKind::Check, 0),
+        CoreAction::Call => (ActionKind::Call, call_pay),
+        CoreAction::Bet(a) => (ActionKind::Bet, a),
+        CoreAction::RaiseTo(t) => (ActionKind::Raise, t),
+        CoreAction::AllIn => (ActionKind::AllIn, allin_target),
+    };
+    // 鎼?.3: a voluntary action clears the seat's timeout strikes.
+    engine.seats[idx as usize].strikes = 0;
+
+    sync_game_from_engine(game, &engine);
+    transcript_append(
+        &mut game.transcript,
+        &Event::Action {
+            seat: idx,
+            kind,
+            amount,
+        },
+    );
+    game.action_seq = game
+        .action_seq
+        .checked_add(1)
+        .ok_or(SolpokerError::Overflow)?;
+    resolve_outcome(game, table, &outcome, now)
+}
+
+/// `claim_timeout` (鎼?.3): check-or-fold for the seat on the clock + strikes.
+/// Permissionless; caller checked hand_id. Only after the deadline.
+pub fn apply_claim_timeout(table: &Table, game: &mut Game, now: i64) -> Result<()> {
+    require_betting_phase(game)?;
+    require!(game.pending_to_act_mask != 0, SolpokerError::BadPhase);
+    require!(
+        now >= game.action_deadline,
+        SolpokerError::TimeoutNotElapsed
+    );
+    let seat = game.to_act;
+    require!(
+        (seat as usize) < MAX_SEATS && game.hand_mask & seat_bit(seat) != 0,
+        SolpokerError::BadPhase
+    );
+    let mut engine = engine_from_game(game, table.sb, table.bb, table.ante);
+    let result = engine
+        .claim_timeout(seat)
+        .map_err(|_| SolpokerError::BadAction)?;
+    let (auto_kind, outcome) = match result {
+        solpoker_core::engine::TimeoutResult::Checked(o) => (0u8, o),
+        solpoker_core::engine::TimeoutResult::Folded(o) => (1u8, o),
+    };
+    // Strikes are NOT cleared (engine incremented them); no voluntary action.
+    sync_game_from_engine(game, &engine);
+    transcript_append(&mut game.transcript, &Event::Timeout { seat, auto_kind });
+    game.action_seq = game
+        .action_seq
+        .checked_add(1)
+        .ok_or(SolpokerError::Overflow)?;
+    resolve_outcome(game, table, &outcome, now)
+}
+
+// ---------------------------------------------------------------------------
+// Hand close (shared by Settle and Void)
+// ---------------------------------------------------------------------------
+
+/// Reset all per-hand state on Game after the proof entry is written:
+/// clears seat hand fields + salt_commit, processes leave_requested /
+/// zero-stack / max-strikes auto stand-ups (fund release per 鎼?.2.5, minus
+/// uncredited-deposit handling which needs the L1 ledger 閳?late deposits are
+/// swept to owed by the next apply_deposits/cash_out, 鎼?.1 monotonicity),
+/// and returns the phase to Idle with hand_id + 1.
+fn close_hand(game: &mut Game, table: &Table) {
+    let hand_mask = game.hand_mask;
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) == 0 {
+            continue;
+        }
+        let s = &mut game.seats[i];
+        s.in_hand = 0;
+        s.street_bet = 0;
+        s.folded = 0;
+        s.all_in = 0;
+        s.acted = 0;
+        s.salt_commit = [0; 32];
+        // 鎼?.1: zero stack auto stand-up; 鎼?.3: max-strikes auto stand-up.
+        let auto_leave = s.stack == 0 || s.strikes >= table.max_strikes;
+        if s.leave_requested != 0 || auto_leave {
+            s.owed_total = s.owed_total.saturating_add(s.stack);
+            s.stack = 0;
+            s.status = fund::SEAT_LEFT;
+            s.leave_requested = 0;
+            s.next_salt_commit = [0; 32];
+            s.strikes = 0;
+            game.occupied_mask &= !seat_bit(i as u8);
+            // Schedule a commit so L1 sees owed_total ASAP (same as stand_up).
+            game.hands_since_commit = table.commit_every_n_hands;
+        }
+    }
+    game.hand_mask = 0;
+    game.live_mask = 0;
+    game.actionable_mask = 0;
+    game.pending_to_act_mask = 0;
+    game.pot = 0;
+    game.current_bet = 0;
+    game.last_full_raise = 0;
+    game.to_act = u8::MAX;
+    game.action_deadline = 0;
+    game.phase_deadline = 0;
+    game.action_seq = 0;
+    game.board = [0xFF; 5];
+    game.board_len = 0;
+    game.board_src = [0; 5];
+    game.phase = PHASE_IDLE;
+    game.hand_id = game.hand_id.saturating_add(1);
+    game.hands_since_commit = game.hands_since_commit.saturating_add(1);
+    // A voided hand may leave the slot in the terminal Void state; the next
+    // hand always starts from Idle.
+    game.vrf = VrfSlot::default();
+}
+
+/// Zero every secret for the finished hand (鎼?.7/鎼?.8): Deck VRF outputs,
+/// salts, draw state, and each hand_mask seat's PlayerHand (cards + salt).
+/// PlayerHand accounts of seats NOT in the hand are untouched 閳?they may
+/// hold a pre-reveal for the next hand.
+fn zero_secrets(deck: &mut Deck, hands: &mut [&mut PlayerHand; MAX_SEATS], hand_mask: u16) {
+    deck.vrf_out = [[0u8; 32]; 5];
+    deck.vrf_attempt_used = [0; 5];
+    deck.salts = [[0u8; 32]; MAX_SEATS];
+    deck.used_mask = 0;
+    deck.draw_no = 0;
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            let h = &mut hands[i];
+            h.cards = [0xFF; 2];
+            h.salt = [0u8; 32];
+            h.salt_hand_id = 0;
+        }
+    }
+}
+
+/// Write the ring-buffer proof entry for the finished hand and bump head.
+/// Must run BEFORE secrets are zeroed (vrf_out/salts come from Deck).
+/// 盐与 VRF 写入配套的 HandSecrets 环（2026-10-07 拆分，见 state.rs 偏差记录）。
+fn write_proof_entry(
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    game: &Game,
+    deck: &Deck,
+    status: u8,
+    hole: &[[u8; 2]; MAX_SEATS],
+    salts: &[[u8; 32]; MAX_SEATS],
+    deltas: [i64; MAX_SEATS],
+    rake: u64,
+    now: i64,
+) {
+    let hand_mask = game.hand_mask;
+    let mut occupancy_ids = [0u64; MAX_SEATS];
+    let mut hole_masked = [[0xFFu8; 2]; MAX_SEATS];
+    let mut salts_masked = [[0u8; 32]; MAX_SEATS];
+    let mut vrf_mask = 0u8;
+    for k in 0..5 {
+        if deck.vrf_attempt_used[k] != 0 {
+            vrf_mask |= 1u8 << k;
+        }
+    }
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            occupancy_ids[i] = game.seats[i].occupancy_id;
+            hole_masked[i] = hole[i];
+            salts_masked[i] = salts[i];
+        }
+    }
+    let entry = ProofEntry {
+        hand_id: game.hand_id,
+        status,
+        button: game.button,
+        hand_mask,
+        occupancy_ids,
+        transcript_final: game.transcript,
+        board: game.board,
+        hole: hole_masked,
+        deltas,
+        rake,
+        settled_at: now,
+        _pad: [0; 5],
+    };
+    proof.entries[(proof.head % 16) as usize] = entry;
+    proof.head = proof.head.wrapping_add(1);
+    secrets.entries[(secrets_head(proof) % 16) as usize] = SecretsEntry {
+        salts: salts_masked,
+        vrf_out: deck.vrf_out,
+        vrf_mask,
+        _pad: [0; 7],
+    };
+}
+
+/// HandSecrets 没有独立 head——与 HandProof.head 同步（拆分记录，见 state.rs）。
+/// 注意调用点在 proof.head 自增之后，所以用 head−1。
+fn secrets_head(proof: &HandProof) -> u8 {
+    proof.head.wrapping_sub(1)
+}
+
+// ---------------------------------------------------------------------------
+// Settle
+// ---------------------------------------------------------------------------
+
+/// Read hole cards from the PlayerHand accounts (folded seats may be 0xFF 閳?/// core settle skips invalid cards).
+pub fn collect_hole(hands: &[&mut PlayerHand; MAX_SEATS], hand_mask: u16) -> [[u8; 2]; MAX_SEATS] {
+    let mut hole = [[settle::NO_CARD; 2]; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            hole[i] = hands[i].cards;
+        }
+    }
+    hole
+}
+
+/// PHASE_SETTLE transition (鎼?.2, 鎼?.7): core settle, awards/rake to seats,
+/// HandEnd event, full ProofEntry, zero secrets, close the hand.
+#[inline(never)]
+fn do_settle(
+    table: &Table,
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    now: i64,
+) -> Result<()> {
+    let hand_mask = game.hand_mask;
+    require!(popcount(hand_mask) >= 1, SolpokerError::BadPhase);
+
+    let hole = collect_hole(hands, hand_mask);
+    let mut engine = engine_from_game(game, table.sb, table.bb, table.ante);
+    let in_hand_before: [u64; MAX_SEATS] = {
+        let mut a = [0u64; MAX_SEATS];
+        for i in 0..MAX_SEATS {
+            a[i] = game.seats[i].in_hand;
+        }
+        a
+    };
+    let settlement = settle::settle(
+        &mut engine,
+        &hole,
+        &game.board,
+        game.board_len,
+        eval::evaluate7,
+    );
+
+    // Deltas: refund + award 閳?contribution (鍗?deltas == 閳姰ake by 鎼?.2 conservation).
+    let mut deltas = [0i64; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            let net = settlement.refunds[i] + settlement.awards[i];
+            deltas[i] = net as i64 - in_hand_before[i] as i64;
+        }
+    }
+    sync_game_from_engine(game, &engine);
+    debug_assert_eq!(game.pot, 0, "settle drains the pot");
+    game.rake_total = game
+        .rake_total
+        .checked_add(settlement.rake)
+        .ok_or(SolpokerError::Overflow)?;
+
+    transcript_append(
+        &mut game.transcript,
+        &Event::HandEnd {
+            result: HandResult::Settled,
+            deltas,
+            rake: settlement.rake,
+        },
+    );
+    write_proof_entry(
+        proof,
+        secrets,
+        game,
+        deck,
+        PROOF_SETTLED,
+        &hole,
+        &deck.salts,
+        deltas,
+        settlement.rake,
+        now,
+    );
+    zero_secrets(deck, hands, hand_mask);
+    close_hand(game, table);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Void
+// ---------------------------------------------------------------------------
+
+/// Void the current hand (鎼?.1, 鎼?.5 HandVoid): full refund of in_hand (if
+/// any bets were posted), HandVoid event, Void ProofEntry, strikes for
+/// offenders, zero secrets, close.
+///
+/// `offenders_mask`: seats that failed salt verification (MissingSalt only).
+#[inline(never)]
+fn void_hand_path(
+    table: &Table,
+    table_bytes: &[u8; 32],
+    program_id: &[u8; 32],
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    now: i64,
+    reason: VoidReason,
+    offenders_mask: u16,
+) -> Result<()> {
+    let hand_mask = game.hand_mask;
+    let phase = game.phase;
+
+    // Refund whatever was invested (nothing at AwaitSeed 閳?forced bets are
+    // posted only when hole cards are dealt, 鎼?.3).
+    if game.pot > 0 {
+        let mut engine = engine_from_game(game, table.sb, table.bb, table.ante);
+        settle::void_hand(&mut engine);
+        sync_game_from_engine(game, &engine);
+    }
+
+    // Strikes for offenders (鎼?.3: missing/failed salt counts as a timeout).
+    for i in 0..MAX_SEATS {
+        if offenders_mask & seat_bit(i as u8) != 0 {
+            let s = &mut game.seats[i];
+            s.strikes = s.strikes.saturating_add(1);
+        }
+    }
+
+    // Transcript: if the hand never reached the deal (AwaitSeed), the
+    // canonical prefix (HandStart, SaltCommitted asc, optional
+    // VrfFulfilled(0)) was never rolled 閳?build it now from public fields
+    // (dealing-protocol 鎼?.4: a missing-salt void may carry only this prefix).
+    // Otherwise the running transcript continues and HandVoid terminates it.
+    if phase == PHASE_AWAIT_SEED && deck.draw_no == 0 {
+        let mut st = DealState::new(program_id, table_bytes, game.hand_id);
+        let inputs = hand_inputs(program_id, table_bytes, game, &[[0u8; 32]; MAX_SEATS], &[[0u8; 32]; 5]);
+        st.append(&Event::HandStart {
+            hand_id: game.hand_id,
+            button: game.button,
+            hand_mask,
+            stacks: inputs.stacks,
+            occupancy_ids: inputs.occupancy_ids,
+        });
+        for i in 0..MAX_SEATS {
+            if hand_mask & seat_bit(i as u8) != 0 {
+                st.append(&Event::SaltCommitted {
+                    seat: i as u8,
+                    commitment: game.seats[i].salt_commit,
+                });
+            }
+        }
+        if deck.vrf_attempt_used[VrfTarget::Preflop.deck_index()] != 0 {
+            st.append(&Event::VrfFulfilled {
+                target: CoreVrfTarget::Preflop,
+                attempt: deck.vrf_attempt_used[VrfTarget::Preflop.deck_index()],
+            });
+        }
+        game.transcript = st.transcript;
+    }
+    transcript_append(&mut game.transcript, &Event::HandVoid { reason });
+
+    // Proof salts: whatever verifies against the stored commitments (zero for
+    // missing/mismatched 閳?the void itself is the evidence).
+    let mut salts = [[0u8; 32]; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0
+            && verify_seat_salt(table_bytes, game.hand_id, &game.seats[i], hands[i])
+        {
+            salts[i] = hands[i].salt;
+        }
+    }
+    let hole = collect_hole(hands, hand_mask);
+    write_proof_entry(
+        proof,
+        secrets,
+        game,
+        deck,
+        PROOF_VOID,
+        &hole,
+        &salts,
+        [0i64; MAX_SEATS],
+        0,
+        now,
+    );
+    zero_secrets(deck, hands, hand_mask);
+    close_hand(game, table);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// advance 閳?the deterministic phase machine (鎼?.1/鎼?.2)
+// ---------------------------------------------------------------------------
+
+/// Idle 閳?Commit: freeze hand_mask from occupied & Seated & stack > 0 (D7.1
+/// requires 2閳?), promote next_salt_commit (鎼?.4 pre-commits), start the
+/// commit timer. No-op until at least 2 seats qualify.
+#[inline(never)]
+fn idle_to_commit(game: &mut Game, table: &Table, now: i64) -> Result<()> {
+    let mut mask = 0u16;
+    for i in 0..MAX_SEATS {
+        let s = &game.seats[i];
+        if game.occupied_mask & seat_bit(i as u8) != 0
+            && s.status == fund::SEAT_SEATED
+            && s.stack > 0
+        {
+            mask |= seat_bit(i as u8);
+        }
+    }
+    if popcount(mask) < 2 {
+        return Ok(());
+    }
+    game.hand_mask = mask;
+    for i in 0..MAX_SEATS {
+        let bit = seat_bit(i as u8);
+        let s = &mut game.seats[i];
+        if mask & bit != 0 {
+            if s.salt_commit == [0u8; 32] && s.next_salt_commit != [0u8; 32] {
+                s.salt_commit = s.next_salt_commit;
+            }
+        } else {
+            // Defensive: a commitment bound to this hand_id is useless for a
+            // seat that is not in the hand.
+            s.salt_commit = [0; 32];
+        }
+        s.next_salt_commit = [0; 32];
+    }
+    game.phase = PHASE_COMMIT;
+    game.phase_deadline = now + table.commit_timeout_s as i64;
+    Ok(())
+}
+
+/// Commit 閳?AwaitSeed: all hand_mask seats committed 閳?arm VRF Preflop (the
+/// request itself is the permissionless request_vrf, V1 閹峰棗鍨?. On
+/// commit_timeout_s, strike the missing seats and re-time (鎼?.3 閳?the hand
+/// simply does not start; nothing was invested).
+#[inline(never)]
+fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i64) -> Result<()> {
+    let mut missing = 0u16;
+    for i in 0..MAX_SEATS {
+        if game.hand_mask & seat_bit(i as u8) != 0 && game.seats[i].salt_commit == [0u8; 32] {
+            missing |= seat_bit(i as u8);
+        }
+    }
+    if missing == 0 {
+        arm_vrf(game, VrfTarget::Preflop)?;
+        // The deck must belong to this hand before any callback can land.
+        deck.hand_id = game.hand_id;
+        game.phase = PHASE_AWAIT_SEED;
+        game.phase_deadline = 0;
+        return Ok(());
+    }
+    if now >= game.phase_deadline {
+        for i in 0..MAX_SEATS {
+            if missing & seat_bit(i as u8) != 0 {
+                let s = &mut game.seats[i];
+                s.strikes = s.strikes.saturating_add(1);
+            }
+        }
+        game.phase_deadline = now + table.commit_timeout_s as i64;
+    }
+    Ok(())
+}
+
+/// AwaitSeed 閳?Preflop (deal) or Void. 鎼?.2: deal ONLY when VRF_0 arrived AND
+/// every hand_mask salt verifies against its commitment.
+#[inline(never)]
+fn await_seed(
+    table: &Table,
+    table_bytes: &[u8; 32],
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    program_id: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    match game.vrf.state {
+        VrfState::Void => {
+            return void_hand_path(
+                table,
+                table_bytes,
+                program_id,
+                game,
+                deck,
+                proof,
+                secrets,
+                hands,
+                now,
+                VoidReason::VrfExhausted,
+                0,
+            );
+        }
+        VrfState::Fulfilled => {}
+        _ => return Ok(()), // armed/requested; nothing to do yet
+    }
+    require!(
+        game.vrf.target == VrfTarget::Preflop,
+        SolpokerError::BadPhase
+    );
+
+    // 鎼?.2 step 4: verify every hand_mask salt.
+    let hand_mask = game.hand_mask;
+    let mut offenders = 0u16;
+    let mut salts = [[0u8; 32]; MAX_SEATS];
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) == 0 {
+            continue;
+        }
+        if verify_seat_salt(table_bytes, game.hand_id, &game.seats[i], hands[i]) {
+            salts[i] = hands[i].salt;
+        } else {
+            offenders |= seat_bit(i as u8);
+        }
+    }
+    if offenders != 0 {
+        return void_hand_path(
+            table,
+            table_bytes,
+            program_id,
+            game,
+            deck,
+            proof,
+            secrets,
+            hands,
+            now,
+            VoidReason::MissingSalt,
+            offenders,
+        );
+    }
+    deck.salts = salts;
+
+    // Button: first dealt hand 閳?deal.first_button (鎼?.3); else clockwise
+    // rotation from the previous button over the NEW hand_mask (鎼?.1).
+    let inputs = hand_inputs(program_id, table_bytes, game, &salts, &deck.vrf_out);
+    let button = if game.button_initialized == 0 {
+        deal::first_button(&inputs).ok_or(SolpokerError::BadPhase)?
+    } else {
+        next_clockwise(game.button, hand_mask).ok_or(SolpokerError::BadPhase)?
+    };
+    game.button = button;
+    game.button_initialized = 1;
+
+    // Forced bets: engine posts them; the event plan mirrors the amounts.
+    let stacks = inputs.stacks;
+    let preflop_events = forced_bet_events(&stacks, hand_mask, button, table.sb, table.bb, table.ante);
+    let engine = Engine::new(
+        &stacks,
+        game.occupied_mask,
+        hand_mask,
+        button,
+        table.sb,
+        table.bb,
+        table.ante,
+    )
+    .map_err(|_| SolpokerError::BadPhase)?;
+
+    // Deal: HandStart 閳?SaltCommitted asc 閳?VrfFulfilled(0) 閳?ForcedBet閳?閳?    // StreetStart(0) 閳?HoleDealt 鑴?n (dealing-protocol 鎼?.4 canonical order).
+    let salt_digest = current_salt_digest(table_bytes, game, &salts);
+    let seed0 = deal::seed_k(
+        &deck.vrf_out[VrfTarget::Preflop.deck_index()],
+        &salt_digest,
+    );
+    let attempt0 = deck.vrf_attempt_used[VrfTarget::Preflop.deck_index()];
+    let mut st = DealState::new(program_id, table_bytes, game.hand_id);
+    st.append(&Event::HandStart {
+        hand_id: game.hand_id,
+        button,
+        hand_mask,
+        stacks,
+        occupancy_ids: inputs.occupancy_ids,
+    });
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            // Canonical event carries the commitment stored at commit_salt
+            // time (Game.seats[i].salt_commit) — no recompute needed.
+            st.append(&Event::SaltCommitted {
+                seat: i as u8,
+                commitment: game.seats[i].salt_commit,
+            });
+        }
+    }
+    st.append(&Event::VrfFulfilled {
+        target: CoreVrfTarget::Preflop,
+        attempt: attempt0,
+    });
+    for ev in &preflop_events {
+        st.append(ev);
+    }
+    st.append(&Event::StreetStart {
+        street: deal::STREET_PREFLOP,
+    });
+    let order = deal::hole_order(button, hand_mask).ok_or(SolpokerError::BadPhase)?;
+    let n = popcount(hand_mask) as usize;
+    for k in 0..2 * n {
+        let seat = order[k % n];
+        let slot = k / n;
+        let (card, _dn) = st.draw(&seed0, table_bytes, game.hand_id, |_c, dn| {
+            Event::HoleDealt { seat, draw_no: dn }
+        });
+        let h = &mut hands[seat as usize];
+        h.cards[slot] = card;
+    }
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) != 0 {
+            hands[i].hand_id = game.hand_id;
+        }
+    }
+
+    sync_game_from_engine(game, &engine);
+    st.store(deck, game);
+    game.street = deal::STREET_PREFLOP;
+    game.board = [0xFF; 5];
+    game.board_len = 0;
+    game.board_src = [0; 5];
+    game.action_seq = 0;
+    reset_vrf(game);
+
+    // Extreme short stacks: the blinds can consume everyone 閳?immediate runout.
+    if engine.runout_needed {
+        arm_vrf(game, VrfTarget::Runout)?;
+        game.phase = PHASE_AWAIT_RUNOUT;
+        game.action_deadline = 0;
+    } else {
+        game.phase = PHASE_PREFLOP;
+        game.action_deadline = now + table.action_timeout_s as i64;
+    }
+    Ok(())
+}
+
+/// AwaitStreet: arm the street VRF if not armed yet; on fulfillment, deal the
+/// street's board cards (VrfFulfilled(k), StreetStart(k), BoardDealt閳? and
+/// reopen betting. VrfExhausted 閳?Void.
+#[inline(never)]
+fn await_street(
+    table: &Table,
+    table_bytes: &[u8; 32],
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    program_id: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    let street = game.street;
+    let board_street = BoardStreet::from_street_u8(street).ok_or(SolpokerError::BadPhase)?;
+    let target = VrfTarget::from_u8(street).ok_or(SolpokerError::BadPhase)?;
+    match game.vrf.state {
+        VrfState::Idle => return arm_vrf(game, target),
+        VrfState::Void => {
+            return void_hand_path(
+                table,
+                table_bytes,
+                program_id,
+                game,
+                deck,
+                proof,
+                secrets,
+                hands,
+                now,
+                VoidReason::VrfExhausted,
+                0,
+            );
+        }
+        VrfState::Fulfilled => {
+            require!(game.vrf.target == target, SolpokerError::BadPhase);
+        }
+        _ => return Ok(()),
+    }
+
+    let k = target.deck_index();
+    let salt_digest = current_salt_digest(table_bytes, game, &deck.salts);
+    let seed = deal::seed_k(&deck.vrf_out[k], &salt_digest);
+    let attempt = deck.vrf_attempt_used[k];
+    let mut st = DealState::resume(deck, game);
+    st.append(&Event::VrfFulfilled {
+        target: target.to_core(),
+        attempt,
+    });
+    st.append(&Event::StreetStart { street });
+    let count = board_street.card_count();
+    for _ in 0..count {
+        let (card, _dn) = st.draw(&seed, table_bytes, game.hand_id, |c, dn| {
+            Event::BoardDealt {
+                street,
+                card: c,
+                draw_no: dn,
+                vrf_src: target.to_core(),
+            }
+        });
+        let pos = game.board_len as usize;
+        require!(pos < 5, SolpokerError::BadPhase);
+        game.board[pos] = card;
+        game.board_src[pos] = street; // normal street: board_src == street (鎼?.3 BoardDealt)
+        game.board_len += 1;
+    }
+    st.store(deck, game);
+    reset_vrf(game);
+    game.phase = PHASE_BETTING;
+    game.action_deadline = now + table.action_timeout_s as i64;
+    Ok(())
+}
+
+/// AwaitRunout: on fulfillment, deal ALL remaining board cards from the
+/// runout seed (RunoutStarted, VrfFulfilled(4), BoardDealt with actual street
+/// + vrf_src=4, StreetSkipped per skipped betting round), then Settle on the
+/// next advance.
+#[inline(never)]
+fn await_runout(
+    table: &Table,
+    table_bytes: &[u8; 32],
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    program_id: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    match game.vrf.state {
+        VrfState::Idle => return arm_vrf(game, VrfTarget::Runout),
+        VrfState::Void => {
+            return void_hand_path(
+                table,
+                table_bytes,
+                program_id,
+                game,
+                deck,
+                proof,
+                secrets,
+                hands,
+                now,
+                VoidReason::VrfExhausted,
+                0,
+            );
+        }
+        VrfState::Fulfilled => {
+            require!(
+                game.vrf.target == VrfTarget::Runout,
+                SolpokerError::BadPhase
+            );
+        }
+        _ => return Ok(()),
+    }
+
+    let k = VrfTarget::Runout.deck_index();
+    let salt_digest = current_salt_digest(table_bytes, game, &deck.salts);
+    let seed = deal::seed_k(&deck.vrf_out[k], &salt_digest);
+    let attempt = deck.vrf_attempt_used[k];
+    let mut st = DealState::resume(deck, game);
+    st.append(&Event::RunoutStarted);
+    st.append(&Event::VrfFulfilled {
+        target: CoreVrfTarget::Runout,
+        attempt,
+    });
+    let mut dealt_streets = 0u8; // bits 1..3 for streets dealt by this runout
+    while game.board_len < 5 {
+        // Actual street of the next board position (dealing-protocol 鎼?.4).
+        let street = match game.board_len {
+            0..=2 => deal::STREET_FLOP,
+            3 => deal::STREET_TURN,
+            _ => deal::STREET_RIVER,
+        };
+        let (card, _dn) = st.draw(&seed, table_bytes, game.hand_id, |c, dn| {
+            Event::BoardDealt {
+                street,
+                card: c,
+                draw_no: dn,
+                vrf_src: CoreVrfTarget::Runout,
+            }
+        });
+        let pos = game.board_len as usize;
+        game.board[pos] = card;
+        game.board_src[pos] = VrfTarget::Runout.to_core().to_u8();
+        game.board_len += 1;
+        dealt_streets |= 1u8 << street;
+    }
+    // StreetSkipped for every betting round the runout replaced (ascending).
+    for street in 1..=3u8 {
+        if dealt_streets & (1u8 << street) != 0 {
+            st.append(&Event::StreetSkipped { street });
+        }
+    }
+    st.store(deck, game);
+    reset_vrf(game);
+    // flop_dealt is derived (board_len >= 3) 閳?a runout always deals the flop,
+    // so rake applies from here on (鎼?.1 note in core engine docs).
+    game.phase = PHASE_SETTLE;
+    game.action_deadline = 0;
+    Ok(())
+}
+
+/// The deterministic phase machine. One transition per call; permissionless
+/// callers (keepers, clients) chain calls. No-ops return Ok so spam is cheap.
+#[inline(never)]
+pub fn advance(
+    table: &Table,
+    table_bytes: &[u8; 32],
+    game: &mut Game,
+    deck: &mut Deck,
+    proof: &mut HandProof,
+    secrets: &mut HandSecrets,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    program_id: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    match game.phase {
+        PHASE_IDLE => idle_to_commit(game, table, now),
+        PHASE_COMMIT => commit_to_await_seed(game, deck, table, now),
+        PHASE_AWAIT_SEED => {
+            await_seed(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+        }
+        PHASE_PREFLOP | PHASE_BETTING => Ok(()), // waiting for player actions
+        PHASE_AWAIT_STREET => {
+            await_street(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+        }
+        PHASE_AWAIT_RUNOUT => {
+            await_runout(table, table_bytes, game, deck, proof, secrets, hands, program_id, now)
+        }
+        PHASE_SETTLE => do_settle(table, game, deck, proof, secrets, hands, now),
+        _ => err!(SolpokerError::BadPhase),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solpoker_core::deal::{DealSession, Transcript};
+    use solpoker_core::engine::{Action as CoreAction, CENT};
+    use solpoker_core::vrf::VrfTarget as CoreTarget;
+
+    const NOW: i64 = 1_000_000;
+    const SB: u64 = 50 * CENT;
+    const BB: u64 = 100 * CENT;
+    const ANTE: u64 = 10 * CENT;
+    const STACK: u64 = 10_000 * CENT; // 100 BB
+
+    fn prog() -> [u8; 32] {
+        crate::ID.to_bytes()
+    }
+
+    fn table_bytes() -> [u8; 32] {
+        [0x77u8; 32]
+    }
+
+    fn sample_table() -> Table {
+        Table {
+            table_id: 0,
+            admin: Pubkey::new_unique(),
+            kind: 0,
+            max_seats: 9,
+            status: 0,
+            mint: Pubkey::new_unique(),
+            sb: SB,
+            bb: BB,
+            ante: ANTE,
+            min_buy_in_bb: 100,
+            max_buy_in_bb: 1000,
+            rake_bps: 250,
+            rake_cap_bb: 3,
+            rake_min_pot_bb: 1,
+            action_timeout_s: 30,
+            commit_timeout_s: 10,
+            reveal_timeout_s: 10,
+            vrf_timeout_s: 10,
+            vrf_max_attempts: 3,
+            max_strikes: 3,
+            commit_every_n_hands: 1,
+            heartbeat_s: 3600,
+            escape_stale_s: 3600,
+            rake_swept_total: 0,
+            epoch: 0,
+            bump: 255,
+            vault_auth_bump: 254,
+            commit_payer_bump: 253,
+        }
+    }
+
+    fn sample_game() -> Game {
+        Game {
+            table: Pubkey::from(table_bytes()),
+            hand_id: 0,
+            phase: PHASE_IDLE,
+            street: 0,
+            button: 0,
+            button_initialized: 0,
+            seats: [crate::state::SeatState::default(); MAX_SEATS],
+            occupied_mask: 0,
+            hand_mask: 0,
+            live_mask: 0,
+            actionable_mask: 0,
+            pending_to_act_mask: 0,
+            pot: 0,
+            current_bet: 0,
+            last_full_raise: 0,
+            to_act: u8::MAX,
+            action_deadline: 0,
+            phase_deadline: 0,
+            action_seq: 0,
+            board: [0xFF; 5],
+            board_len: 0,
+            board_src: [0; 5],
+            vrf: VrfSlot::default(),
+            transcript: [0; 32],
+            rake_total: 0,
+            last_commit_at: 0,
+            hands_since_commit: 0,
+            maintenance_requested: 0,
+        }
+    }
+
+    fn occupants() -> [Pubkey; MAX_SEATS] {
+        let mut o = [Pubkey::default(); MAX_SEATS];
+        for (i, slot) in o.iter_mut().enumerate() {
+            let mut b = [0u8; 32];
+            b[0] = 0x40 + i as u8;
+            *slot = Pubkey::from(b);
+        }
+        o
+    }
+
+    /// Seat `mask` seats as Seated with `stack` (credited == stack, so the
+    /// genesis conservation check holds).
+    fn seat_players(game: &mut Game, mask: u16, stack: u64) {
+        let occ = occupants();
+        for i in 0..MAX_SEATS {
+            if mask & seat_bit(i as u8) == 0 {
+                continue;
+            }
+            game.seats[i] = crate::state::SeatState {
+                occupant: occ[i],
+                occupancy_id: 1,
+                kind: 0,
+                status: fund::SEAT_SEATED,
+                stack,
+                credited_total: stack,
+                owed_total: 0,
+                in_hand: 0,
+                street_bet: 0,
+                folded: 0,
+                all_in: 0,
+                acted: 0,
+                strikes: 0,
+                leave_requested: 0,
+                salt_commit: [0; 32],
+                next_salt_commit: [0; 32],
+                _pad0: 0,
+            };
+            game.occupied_mask |= seat_bit(i as u8);
+        }
+    }
+
+    fn sample_deck() -> Deck {
+        Deck {
+            hand_id: 0,
+            vrf_out: [[0u8; 32]; 5],
+            vrf_attempt_used: [0; 5],
+            salts: [[0u8; 32]; MAX_SEATS],
+            used_mask: 0,
+            draw_no: 0,
+            _pad: 0,
+        }
+    }
+
+    fn sample_proof() -> HandProof {
+        HandProof {
+            head: 0,
+            entries: [ProofEntry::default(); 16],
+            _pad: [0; 7],
+        }
+    }
+
+    fn fresh_hand() -> PlayerHand {
+        PlayerHand {
+            hand_id: 0,
+            cards: [0xFF; 2],
+            salt: [0u8; 32],
+            salt_hand_id: 0,
+        }
+    }
+
+    struct Hands {
+        h: [PlayerHand; MAX_SEATS],
+    }
+
+    impl Hands {
+        fn new() -> Self {
+            Self {
+                h: [
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                    fresh_hand(),
+                ],
+            }
+        }
+        fn as_mut(&mut self) -> [&mut PlayerHand; MAX_SEATS] {
+            let [a, b, c, d, e, f, g, h, i] = &mut self.h;
+            [a, b, c, d, e, f, g, h, i]
+        }
+    }
+
+    fn salt_for(seat: u8) -> [u8; 32] {
+        let mut s = [0u8; 32];
+        s[0] = 0x60 + seat;
+        s
+    }
+
+    /// Commit + reveal for a seat (what commit_salt/reveal_salt persist).
+    fn commit_and_reveal(game: &mut Game, hands: &mut [&mut PlayerHand; MAX_SEATS], seat: u8) {
+        let salt = salt_for(seat);
+        let c = deal::salt_commitment(
+            &table_bytes(),
+            game.hand_id,
+            &game.seats[seat as usize].occupant.to_bytes(),
+            &salt,
+        );
+        game.seats[seat as usize].salt_commit = c;
+        hands[seat as usize].salt = salt;
+        hands[seat as usize].salt_hand_id = game.hand_id;
+    }
+
+    /// Simulate a fulfilled VRF request (what vrf_callback persists).
+    fn fulfill(game: &mut Game, deck: &mut Deck, target: VrfTarget, randomness: [u8; 32]) {
+        assert_eq!(game.vrf.state, VrfState::Ready, "slot must be armed first");
+        deck.vrf_out[target.deck_index()] = randomness;
+        deck.vrf_attempt_used[target.deck_index()] = 1;
+        game.vrf = VrfSlot {
+            state: VrfState::Fulfilled,
+            target,
+            attempt: 1,
+            requested_at: NOW,
+            _pad: [0; 5],
+        };
+    }
+
+    fn step(
+        table: &Table,
+        game: &mut Game,
+        deck: &mut Deck,
+        proof: &mut HandProof,
+        secrets: &mut HandSecrets,
+        hands: &mut [&mut PlayerHand; MAX_SEATS],
+    ) {
+        advance(
+            table,
+            &table_bytes(),
+            game,
+            deck,
+            proof,
+            secrets,
+            hands,
+            &prog(),
+            NOW,
+        )
+        .unwrap();
+        fund::assert_conservation_er(game).unwrap();
+    }
+
+    // --- mirror round-trip ---------------------------------------------------
+
+    #[test]
+    fn engine_mirror_round_trip() {
+        let mut game = sample_game();
+        seat_players(&mut game, 0b101, STACK);
+        game.hand_mask = 0b101;
+        game.phase = PHASE_BETTING;
+        game.street = 1;
+        game.button = 2;
+        game.pot = 500 * CENT;
+        game.current_bet = 200 * CENT;
+        game.last_full_raise = 200 * CENT;
+        game.to_act = 0;
+        game.live_mask = 0b101;
+        game.actionable_mask = 0b101;
+        game.pending_to_act_mask = 0b001;
+        game.board_len = 3;
+        game.seats[0].street_bet = 200 * CENT;
+        game.seats[0].in_hand = 300 * CENT;
+        game.seats[0].acted = 1;
+        game.seats[0].strikes = 2;
+        game.seats[2].in_hand = 200 * CENT;
+
+        let engine = engine_from_game(&game, SB, BB, ANTE);
+        assert!(engine.flop_dealt); // derived from board_len >= 3
+        assert_eq!(engine.seats[0].strikes, 2);
+        assert!(engine.seats[0].in_hand_mask);
+        assert!(!engine.seats[1].in_hand_mask);
+
+        let mut back = sample_game();
+        seat_players(&mut back, 0b101, STACK);
+        back.hand_mask = 0b101;
+        back.phase = PHASE_BETTING;
+        back.button = 2;
+        back.board_len = 3;
+        sync_game_from_engine(&mut back, &engine);
+        for i in 0..MAX_SEATS {
+            assert_eq!(back.seats[i].stack, game.seats[i].stack, "stack {i}");
+            assert_eq!(back.seats[i].in_hand, game.seats[i].in_hand, "in_hand {i}");
+            assert_eq!(
+                back.seats[i].street_bet, game.seats[i].street_bet,
+                "street_bet {i}"
+            );
+            assert_eq!(back.seats[i].strikes, game.seats[i].strikes);
+        }
+        assert_eq!(back.live_mask, game.live_mask);
+        assert_eq!(back.actionable_mask, game.actionable_mask);
+        assert_eq!(back.pending_to_act_mask, game.pending_to_act_mask);
+        assert_eq!(back.pot, game.pot);
+        assert_eq!(back.current_bet, game.current_bet);
+        assert_eq!(back.last_full_raise, game.last_full_raise);
+        assert_eq!(back.to_act, game.to_act);
+        assert_eq!(back.street, game.street);
+    }
+
+    // --- transcript / event encoding -----------------------------------------
+
+    #[test]
+    fn transcript_append_matches_core_for_every_event() {
+        let program = prog();
+        let table = table_bytes();
+        let events = [
+            Event::HandStart {
+                hand_id: 7,
+                button: 1,
+                hand_mask: 0b101,
+                stacks: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                occupancy_ids: [9, 8, 7, 6, 5, 4, 3, 2, 1],
+            },
+            Event::SaltCommitted {
+                seat: 2,
+                commitment: [0xAB; 32],
+            },
+            Event::VrfFulfilled {
+                target: CoreTarget::Flop,
+                attempt: 2,
+            },
+            Event::ForcedBet {
+                seat: 0,
+                kind: ForcedBetKind::BigBlind,
+                amount: BB,
+            },
+            Event::StreetStart { street: 0 },
+            Event::HoleDealt { seat: 2, draw_no: 3 },
+            Event::Action {
+                seat: 0,
+                kind: solpoker_core::deal::ActionKind::Raise,
+                amount: 2 * BB,
+            },
+            Event::Timeout {
+                seat: 2,
+                auto_kind: 1,
+            },
+            Event::BoardDealt {
+                street: 1,
+                card: 7,
+                draw_no: 4,
+                vrf_src: CoreTarget::Flop,
+            },
+            Event::RunoutStarted,
+            Event::StreetSkipped { street: 2 },
+            Event::HandEnd {
+                result: HandResult::Settled,
+                deltas: [-5, 0, 5, 0, 0, 0, 0, 0, 0],
+                rake: 5,
+            },
+            Event::HandVoid {
+                reason: VoidReason::MissingSalt,
+            },
+        ];
+        let mut core_t = Transcript::new(&program, &table, 7);
+        let mut digest = transcript_init(&program, &table, 7);
+        assert_eq!(digest, core_t.digest());
+        for ev in &events {
+            core_t.append(ev);
+            transcript_append(&mut digest, ev);
+            assert_eq!(digest, core_t.digest(), "transcript diverged at {ev:?}");
+        }
+    }
+
+    // --- DealState vs DealSession parity (byte-for-byte) ---------------------
+
+    fn parity_inputs(mask: u16) -> HandInputs {
+        let occ = occupants();
+        let mut occupants_b = [[0u8; 32]; MAX_SEATS];
+        let mut salts = [[0u8; 32]; MAX_SEATS];
+        let mut stacks = [0u64; MAX_SEATS];
+        let mut occupancy_ids = [0u64; MAX_SEATS];
+        for i in 0..MAX_SEATS {
+            if mask & seat_bit(i as u8) != 0 {
+                occupants_b[i] = occ[i].to_bytes();
+                salts[i] = salt_for(i as u8);
+                stacks[i] = STACK;
+                occupancy_ids[i] = 1;
+            }
+        }
+        let mut vrf = [[0u8; 32]; 5];
+        for (k, v) in vrf.iter_mut().enumerate() {
+            *v = [0x90 + k as u8; 32];
+        }
+        HandInputs {
+            program_id: prog(),
+            table: table_bytes(),
+            hand_id: 7,
+            hand_mask: mask,
+            stacks,
+            occupancy_ids,
+            occupants: occupants_b,
+            salts,
+            vrf,
+        }
+    }
+
+    /// Replay one full deal through the persisted DealState driver, mirroring
+    /// exactly what await_seed/await_street/await_runout do.
+    fn deal_state_full_run(
+        inputs: &HandInputs,
+        button: u8,
+        preflop_events: &[Event],
+    ) -> (Vec<(u8, u8, u8)>, Vec<u8>, Vec<u8>, [u8; 32]) {
+        let table = inputs.table;
+        let hand_id = inputs.hand_id;
+        let salt_digest = deal::salt_digest(
+            &table,
+            hand_id,
+            inputs.hand_mask,
+            &inputs.occupants,
+            &inputs.occupancy_ids,
+            &inputs.salts,
+        );
+        let mut st = DealState::new(&inputs.program_id, &table, hand_id);
+        st.append(&Event::HandStart {
+            hand_id,
+            button,
+            hand_mask: inputs.hand_mask,
+            stacks: inputs.stacks,
+            occupancy_ids: inputs.occupancy_ids,
+        });
+        for i in 0..MAX_SEATS {
+            if inputs.hand_mask & seat_bit(i as u8) != 0 {
+                st.append(&Event::SaltCommitted {
+                    seat: i as u8,
+                    commitment: deal::salt_commitment(
+                        &table,
+                        hand_id,
+                        &inputs.occupants[i],
+                        &inputs.salts[i],
+                    ),
+                });
+            }
+        }
+        // hole
+        let seed0 = deal::seed_k(&inputs.vrf[0], &salt_digest);
+        st.append(&Event::VrfFulfilled {
+            target: CoreTarget::Preflop,
+            attempt: 1,
+        });
+        for ev in preflop_events {
+            st.append(ev);
+        }
+        st.append(&Event::StreetStart { street: 0 });
+        let order = deal::hole_order(button, inputs.hand_mask).unwrap();
+        let n = popcount(inputs.hand_mask) as usize;
+        let mut hole = Vec::new();
+        for k in 0..2 * n {
+            let seat = order[k % n];
+            let (card, _dn) = st.draw(&seed0, &table, hand_id, |_c, dn| Event::HoleDealt {
+                seat,
+                draw_no: dn,
+            });
+            hole.push((seat, (k / n) as u8, card));
+        }
+        // flop
+        let seed1 = deal::seed_k(&inputs.vrf[1], &salt_digest);
+        st.append(&Event::VrfFulfilled {
+            target: CoreTarget::Flop,
+            attempt: 1,
+        });
+        st.append(&Event::StreetStart { street: 1 });
+        let mut flop = Vec::new();
+        for _ in 0..3 {
+            let (card, _dn) = st.draw(&seed1, &table, hand_id, |c, dn| Event::BoardDealt {
+                street: 1,
+                card: c,
+                draw_no: dn,
+                vrf_src: CoreTarget::Flop,
+            });
+            flop.push(card);
+        }
+        // runout (turn + river)
+        let seedr = deal::seed_k(&inputs.vrf[4], &salt_digest);
+        st.append(&Event::RunoutStarted);
+        st.append(&Event::VrfFulfilled {
+            target: CoreTarget::Runout,
+            attempt: 1,
+        });
+        let mut board_len = 3u8;
+        let mut runout = Vec::new();
+        let mut dealt_streets = 0u8;
+        while board_len < 5 {
+            let street = match board_len {
+                0..=2 => 1,
+                3 => 2,
+                _ => 3,
+            };
+            let (card, _dn) = st.draw(&seedr, &table, hand_id, |c, dn| Event::BoardDealt {
+                street,
+                card: c,
+                draw_no: dn,
+                vrf_src: CoreTarget::Runout,
+            });
+            board_len += 1;
+            runout.push(card);
+            dealt_streets |= 1u8 << street;
+        }
+        for street in 1..=3u8 {
+            if dealt_streets & (1u8 << street) != 0 {
+                st.append(&Event::StreetSkipped { street });
+            }
+        }
+        (hole, flop, runout, st.transcript)
+    }
+
+    #[test]
+    fn deal_state_matches_deal_session_byte_for_byte() {
+        let inputs = parity_inputs(0b101);
+        let button = deal::first_button(&inputs).unwrap();
+        let preflop = forced_bet_events(&inputs.stacks, inputs.hand_mask, button, SB, BB, ANTE);
+
+        let mut sess = DealSession::new(&inputs, button).unwrap();
+        let hole_ref = sess.deal_hole(1, &preflop);
+        let flop_ref = sess.deal_street(BoardStreet::Flop, 1);
+        let runout_ref = sess.deal_runout(1);
+        let t_ref = sess.transcript_digest();
+
+        let (hole, flop, runout, t) = deal_state_full_run(&inputs, button, &preflop);
+        for (i, rec) in hole_ref.iter().enumerate() {
+            assert_eq!(hole[i].0, rec.seat.unwrap(), "hole seat {i}");
+            assert_eq!(hole[i].2, rec.card, "hole card {i}");
+        }
+        assert_eq!(
+            flop,
+            flop_ref.iter().map(|r| r.card).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            runout,
+            runout_ref.iter().map(|r| r.card).collect::<Vec<_>>()
+        );
+        // StreetSkipped events do not exist in DealSession; compare the
+        // transcript up to the runout's last BoardDealt by re-appending them.
+        let mut t2 = t_ref;
+        for street in [2u8, 3] {
+            transcript_append(&mut t2, &Event::StreetSkipped { street });
+        }
+        assert_eq!(t, t2, "final transcript must match DealSession + skips");
+    }
+
+    #[test]
+    fn forced_bet_plan_matches_engine_amounts() {
+        // short stack on the SB seat: ante first, then partial blind.
+        let mask = 0b111;
+        let mut stacks = [0u64; MAX_SEATS];
+        stacks[0] = STACK;
+        stacks[1] = ANTE + SB / 2; // SB seat: ante then half the small blind
+        stacks[2] = STACK;
+        let events = forced_bet_events(&stacks, mask, 0, SB, BB, ANTE);
+        // button 0, 3 players: SB=1, BB=2; antes from seat 1 clockwise: 1,2,0.
+        let kinds: Vec<(u8, u8, u64)> = events
+            .iter()
+            .map(|e| match e {
+                Event::ForcedBet { seat, kind, amount } => (*seat, kind.to_u8(), *amount),
+                _ => panic!("only forced bets"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (1, 0, ANTE),
+                (2, 0, ANTE),
+                (0, 0, ANTE),
+                (1, 1, SB / 2), // short: only half the SB left
+                (2, 2, BB),
+            ]
+        );
+        // The engine must move exactly these amounts.
+        let engine = Engine::new(&stacks, mask, mask, 0, SB, BB, ANTE).unwrap();
+        assert_eq!(engine.seats[1].in_hand, ANTE + SB / 2);
+        assert_eq!(engine.seats[2].in_hand, ANTE + BB);
+        assert_eq!(engine.seats[0].in_hand, ANTE);
+    }
+
+    // --- scripted 2-player hand, end to end -----------------------------------
+
+    struct World {
+        table: Table,
+        game: Game,
+        deck: Deck,
+        proof: HandProof,
+        secrets: HandSecrets,
+        hands: Hands,
+    }
+
+    impl World {
+        fn heads_up() -> Self {
+            let mut game = sample_game();
+            seat_players(&mut game, 0b011, STACK);
+            Self {
+                table: sample_table(),
+                game,
+                deck: sample_deck(),
+                proof: sample_proof(),
+                secrets: HandSecrets::default(),
+                hands: Hands::new(),
+            }
+        }
+
+        fn step(&mut self) {
+            let mut hands = self.hands.as_mut();
+            step(
+                &self.table,
+                &mut self.game,
+                &mut self.deck,
+                &mut self.proof,
+                &mut self.secrets,
+                &mut hands,
+            );
+        }
+
+        fn fulfill(&mut self, target: VrfTarget, tag: u8) {
+            fulfill(&mut self.game, &mut self.deck, target, [tag; 32]);
+        }
+
+        /// Freeze + commit + arm + fulfill + reveal + deal (reaches Preflop).
+        fn start_hand(&mut self) {
+            self.step(); // Idle 鈫?Commit
+            assert_eq!(self.game.phase, PHASE_COMMIT);
+            assert_eq!(self.game.hand_mask, 0b011);
+            {
+                let mut hands = self.hands.as_mut();
+                for seat in 0..2u8 {
+                    commit_and_reveal(&mut self.game, &mut hands, seat);
+                }
+            }
+            self.step(); // Commit 鈫?AwaitSeed (armed)
+            assert_eq!(self.game.phase, PHASE_AWAIT_SEED);
+            self.fulfill(VrfTarget::Preflop, 0x90);
+            self.step(); // AwaitSeed 鈫?Preflop (deal)
+            assert_eq!(self.game.phase, PHASE_PREFLOP);
+        }
+
+        fn check_or_call(&mut self) {
+            let seat = self.game.to_act;
+            let owe = self
+                .game
+                .current_bet
+                .saturating_sub(self.game.seats[seat as usize].street_bet);
+            let action = if owe == 0 {
+                CoreAction::Check
+            } else {
+                CoreAction::Call
+            };
+            apply_action(&self.table, &mut self.game, seat, action, NOW).unwrap();
+            fund::assert_conservation_er(&self.game).unwrap();
+        }
+
+        /// Play the current street with check/call, then advance through the
+        /// next street's VRF cycle. Returns false when the hand reached Settle.
+        fn play_street(&mut self, street_vrf: VrfTarget, tag: u8) -> bool {
+            let seq_before = self.game.action_seq;
+            self.check_or_call();
+            self.check_or_call();
+            if self.game.phase == PHASE_SETTLE {
+                return false;
+            }
+            assert_eq!(self.game.phase, PHASE_AWAIT_STREET);
+            assert_eq!(self.game.action_seq, seq_before + 2);
+            self.step(); // arm the street VRF
+            assert_eq!(self.game.vrf.state, VrfState::Ready);
+            self.fulfill(street_vrf, tag);
+            self.step(); // deal the street
+            assert_eq!(self.game.phase, PHASE_BETTING);
+            true
+        }
+    }
+
+    #[test]
+    fn scripted_two_player_hand_settles_end_to_end() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        assert!(w.game.button_initialized != 0);
+        let button = w.game.button;
+        assert!(button < 2);
+
+        // Hole cards must match the core DealSession exactly, and the
+        // transcript after the deal must equal the session's.
+        let inputs = {
+            let occ = occupants();
+            let mut occupants_b = [[0u8; 32]; MAX_SEATS];
+            let mut salts = [[0u8; 32]; MAX_SEATS];
+            let mut stacks = [0u64; MAX_SEATS];
+            let mut occ_ids = [0u64; MAX_SEATS];
+            for i in 0..2usize {
+                occupants_b[i] = occ[i].to_bytes();
+                salts[i] = salt_for(i as u8);
+                stacks[i] = STACK;
+                occ_ids[i] = 1;
+            }
+            let mut vrf = [[0u8; 32]; 5];
+            vrf[0] = [0x90; 32];
+            HandInputs {
+                program_id: prog(),
+                table: table_bytes(),
+                hand_id: 0,
+                hand_mask: 0b011,
+                stacks,
+                occupancy_ids: occ_ids,
+                occupants: occupants_b,
+                salts,
+                vrf,
+            }
+        };
+        let expected_button = deal::first_button(&inputs).unwrap();
+        assert_eq!(button, expected_button);
+        let preflop = forced_bet_events(&inputs.stacks, 0b011, button, SB, BB, ANTE);
+        let mut sess = DealSession::new(&inputs, button).unwrap();
+        let hole_ref = sess.deal_hole(1, &preflop);
+        assert_eq!(sess.transcript_digest(), w.game.transcript);
+        for rec in &hole_ref {
+            let seat = rec.seat.unwrap() as usize;
+            let slot = if w.hands.h[seat].cards[0] == rec.card {
+                0
+            } else {
+                1
+            };
+            assert_eq!(w.hands.h[seat].cards[slot], rec.card);
+        }
+        assert_eq!(w.hands.h[0].hand_id, 0);
+        // Forced bets posted: pot = 2 ante + SB + BB; heads-up SB = button.
+        assert_eq!(w.game.pot, 2 * ANTE + SB + BB);
+        assert_eq!(w.game.to_act, button); // heads-up preflop: button first
+
+        // Play all streets passively down to the river.
+        assert!(w.play_street(VrfTarget::Flop, 0x91));
+        assert_eq!(w.game.board_len, 3);
+        assert_eq!(w.game.street, 1);
+        assert!(w.play_street(VrfTarget::Turn, 0x92));
+        assert_eq!(w.game.board_len, 4);
+        assert!(w.play_street(VrfTarget::River, 0x93));
+        assert_eq!(w.game.board_len, 5);
+        // River betting: two checks end the hand.
+        w.check_or_call();
+        w.check_or_call();
+        assert_eq!(w.game.phase, PHASE_SETTLE);
+
+        let stacks_before: Vec<u64> = w.game.seats.iter().map(|s| s.stack).collect();
+        let in_hand: Vec<u64> = w.game.seats.iter().map(|s| s.in_hand).collect();
+        w.step(); // Settle
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        assert_eq!(w.game.hand_id, 1);
+        assert_eq!(w.game.pot, 0);
+        assert_eq!(w.game.hand_mask, 0);
+        // rake: flop was dealt, pot = 2BB + 2 ante = 220 CENT > 1BB 鈫?        // min(floor_cent(220 * 2.5%), 3BB) = 5 CENT.
+        assert_eq!(w.game.rake_total, 5 * CENT);
+        // Conservation: stacks moved only via awards/refunds/rake.
+        let total_after: u64 = w.game.seats.iter().map(|s| s.stack).sum::<u64>();
+        assert_eq!(
+            total_after + w.game.rake_total,
+            stacks_before.iter().sum::<u64>() + in_hand.iter().sum::<u64>()
+        );
+
+        // Proof entry.
+        assert_eq!(w.proof.head, 1);
+        let e = &w.proof.entries[0];
+        assert_eq!(e.hand_id, 0);
+        assert_eq!(e.status, PROOF_SETTLED);
+        assert_eq!(e.button, button);
+        assert_eq!(e.hand_mask, 0b011);
+        assert_eq!(e.rake, 5 * CENT);
+        let se = &w.secrets.entries[0];
+        assert_eq!(se.vrf_mask, 0b1111); // preflop + flop + turn + river
+        assert_eq!(se.vrf_out[0], [0x90; 32]);
+        assert_eq!(se.vrf_out[3], [0x93; 32]);
+        assert_eq!(se.salts[0], salt_for(0));
+        assert_eq!(se.salts[1], salt_for(1));
+        let delta_sum: i64 = e.deltas.iter().sum();
+        assert_eq!(delta_sum, -(5 * CENT as i64));
+        for i in 0..2usize {
+            assert_eq!(
+                e.deltas[i] as i128,
+                (w.game.seats[i].stack as i128)
+                    - (stacks_before[i] as i128)
+                    - (in_hand[i] as i128),
+                "delta == final_stack - start_of_hand_stack (seat {i})"
+            );
+        }
+
+        // Secrets zeroed.
+        assert_eq!(w.deck.vrf_out, [[0u8; 32]; 5]);
+        assert_eq!(w.deck.salts, [[0u8; 32]; MAX_SEATS]);
+        assert_eq!(w.deck.used_mask, 0);
+        assert_eq!(w.deck.draw_no, 0);
+        for i in 0..2usize {
+            assert_eq!(w.hands.h[i].cards, [0xFF; 2]);
+            assert_eq!(w.hands.h[i].salt, [0u8; 32]);
+            assert_eq!(w.hands.h[i].salt_hand_id, 0);
+        }
+        // Seat hand state cleared; salt commits cleared; next hand can start.
+        for i in 0..2usize {
+            let s = &w.game.seats[i];
+            assert_eq!(s.in_hand, 0);
+            assert_eq!(s.salt_commit, [0u8; 32]);
+            assert_eq!(s.status, fund::SEAT_SEATED);
+        }
+        assert_eq!(w.game.hands_since_commit, 1);
+    }
+
+    // --- void paths -------------------------------------------------------------
+
+    #[test]
+    fn missing_salt_voids_with_strike_and_no_refund() {
+        let mut w = World::heads_up();
+        w.step(); // 鈫?Commit
+        {
+            let mut hands = w.hands.as_mut();
+            commit_and_reveal(&mut w.game, &mut hands, 0);
+            // seat 1 commits but never reveals
+            let c = deal::salt_commitment(
+                &table_bytes(),
+                w.game.hand_id,
+                &w.game.seats[1].occupant.to_bytes(),
+                &salt_for(1),
+            );
+            w.game.seats[1].salt_commit = c;
+        }
+        w.step(); // 鈫?AwaitSeed
+        w.fulfill(VrfTarget::Preflop, 0x90);
+        w.step(); // salt check fails for seat 1 鈫?Void
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        assert_eq!(w.game.hand_id, 1);
+        assert_eq!(w.game.pot, 0);
+        assert_eq!(w.game.rake_total, 0);
+        // No bets were ever posted: stacks untouched.
+        assert_eq!(w.game.seats[0].stack, STACK);
+        assert_eq!(w.game.seats[1].stack, STACK);
+        assert_eq!(w.game.seats[1].strikes, 1); // offender
+        assert_eq!(w.game.seats[0].strikes, 0);
+        let e = &w.proof.entries[0];
+        assert_eq!(e.status, PROOF_VOID);
+        assert_eq!(e.deltas, [0i64; MAX_SEATS]);
+        let se = &w.secrets.entries[0];
+        assert_eq!(se.salts[0], salt_for(0)); // verified salt is published
+        assert_eq!(se.salts[1], [0u8; 32]); // offender's stays zero
+        assert_eq!(se.vrf_mask, 0b0001);
+    }
+
+    #[test]
+    fn vrf_exhausted_mid_hand_refunds_everything() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        // Preflop: button raises to 3BB, BB calls 鈫?AwaitStreet.
+        let button = w.game.button;
+        apply_action(&w.table, &mut w.game, button, CoreAction::RaiseTo(3 * BB), NOW).unwrap();
+        let other = 1 - button;
+        apply_action(&w.table, &mut w.game, other, CoreAction::Call, NOW).unwrap();
+        assert_eq!(w.game.phase, PHASE_AWAIT_STREET);
+        let pot_before_void = w.game.pot;
+        assert_eq!(pot_before_void, 6 * BB + 2 * ANTE);
+        w.step(); // arm Flop
+        // VRF retries exhaust 鈫?slot Void.
+        w.game.vrf = VrfSlot {
+            state: VrfState::Void,
+            target: VrfTarget::Flop,
+            attempt: 3,
+            requested_at: NOW,
+            _pad: [0; 5],
+        };
+        w.step(); // 鈫?Void
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        assert_eq!(w.game.hand_id, 1);
+        assert_eq!(w.game.pot, 0);
+        assert_eq!(w.game.rake_total, 0);
+        // Full refund: both stacks restored to the buy-in.
+        assert_eq!(w.game.seats[0].stack, STACK);
+        assert_eq!(w.game.seats[1].stack, STACK);
+        assert_eq!(w.game.seats[0].strikes, 0);
+        assert_eq!(w.game.seats[1].strikes, 0);
+        let e = &w.proof.entries[0];
+        assert_eq!(e.status, PROOF_VOID);
+        assert_eq!(e.deltas, [0i64; MAX_SEATS]);
+        assert_eq!(e.rake, 0);
+        // Both salts published (they verified at deal time), cards zeroed.
+        let se = &w.secrets.entries[0];
+        assert_eq!(se.salts[0], salt_for(0));
+        assert_eq!(se.salts[1], salt_for(1));
+        assert_eq!(w.hands.h[0].cards, [0xFF; 2]);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
+    #[test]
+    fn proof_ring_wraps_after_16_entries() {
+        let mut w = World::heads_up();
+        for hand_no in 0..17u64 {
+            assert_eq!(w.game.hand_id, hand_no);
+            w.step(); // 鈫?Commit
+            // commit-only (no reveal needed for the VrfExhausted void path)
+            for seat in 0..2usize {
+                w.game.seats[seat].salt_commit = [0xAA; 32];
+            }
+            w.step(); // 鈫?AwaitSeed
+            w.game.vrf = VrfSlot {
+                state: VrfState::Void,
+                target: VrfTarget::Preflop,
+                attempt: 3,
+                requested_at: NOW,
+                _pad: [0; 5],
+            };
+            w.step(); // 鈫?Void, proof entry written
+            assert_eq!(w.game.phase, PHASE_IDLE);
+        }
+        assert_eq!(w.proof.head, 17);
+        // Ring: index 0 was overwritten by hand 16; index 15 still holds 15.
+        assert_eq!(w.proof.entries[0].hand_id, 16);
+        assert_eq!(w.proof.entries[0].status, PROOF_VOID);
+        assert_eq!(w.proof.entries[15].hand_id, 15);
+        assert_eq!(w.proof.entries[1].hand_id, 1);
+        assert_eq!(w.game.hand_id, 17);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+}
+
+

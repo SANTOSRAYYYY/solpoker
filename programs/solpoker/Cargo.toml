@@ -14,7 +14,7 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
@@ -37,8 +37,17 @@ anchor-derive-serde = "=1.0.2"
 anchor-derive-space = "=1.0.2"
 anchor-syn = "=1.0.2"
 ephemeral-rollups-sdk = { version = "=0.17.3", features = ["anchor", "access-control", "vrf"] }
+# SPL token for TableVault = ATA(vault_auth, mint) in create_table. Pinned to
+# the same 1.0.2 line as anchor-lang; classic-token features only — Token-2022
+# mints (transfer fee / transfer hook) are rejected (design §3.2, E4 later).
+anchor-spl = { version = "=1.0.2", features = ["token", "associated_token"] }
 # Same sha2 as solpoker-core (vrf_callback_discriminator; on-chain compatible).
 sha2 = "0.10"
+# bytemuck Pod/Zeroable for the zero-copy accounts (Game/HandProof/Deck and
+# their nested Pod types). anchor 1.0's `#[zero_copy]` macro emits
+# `#[derive(::bytemuck::Pod)]`, which requires this direct dependency; the
+# version unifies with anchor-lang's own bytemuck 1.x.
+bytemuck = { version = "1", features = ["derive"] }
 # Poker state machine: VRF arm/request/fulfill/retry rules live here, chain
 # handlers only validate accounts and replay/sync the slot mirror.
 solpoker-core = { path = "../../crates/solpoker-core" }

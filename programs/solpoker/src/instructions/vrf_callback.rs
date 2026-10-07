@@ -33,8 +33,8 @@ pub fn handler(
     randomness: [u8; 32],
     callback_args: Vec<u8>,
 ) -> Result<()> {
-    let game = &mut ctx.accounts.game;
-    let deck = &mut ctx.accounts.deck;
+    let mut game = ctx.accounts.game.load_mut()?;
+    let mut deck = ctx.accounts.deck.load_mut()?;
 
     // Slot not reconstructible for a fulfillment (Idle/Ready/Fulfilled/Void)
     // or malformed args → Ok and ignore, per §9.

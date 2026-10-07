@@ -1,5 +1,78 @@
 # CHANGELOG
 
+## Stage 6：托管/资金流/游戏循环全链上线，完整对局链上验收通过（2026-10-07，devnet-tee）
+
+> 每桌独立托管（tUSDC）+ ER 游戏循环 + PER 隐私 + D8 commit 路径全部接线；
+> `node scripts/stage6-full-hand-e2e.mjs 8` 输出 `STAGE6_FULL_HAND_E2E_OK`：
+> 完整 HU 对局（入座→盐承诺→VRF_0→揭示→发牌→翻/转/河三条街→摊牌结算→
+> stand_up→commit_game→cash_out→sweep_rake→陌生人读 PlayerHand 被拒）。
+> 守恒实测：p0 19.78 + p1 20.21 + rake 0.01 = 40.00 tUSDC。
+
+### 做了什么
+
+- **程序**：资金流 `fund.rs`（CENT=10_000、buy-in 边界、I-ER/I-X 守恒断言）；
+  账户模型定稿（`state.rs`，Game/Deck/HandProof/HandSecrets 全部 zero_copy）；
+  游戏循环 `hand.rs`（引擎镜像、发牌、结算、证明环、秘密清零，与 core 逐字节
+  对齐）；`create_table` 拆分为 create_table/create_seats/create_hands（13/12/12
+  账户——31 账户单指令的 try_accounts 帧 4112B > 4096B SBF 栈，会污染 args）；
+  `delegate_table` 一次一个账户（14 个映射）；`commit_game`（D8：canonical
+  validator-scoped magic_fee_vault + CommitPayer PDA）；`admin_set_members`
+  （§11.2 过渡版 PER 成员管理，见下）。
+- **本地复现工具链 `tools/local-repro`**：devnet-tee **从不返回交易日志**
+  （成功/失败都没有，printf 调试不可能），且本机 Windows 跑不起
+  solana-test-validator（genesis.tar.bz2 解包 ACCESS_DENIED）。该工具用
+  magicblock-litesvm 0.16（agave 4.2 系 RBPF，与 TEE 同族）+ 账户 dump 合成
+  （公开账户实拉、私有账户按公开承诺公式合成），在本地跑出完整日志。
+
+### 本阶段发现并修复的问题（优化时的关键上下文）
+
+1. **CU 预算是硬约束**：advance 的 AwaitSeed→发牌路径实测 **421,246 CU**
+   （2 人桌），远超 200k 默认值。症状是 `ProgramFailedToComplete` + 零日志，
+   曾误判为栈溢出二分多日。**所有 ER 重指令（advance/act/claim_timeout/
+   request_vrf 等）必须带 `ComputeBudgetProgram.setComputeUnitLimit`**，
+   e2e 统一 1.4M；前端/agent 同样必须带。
+2. **settle.rs 死层奖金 bug**（proptest 新种子 cc 0654… 抓到）：深筹码在后街
+   check-fold（能 check 时 fold 是合法动作）会产生「贡献者全部 folded」的
+   层级，修复前兜底分支把该层分给了 fold 者。利用 eligible 掩码嵌套
+   （elig(T_{i+1}) ⊆ elig(T_i)）证明死层只构成顶部后缀，并入下层归在场玩家。
+   回归测试 `folded_excess_tier_merges_down_never_pays_folders` + 种子已入
+   `engine_props.proptest-regressions`。
+3. **PER 写执行强制**（TEE 行为变更，上周不存在）：成功执行且写了 PER 私有
+   账户的交易要求签名者是成员，否则顶层 `InvalidWritableAccount`。成员模型：
+   `deck ← [crank]`（**永不加玩家**——含全部盐与 VRF 输出）；`hand_i ←
+   [crank, 占用者_i]`（自读无害，reveal_salt 需要）。注意同一个
+   InvalidWritableAccount 也可能是「账户未委托」（本阶段被这个假象带偏过一次：
+   delegate 门控只查了 game，deck/hands 实际没委托）。
+4. **TEE preflight 与执行不一致**：simulateTransaction 拒绝非成员的可写加载，
+   执行却接受——ER 交易一律 `skipPreflight: true`。
+5. **commit 是异步的**：commit_game 的 intent bundle 落地有约 500ms 延迟，
+   cash_out 前必须轮询 L1 快照到座位 Left 可见（否则 6019 StaleSnapshot）。
+6. **DelegPayer 需要余额监控**：每张桌 14 次委托，单次约 1.6M lamports 级；
+   生产环境要有告警/自动补足。
+
+### 验收命令及结果
+
+- `cargo test --workspace`：全绿（含新回归测试与全部 proptest）。
+- `node scripts/stage6-full-hand-e2e.mjs 8`：`STAGE6_FULL_HAND_E2E_OK`
+  （每步签名在 `e2e8.log`；VRF 履行延迟稳定在 ~170–190ms）。
+
+### 关键签名（devnet / devnet-tee）
+
+- 程序部署（含 admin_set_members）：`BuGLDt69V2AvCNpfWUJizQY7iL2jzSht46CCm2NfwGvJGqh8ZRLbGGyRBz5CHgE2AHUtxA1M3ymFGQpovzXGZR3`
+- 发牌 advance（AwaitSeed→Preflop）：`61bNh5R7o5V8xpquVaL2nt1NMaq5nzFxVWMA9psakF5VqmwQeJXK5JgfmX9qxQyGjVVvHHvCa9qzaKXoevs1JsBQ`
+- 结算 advance（Settle→Idle）：`4rosaxLAVpjQ3LVLSggXmtq3oyDYTHRGpNveczLnqZHLN5E8DQaJUPjH5cV2mxoXc4oGq2FJqy3bhJYyF94eWxMH`
+- commit_game：`V5y65xwkACDmbzFFBG3pg12NGqaqHdMtt2y9gqFRdZndwn6hKQJ6v2V7NRHPdEBts1fymvHjVju6x28nuv8sp7q`
+- sweep_rake：`F6GJASzPj6rNonsZ6YM7uBxFEZDyXxJdzhDnbWaLAdhjVQTRFsHfrtX7KQVepWhPPQuKtPGJyChEZJJqnpSRUnR`
+
+### 遗留问题（Stage 6 收尾/Stage 7 接线清单）
+
+- Phase 3 正式成员轮换（take_seat/stand_up 内联 UpdateEphemeralPermissionCpi）
+  ——`admin_set_members` 是过渡版，但已作为 admin 覆盖通道保留。
+- advance 对全部 9 个 PlayerHand 的 Anchor 写回使 crank 必须是所有 hand 的
+  成员；可考虑 PlayerHand zero_copy 化消除无谓写回。
+- 9 人桌 CU 实测未做（2 人发牌 421k，预计 9 人 < 1M）。
+- 维护模式/逃生舱仍是 compile-only；混合桌与 x402 在 Stage 7/8。
+
 ## Stage 5：规则引擎与结算（solpoker-core，proptest 全绿，2026-10-06）
 
 > 纯 Rust 规则引擎全部落在 `solpoker-core`（设计 §6/§7）：牌型评估、位置与

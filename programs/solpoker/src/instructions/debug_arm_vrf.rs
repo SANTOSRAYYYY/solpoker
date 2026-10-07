@@ -15,7 +15,7 @@ use crate::state::VrfTarget;
 use crate::DebugArmVrf;
 
 pub fn handler(ctx: Context<DebugArmVrf>, target: u8) -> Result<()> {
-    let game = &mut ctx.accounts.game;
+    let mut game = ctx.accounts.game.load_mut()?;
     let target = VrfTarget::from_u8(target).ok_or(SolpokerError::VrfArmRejected)?;
 
     let mut core_slot = game

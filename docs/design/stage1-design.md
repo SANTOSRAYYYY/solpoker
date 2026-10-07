@@ -511,6 +511,15 @@ settle():
 
 作废的手牌：每人的 `in_hand` 全额退回 stack，不收 rake，HandProof 记为 Void。
 
+> **2026-10-07 修订（Stage 6 proptest 抓到真 bug）**：多人桌的贡献分层建池
+> 里，「某层的贡献者全部 folded」是可达的——深筹码可以在后街 check-fold
+> （能 check 时 fold 是合法动作），其超过在场玩家投入的层级全是 folded 的
+> 钱。此时没有 all-in 边界就没有边池：该层并入下一层归在场玩家，**绝不归
+> fold 者**（修复前兜底分支错分给 folded 座位）。eligible 掩码随层级嵌套
+> （elig(T_{i+1}) ⊆ elig(T_i)），死层只可能是顶部后缀。见
+> `crates/solpoker-core/src/settle.rs` 的 3.5 节与回归测试
+> `folded_excess_tier_merges_down_never_pays_folders`。
+
 ### 7.3 测试性质（Stage 5 的 proptest）
 
 - **守恒**：任意动作序列下，每一步之后 I-ER 都成立。
@@ -523,7 +532,16 @@ settle():
 
 ### 7.4 计算预算
 
-7 选 5 的牌型评估（21 种组合 × 2 名玩家）用不查大表的整数编码实现，目标是结算指令整体低于 200k CU（单笔交易上限为 1.4M）。Stage 5 实测，超标就把结算拆成「评估」和「分配」两条指令。发牌不做整副洗牌，每抽一张做一次 HMAC 加上可能的重抽，每张牌的开销是常数级。
+7 选 5 的牌型评估（21 种组合 × 2 名玩家）用不查大表的整数编码实现。发牌不做整副洗牌，每抽一张做一次 HMAC 加上可能的重抽，每张牌的开销是常数级。
+
+> **2026-10-07 实测修订（Stage 6）**：原「结算指令整体低于 200k CU」的预期
+> 过于乐观——advance 的 AwaitSeed→发牌路径（盐校验 + 种子推导 + 事件流
+> sha256 链 + 4 次 HMAC 抽牌 + 引擎同步）实测 **421,246 CU**（2 人桌，
+> litesvm/agave 4.2 RBPF）。超过 200k 默认预算的症状是
+> `ProgramFailedToComplete` 且 TEE 不返回任何日志。**所有 ER 游戏循环指令
+> （advance/act/claim_timeout/request_vrf 等）的调用方必须附
+> `ComputeBudgetProgram.setComputeUnitLimit`（e2e 统一 1.4M）**；9 人桌的
+> 实测待补，预计 < 1M。
 
 ---
 
