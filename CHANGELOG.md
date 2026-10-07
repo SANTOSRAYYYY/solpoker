@@ -57,11 +57,15 @@
   取证（`node scripts/privy-app-config-full.mjs`）：
   `wallet_auth: true`（SIWE 开，所以 EVM 钱包一直能连）但
   **`solana_wallet_auth: false`（SIWS 关）**；`allowed_domains: []`（域名
-  白名单为空，不是白名单问题）。修复 = Privy 后台 Login Methods → Wallet →
-  开启 Solana/SIWS 开关（客户端代码已是官方 recipe，无需改动）。另注：
-  `embedded_wallet_config.*.create_on_login` 服务端为 "off"，但客户端
-  `createOnLogin` 仍会创建内嵌 Solana 钱包（用户此前经 EVM 登录即获得过），
-  邮箱登录路径可用作即时兜底。
+  白名单为空，不是白名单问题）。**修改途径已穷尽：官方 API 无更新应用配置的
+  端点（PATCH/PUT 均 405，`scripts/privy-api-probe.mjs`）；dashboard 内部 API
+  （`/api/dashboard/apps/:id`）需要后台登录会话而非 app secret（401 Missing
+  auth token，`scripts/privy-try-enable-siws.mjs`）——即 app secret 无法修改
+  该配置，只能在后台 UI 或通过 Privy 官方支持开启。** 客户端代码已是官方
+  recipe；过渡期把 `walletChainType` 设为 `ethereum-and-solana`（c94c4cf），
+  让可用的 SIWE 路径保持可选。另注：应用处于 **development 模式**
+  （bundle 文案 "must be upgraded to production to log in new users" +
+  `max_accounts_reached`），新用户登录有配额上限，正式对外前需升级。
 - 真机 playtest（Privy 登录 + 真钱包走完整对局）——`sit_down` 的 web3.js v1
   序列化经 Privy signTransaction 的兼容性是首验项（README 待核实 #1）。
 - 多桌大厅（当前固定桌 #9）；i18n；`showWalletUIs: false` 的授权策略。
