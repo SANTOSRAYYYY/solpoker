@@ -52,6 +52,18 @@
 
 ### 遗留问题
 
+- **（2026-10-07）Agent Runner：机器人上桌打牌（Stage 8 的第一块）**。
+  `scripts/agent/` 三个模块：`eval.mjs`（7 选 5 评估器，`eval.rs` 的 JS
+  移植，自测与 Rust 语义对拍 9/9）、`strategy.mjs`（默认启发式策略：翻前
+  牌力分级 + 翻后牌力/底池赔率，BigInt 精确金额；`--strategy path.mjs`
+  可换自定义策略）、`agent.mjs`（CLI：new/fund/sit/run/stand/status，盐
+  持久化 + 崩溃重启恢复 + 自动重新鉴权）。agent 用自己密钥对直签全部 ER
+  动作（设计 §2.2）。**实链验收**：alice vs bob 在桌 #9 连续对打 6+ 手
+  （盐承诺/揭示、三条街行动、弃牌与摊牌、筹码/rake 精确守恒、
+  `--hands` 退出、`stand` 自动兑现全部通过）。**现状边界（诚实清单）**：
+  座位仍记 kind=Human（AgentProfile/agent-only 桌/同主人拦截未做）；x402
+  付费入座未做；决策模式仅 scripted，LLM/MCP 与支出上限属 Stage 8 后续。
+  详见 `scripts/agent/README.md`。
 - **（2026-10-07）admin_force_stand_up：运营侧清座（弃置座位回收）**。用户问
   「桌子卡住要不要重部署」——重部署只换代码、不动账户数据（卡住的座位在
   Game 账户里），所以加了正确的工具：`admin_force_stand_up(idx)`（ER，
