@@ -40,12 +40,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
           theme: "dark",
           accentColor: "#9945FF",
           showWalletLoginFirst: true,
-          // 2026-10-07：官方 recipe 用 'solana-only'，但本应用后台的
-          // solana_wallet_auth = false（SIWS 未开启，服务端探针确认），
-          // solana-only 会让弹窗只剩不可用的选项。改为双链：EVM 钱包登录
-          // （SIWE，已开启）仍可作为可玩路径——登录后 Privy 会为该账号派生
-          // 一个 Solana 钱包。后台开启 SIWS 后可改回 'solana-only'。
-          walletChainType: "ethereum-and-solana",
+          // 与后台配置一致（2026-10-07 用户开启后）：服务端 solana_wallet_auth
+          // = true、wallet_auth（EVM）= false → 弹窗只列 Solana 钱包。官方
+          // recipe 同样是 solana-only。
+          walletChainType: "solana-only",
         },
         externalWallets: {
           solana: {

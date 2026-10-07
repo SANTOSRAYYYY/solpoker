@@ -562,13 +562,6 @@ export default function Home() {
                     <span className="ok-text">TEE 已验证 ✓</span>
                   )}
                 </div>
-                {!directWallet &&
-                  walletOptions.some((o) => o.kind === "derived" && o.address === walletAddr) && (
-                    <p className="error-text">
-                      当前选中的是 EVM 派生 SVM 地址，不是你自己的 Solana 钱包——在状态条左侧换一个，
-                      或断开改用直连钱包。
-                    </p>
-                  )}
                 {tee.phase === "error" && (
                   <p className="error-text">TEE 连接失败：{tee.message}（点按钮重试）</p>
                 )}

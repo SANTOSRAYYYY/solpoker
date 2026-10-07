@@ -37,12 +37,13 @@ export function useSolanaWallet(): ConnectedStandardSolanaWallet | null {
 }
 
 // ---------------------------------------------------------------------------
-// 钱包选择器（2026-10-07 用户反馈）：Privy 会给 EVM 外部钱包派生一个 SVM 钱包
-// ——那不是用户自己的 Solana 钱包。把全部连接的钱包列出来让用户选，默认优先
-// 真 Solana 钱包（Phantom/Solflare/Backpack…），其次内嵌，最后 EVM 派生。
+// 钱包分类（2026-10-07 修订）：/solana 钩子返回的全部是 Solana 钱包。
+// 旧的名字白名单（Phantom/Solflare/…）会把安装量小的钱包（OKX、Bitget、
+// 自建连接器等）误标为「EVM 派生」。SIWE 已关闭（wallet_auth=false）后不再
+// 存在 EVM 派生路径，分类简化为「Privy 内嵌 vs 外部 Solana 钱包」。
 // ---------------------------------------------------------------------------
 
-export type WalletKind = "embedded" | "solana" | "derived";
+export type WalletKind = "embedded" | "solana";
 
 export interface WalletOption {
   address: string;
@@ -52,26 +53,13 @@ export interface WalletOption {
   wallet: ConnectedStandardSolanaWallet;
 }
 
-const SOLANA_WALLET_NAMES = new Set([
-  "Phantom",
-  "Solflare",
-  "Backpack",
-  "Glow",
-  "Slope",
-  "Torus",
-]);
-
 export function classifyWallet(w: ConnectedStandardSolanaWallet): WalletKind {
-  const name = w.standardWallet.name;
-  if (name === "Privy") return "embedded";
-  if (SOLANA_WALLET_NAMES.has(name)) return "solana";
-  return "derived";
+  return w.standardWallet.name === "Privy" ? "embedded" : "solana";
 }
 
 const KIND_LABEL: Record<WalletKind, string> = {
   embedded: "Privy 内嵌钱包",
   solana: "外部 Solana 钱包",
-  derived: "EVM 派生 SVM（非你的 Solana 钱包）",
 };
 
 export function useWalletOptions(): WalletOption[] {
@@ -88,9 +76,9 @@ export function useWalletOptions(): WalletOption[] {
   });
 }
 
-/** 默认选择：真 Solana 钱包 > 内嵌 > EVM 派生。 */
+/** 默认选择：外部 Solana 钱包 > 内嵌（用户自己的钱包优先）。 */
 export function defaultWalletAddress(options: WalletOption[]): string | null {
-  const rank: Record<WalletKind, number> = { solana: 0, embedded: 1, derived: 2 };
+  const rank: Record<WalletKind, number> = { solana: 0, embedded: 1 };
   const sorted = [...options].sort((a, b) => rank[a.kind] - rank[b.kind]);
   return sorted[0]?.address ?? null;
 }
