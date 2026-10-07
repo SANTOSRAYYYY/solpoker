@@ -535,7 +535,11 @@ export default function HistoryPage() {
                           button: entry.button,
                           occupancyIds: entry.occupancyIds.map((x) => x.toString()),
                           occupants: replayEntry.occupants.map((o) =>
-                            o ? o.toBase58() : null
+                            o
+                              ? [...o.toBytes()]
+                                  .map((b) => b.toString(16).padStart(2, "0"))
+                                  .join("")
+                              : null
                           ),
                           saltDigest: [...replayEntry.saltDigest]
                             .map((b) => b.toString(16).padStart(2, "0"))
@@ -647,35 +651,33 @@ export default function HistoryPage() {
                 )}
               </div>
 
-              {/* 历史手牌整手复算：为什么还差一步 */}
+              {/* 现状说明：能算什么、还差什么 */}
               <div className="panel p-5">
-                <SectionTitle zh="历史手牌整手复算：为什么还差一步" en="What's still missing" />
+                <SectionTitle zh="能算什么、还差什么" en="Coverage" />
                 <p className="text-[12.5px] leading-relaxed text-mist-dim">
-                  整手 52 张的复算输入除了 VRF 输出与盐（HandSecrets 有）之外，还有两样东西：
-                  <span className="text-mist">开局筹码快照</span>与
-                  <span className="text-mist">下注事件流</span>（盲注、每次行动都进
-                  transcript，而 transcript_digest 是每张牌的抽取输入）。
-                  v1 的 HandProof 只存了事件流的**最终哈希**（design §8.7 的记档偏差："v1
-                  不存完整事件字节"），所以从链上现在的账户里**推不回**这两样 ——
-                  哈希不可逆，这不是实现没做，是数据没上链。
+                  上面的「整手复算」用的是链上 HandReplay（§8.7）：程序在发牌时逐街记录
+                  <span className="text-mist">街首 transcript 摘要</span>，手牌结束时写入
+                  <span className="text-mist">salt_digest / occupants / VRF attempt</span>；
+                  配合 HandSecrets 的盐与 VRF 输出，任何人就能把每一张牌重抽一遍并与链上 proof 对账。
+                  实测（桌 #14 手 #1，已结算）：**逐张 9/9 通过**。
                 </p>
                 <p className="mt-2 text-[12.5px] leading-relaxed text-mist-dim">
-                  两条补齐路线（都需要你拍板）：
-                  <br />· <span className="text-mist">A. 记录器</span>：让 crank（或第三方观察者）
-                  在对局进行时把每手的这些输入写成 JSON 证据包；谁都能自己跑一个，用本页同一引擎复算，
-                  并与链上 HandProof / HandSecrets 逐字段对锚（记录器无法造假，只能选择不给你数据）。
-                  <br />· <span className="text-mist">B. 程序升级</span>：把开局筹码与事件流摘要进
-                  proof entry（设计 §8.7 本来就打算公开它们），链上自带全部复算输入。
+                  还差的：① <span className="text-mist">replay 环之外的旧手牌</span>（环长 8 手，
+                  更早的手牌只有最终哈希，无法整手复算）；②
+                  <span className="text-mist">「事件流 → transcript_final」这一步</span> ——
+                  下注序列不公开上链（事件流无界），所以无法独立验证某条 transcript 就是真实行动序列；
+                  能验证的是「VRF + 盐 + 每街前置摘要 → 这 52 张牌」，加上玩家自己的盐承诺
+                  （当前手可与链上逐座比对）。要把最后一步也补上，需要把事件流也存证（另行设计）。
                 </p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <div className="rounded-lg border border-mint/25 bg-mint/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 已能验证：引擎自检（6 向量）· 守恒 · 盐摘要 · 种子 · 当前手承诺
+                    ✓ 整手复算（replay 环内 8 手）· 守恒 · 盐摘要与逐街种子 · 当前手盐承诺
                   </div>
                   <div className="rounded-lg border border-warn/25 bg-warn/5 p-3 text-[12px] text-mist-dim">
-                    ⏳ 待补齐：开局筹码 + 事件流（记录器 或 程序升级）
+                    ⏳ 环外旧手牌 · 事件流存证（设计待定）
                   </div>
                   <div className="rounded-lg border border-accent-500/25 bg-accent-500/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 链上锚点齐备：board / hole / deltas / transcript_final / salts / VRF
+                    ✓ 引擎自检：6/6 向量与 Rust/Python 逐字节一致
                   </div>
                 </div>
               </div>
