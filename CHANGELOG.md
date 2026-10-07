@@ -1,5 +1,62 @@
 # CHANGELOG
 
+## Stage 7（第一段）：前端对局 + crank 服务 + PER 成员轮换正式化（2026-10-07，devnet-tee）
+
+> 浏览器只签玩家动作、crank 驱动阶段机的最终架构全部打通：
+> `node scripts/stage7-player-sim.mjs 9` 输出 `STAGE7_PLAYER_SIM_OK`
+> （纯玩家流程：sit_down → crank take_seat → 盐承诺/揭示 → crank 发牌/三条街
+> → 结算 → stand_up → crank commit_game → cash_out，全程除玩家动作外零人工）。
+
+### 做了什么
+
+- **程序（3f3d5ad）**：§11.2 落地——`perms.rs` 共享 CPI 助手；take_seat 把
+  占用者钱包加入自己 hand 的 PER 成员（`[admin, occupant]`），stand_up 在
+  手牌边界恢复 `[admin]`；init_permissions 创建时基线 members=[admin]。
+  **普通玩家不再需要任何 admin 引导操作**（admin_set_members 保留为覆盖
+  通道）。e2e 在新桌（#9）全流程复验通过。
+- **crank 服务 `scripts/crank.mjs`**：轮询驱动——take_seat（比较账本与
+  Game 的 occupancy_id）、advance（VRF 街按状态门控：Idle 时 advance 负责
+  arm、Ready/Pending 等履行、Fulfilled 时发牌）、request_vrf、claim_timeout
+  （过 action_deadline）、commit_game（hands_since_commit 达阈值）。附
+  `fund <wallet>` 子命令（devnet 新钱包发 SOL + tUSDC）。
+- **前端 `web/`**：牌桌页（Privy 钱包 → TEE attestation 门控 → 入座 → 桌面
+  → 行动区 → 兑现）、信任页（§16 逐项证据链接）；`lib/` 客户端层——原始
+  字节 Game 解码（anchor-ts zero-copy 枚举解码 bug 绕行）、session key
+  （D2/X10：sit_down 一笔签名授权 + 预充 0.001 SOL，此后动作零弹窗）、自动
+  盐流程（sessionStorage 按 hand_id 持久化）、ER 交易纪律（1.4M CU ix +
+  skipPreflight）、1.5s 轮询（本机无 WebSocket 通道，§13 订阅降级为轮询，
+  已记偏差）。
+- **脚本**：`stage7-player-sim.mjs`（上述纯玩家验收）、`install-idl.mjs`
+  （anchor 1.0.2 `idl build` 只输出到 stdout，提取写入 target/idl）。
+
+### 本阶段发现并修复的问题
+
+1. **crank 死锁（VRF 街 arming）**：advance 门控最初是「VRF 未履行就不推进」，
+   但 AwaitStreet/AwaitRunout 的 VRF 恰恰靠 advance 在 Idle 状态 arm——改为
+   按 vrfState 精确门控（Idle 推进 arm、Ready/Pending 等、Fulfilled 推进发牌）。
+2. **commit_game 的 BadFeeVault（6027）**：magic_fee_vault 的 canonical 派生
+   在 **DLP** 下（`["magic-fee-vault", TEE_VALIDATOR]`），不是 MAGIC_PROGRAM。
+3. **快照时效判定**：上一手的 L1 快照座位同样是 Left，单看 status 会误判为
+   已落地——必须比 occupancy_id（当前账本 vs 快照）。
+4. anchor-ts 的 u64 参数必须是 BN（native BigInt 报
+   `src.toArrayLike is not a function`）。
+
+### 验收命令及结果
+
+- `cargo test --workspace`：全绿。
+- `node scripts/stage6-full-hand-e2e.mjs 9`：`STAGE6_FULL_HAND_E2E_OK`
+  （成员轮换正式化后的全流程复验）。
+- crank + `node scripts/stage7-player-sim.mjs 9`：`STAGE7_PLAYER_SIM_OK`。
+- `cd web && npm run build`：通过（/ 与 /trust 静态预渲染）；浏览器实测：
+  牌桌页渲染、Privy 登录框（深色）弹出、信任页渲染，全部正常。
+
+### 遗留问题
+
+- 真机 playtest（Privy 登录 + 真钱包走完整对局）——`sit_down` 的 web3.js v1
+  序列化经 Privy signTransaction 的兼容性是首验项（README 待核实 #1）。
+- 多桌大厅（当前固定桌 #9）；i18n；`showWalletUIs: false` 的授权策略。
+- crank 生产化：进程守护、DelegPayer 余额监控、错误告警。
+
 ## Stage 6：托管/资金流/游戏循环全链上线，完整对局链上验收通过（2026-10-07，devnet-tee）
 
 > 每桌独立托管（tUSDC）+ ER 游戏循环 + PER 隐私 + D8 commit 路径全部接线；

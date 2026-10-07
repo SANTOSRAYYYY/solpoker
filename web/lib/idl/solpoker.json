@@ -1,0 +1,5380 @@
+{
+  "address": "EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf",
+  "metadata": {
+    "name": "solpoker",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "solpoker: private heads-up NLHE on Solana (MagicBlock Private Ephemeral Rollup)"
+  },
+  "instructions": [
+    {
+      "name": "act",
+      "docs": [
+        "§7.1（ER；occupant 或 session key）：fold/check/call/bet/raise/all-in。",
+        "参数带 hand_id + action_seq（X8）。断言 I-ER。"
+      ],
+      "discriminator": [
+        114,
+        158,
+        229,
+        112,
+        242,
+        50,
+        227,
+        5
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        },
+        {
+          "name": "hand_id",
+          "type": "u64"
+        },
+        {
+          "name": "action_seq",
+          "type": "u32"
+        },
+        {
+          "name": "action",
+          "type": {
+            "defined": {
+              "name": "ActionArg"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "admin_set_members",
+      "docs": [
+        "admin_set_members（§11.2 过渡版，ER）：更新 Deck/PlayerHand 的 PER",
+        "成员列表；target_index 0 = deck，1..=9 = hand[i-1]。"
+      ],
+      "discriminator": [
+        142,
+        44,
+        84,
+        14,
+        191,
+        53,
+        179,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "target"
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "commit_payer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "target_index",
+          "type": "u8"
+        },
+        {
+          "name": "member_pubkeys",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
+      "name": "advance",
+      "docs": [
+        "Deterministic phase machine (§6.1/§6.2, ER, permissionless). One",
+        "transition per call: freeze hand_mask → arm VRF_0 → verify salts & deal",
+        "hole → deal streets/runout → settle or void → HandProof + zero secrets.",
+        "Never issues VRF CPIs (V1 拆分: request_vrf/retry_vrf do)."
+      ],
+      "discriminator": [
+        7,
+        56,
+        108,
+        201,
+        36,
+        20,
+        57,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deck",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_proof",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_secrets",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  99,
+                  114,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand0",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand1",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand2",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  2
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand3",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  3
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand4",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  4
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand5",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  5
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand6",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand7",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  7
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand8",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  8
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "caller",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "hand_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "apply_deposits",
+      "docs": [
+        "§5.2.4（ER，permissionless）：补码入账，超额部分记 owed。断言 I-ER。"
+      ],
+      "discriminator": [
+        13,
+        98,
+        219,
+        98,
+        5,
+        205,
+        119,
+        106
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger"
+        },
+        {
+          "name": "caller",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "audit_table",
+      "docs": [
+        "§5.4（L1，permissionless，只读）：校验 I-X 跨层守恒并报告盈余。"
+      ],
+      "discriminator": [
+        212,
+        146,
+        85,
+        37,
+        126,
+        20,
+        205,
+        179
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault"
+        },
+        {
+          "name": "seat0",
+          "docs": [
+            "discriminator/长度由 fund::read_seat_ledger_l1 在 handler 里校验。",
+            "不用 `Account<SeatLedger>`：9 份 borsh 反序列化会把 try_accounts 的",
+            "栈帧顶过 SBF 4096 字节预算。"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat1",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat2",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  2
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat3",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  3
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat4",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  4
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat5",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  5
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat6",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat7",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  7
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat8",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  8
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "caller",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cash_out",
+      "docs": [
+        "§5.2.6（L1，permissionless）：按 Game 快照付 owed − paid 到",
+        "ATA(payout, mint)；条件满足时释放座位。断言 I-L1、I-B。"
+      ],
+      "discriminator": [
+        1,
+        110,
+        57,
+        58,
+        159,
+        157,
+        243,
+        192
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "docs": [
+            "discriminator、borsh 均由 fund::read_game_snapshot 手工校验。委托期间",
+            "数据是最后一次 commit 的快照。"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "payout_ata",
+          "docs": [
+            "X7：只付 ATA(SeatLedger.payout, mint)。"
+          ],
+          "writable": true
+        },
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "claim_timeout",
+      "docs": [
+        "§6.3（ER，permissionless，截止时间过后）：能 check 就 check，否则",
+        "fold；记超时次数。断言 I-ER。"
+      ],
+      "discriminator": [
+        130,
+        234,
+        45,
+        53,
+        120,
+        90,
+        86,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "caller",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "hand_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "commit_game",
+      "docs": [
+        "手与手之间把 Game + HandProof commit 回 L1（§10 / D8，ER，",
+        "permissionless；intent payer = 委托的 CommitPayer + canonical",
+        "magic_fee_vault）。"
+      ],
+      "discriminator": [
+        212,
+        148,
+        56,
+        92,
+        60,
+        28,
+        179,
+        66
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_proof",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_secrets",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  99,
+                  114,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_payer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_fee_vault",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "commit_salt",
+      "docs": [
+        "§8.2（ER；occupant 或 session key）：提交本手（phase Idle/Commit）或",
+        "下一手（进行中，写 next_salt_commit）的盐承诺。"
+      ],
+      "discriminator": [
+        179,
+        59,
+        159,
+        178,
+        197,
+        154,
+        191,
+        162
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        },
+        {
+          "name": "hand_id",
+          "type": "u64"
+        },
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_hands",
+      "docs": [
+        "§11.1 第 1 步补（L1）：创建 PlayerHand×9（拆自 create_table，同上）。"
+      ],
+      "discriminator": [
+        159,
+        0,
+        0,
+        218,
+        191,
+        242,
+        124,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand0",
+          "writable": true
+        },
+        {
+          "name": "hand1",
+          "writable": true
+        },
+        {
+          "name": "hand2",
+          "writable": true
+        },
+        {
+          "name": "hand3",
+          "writable": true
+        },
+        {
+          "name": "hand4",
+          "writable": true
+        },
+        {
+          "name": "hand5",
+          "writable": true
+        },
+        {
+          "name": "hand6",
+          "writable": true
+        },
+        {
+          "name": "hand7",
+          "writable": true
+        },
+        {
+          "name": "hand8",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_seats",
+      "docs": [
+        "§11.1 第 1 步补（L1）：创建 SeatLedger×9（拆自 create_table——",
+        "try_accounts 帧溢出修复，见 create_table.rs 模块头）。"
+      ],
+      "discriminator": [
+        185,
+        216,
+        95,
+        118,
+        87,
+        253,
+        35,
+        2
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat0",
+          "writable": true
+        },
+        {
+          "name": "seat1",
+          "writable": true
+        },
+        {
+          "name": "seat2",
+          "writable": true
+        },
+        {
+          "name": "seat3",
+          "writable": true
+        },
+        {
+          "name": "seat4",
+          "writable": true
+        },
+        {
+          "name": "seat5",
+          "writable": true
+        },
+        {
+          "name": "seat6",
+          "writable": true
+        },
+        {
+          "name": "seat7",
+          "writable": true
+        },
+        {
+          "name": "seat8",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_table",
+      "docs": [
+        "§11.1 第 1 步（L1）：创建一张桌的全部账户。"
+      ],
+      "discriminator": [
+        214,
+        142,
+        131,
+        250,
+        242,
+        83,
+        135,
+        185
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "args.table_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_auth",
+          "docs": [
+            "这里传入是为了 ATA 派生与 bump 记录。"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "TableVault = ATA(vault_auth, mint)（§3.1，永不委托）。Anchor 的",
+            "associated_token init 糖通过 ATA 程序 CPI 创建。"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "vault_auth"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "mint 校验：`Account<Mint>`（anchor-spl classic token）的 owner 检查即",
+            "要求 owner == spl_token::ID —— Token-2022 mint（可能带转账手续费或",
+            "transfer hook 扩展）在这里直接被拒（§3.2 mint 注记；Token-2022 支持",
+            "是 E4 之后再做）。"
+          ]
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_proof",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  111,
+                  102
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand_secrets",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  99,
+                  114,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deck",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  0,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "commit_payer",
+          "docs": [
+            "租金/费用——ER 规则要求被修改的付款账户必须是委托账户）。账户由",
+            "handler 创建（create_account + 注资；把这份 init 闭包留在",
+            "try_accounts 里会让生成的帧超过 SBF 4096 字节预算——只差 8 字节，"
+          ],
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "docs": [
+            "过渡期门禁：签名者即 Table.admin（生产鉴权改走 ProgramConfig.admin，",
+            "后续 Phase 接入）。"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "CreateTableArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "debug_arm_vrf",
+      "docs": [
+        "Test harness（Stage 2/3 保留，后续 Phase 移除）：ER 上手动 arm VRF",
+        "槽位（生产路径是 advance 的 phase 机决定 arm）。"
+      ],
+      "discriminator": [
+        58,
+        46,
+        195,
+        13,
+        117,
+        132,
+        198,
+        74
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "delegate_table",
+      "docs": [
+        "§11.1 第 2 步（L1）：每次调用委托一个常驻账户（del_index 选择：",
+        "0=CommitPayer、1=Game、2=HandProof、3=HandSecrets、4=Deck、",
+        "5..=13=PlayerHand[i-5]）。建桌脚本在一笔交易里连发 14 次。"
+      ],
+      "discriminator": [
+        161,
+        66,
+        67,
+        113,
+        58,
+        219,
+        238,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deleg_payer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "buffer_target",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "target"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                201,
+                95,
+                181,
+                91,
+                58,
+                106,
+                144,
+                117,
+                233,
+                207,
+                222,
+                110,
+                213,
+                28,
+                101,
+                246,
+                46,
+                148,
+                9,
+                39,
+                209,
+                23,
+                190,
+                132,
+                241,
+                84,
+                18,
+                175,
+                156,
+                57,
+                67,
+                132
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_target",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "target"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_target",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "target"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "target",
+          "docs": [
+            "(table, epoch, del_index) 重建并断言。委托后 owner 移交 delegation",
+            "program，因此必须是不序列化的 UncheckedAccount（见宏的 `del` 约束）。"
+          ],
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner_program",
+          "address": "EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "validator",
+          "type": "pubkey"
+        },
+        {
+          "name": "del_index",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "init_config",
+      "docs": [
+        "一次性全局初始化（§11.1 前置）：ProgramConfig + DelegPayer。"
+      ],
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "deleg_payer",
+          "docs": [
+            "的 L1 付款人。Anchor 的 `init` 会把 owner 设为本程序（那样它不能作为",
+            "system transfer/create_account 的付款来源），所以账户在 handler 里用",
+            "系统 CPI 手工创建（owner = system program）。"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "tee_validator",
+          "type": "pubkey"
+        },
+        {
+          "name": "gateway",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "init_permissions",
+      "docs": [
+        "§11.1 第 3 步（ER）：创建 Deck + PlayerHand×9 的 PER 私有权限（幂等）。"
+      ],
+      "discriminator": [
+        247,
+        240,
+        133,
+        29,
+        26,
+        176,
+        185,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deck",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand0",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand1",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  1
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand2",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  2
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand3",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  3
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand4",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  4
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand5",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  5
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand6",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand7",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  7
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "hand8",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  97,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  8
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission_deck",
+          "docs": [
+            "做（10 组 permission seeds 约束会把 try_accounts 的栈帧顶过 SBF",
+            "4096 字节预算；校验逻辑不变，只是换了位置）。"
+          ],
+          "writable": true
+        },
+        {
+          "name": "permission_hand0",
+          "writable": true
+        },
+        {
+          "name": "permission_hand1",
+          "writable": true
+        },
+        {
+          "name": "permission_hand2",
+          "writable": true
+        },
+        {
+          "name": "permission_hand3",
+          "writable": true
+        },
+        {
+          "name": "permission_hand4",
+          "writable": true
+        },
+        {
+          "name": "permission_hand5",
+          "writable": true
+        },
+        {
+          "name": "permission_hand6",
+          "writable": true
+        },
+        {
+          "name": "permission_hand7",
+          "writable": true
+        },
+        {
+          "name": "permission_hand8",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "commit_payer",
+          "docs": [
+            "被扣款的付款人必须是委托账户，未委托的 deployer 会被拒）。"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "process_undelegation",
+      "discriminator": [
+        196,
+        28,
+        41,
+        206,
+        48,
+        37,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "base_account",
+          "writable": true
+        },
+        {
+          "name": "buffer",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  110,
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  101,
+                  45,
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_account"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                181,
+                183,
+                0,
+                225,
+                242,
+                87,
+                58,
+                192,
+                204,
+                6,
+                34,
+                1,
+                52,
+                74,
+                207,
+                151,
+                184,
+                53,
+                6,
+                235,
+                140,
+                229,
+                25,
+                152,
+                204,
+                98,
+                126,
+                24,
+                147,
+                128,
+                167,
+                62
+              ]
+            }
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "account_seeds",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_vrf",
+      "docs": [
+        "Permissionless VRF request (ER). Only succeeds when `Game.vrf` is Ready;",
+        "transitions the slot to Pending atomically with the CPI."
+      ],
+      "discriminator": [
+        5,
+        87,
+        79,
+        152,
+        164,
+        176,
+        190,
+        226
+      ],
+      "accounts": [
+        {
+          "name": "table"
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Outer transaction signer paying the request (ER queue is free; the",
+            "account still must be a signer for the VRF program's payer meta)."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vrf",
+          "accounts": [
+            {
+              "name": "oracle_queue",
+              "docs": [
+                "VRF oracle queue. Devnet/mainnet ER queue:",
+                "5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc; local:",
+                "Sc9MJUngNbQXSXGP3F67KvKwVnhaYn6kcioxXNVowYT.",
+                "validates it against its own queue records. Must be WRITABLE — the",
+                "queue appends the request (first on-chain run 2026-10-06 failed with",
+                "\"unauthorized writable account\" until `mut` was added)."
+              ],
+              "writable": true
+            },
+            {
+              "name": "program_identity",
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      105,
+                      100,
+                      101,
+                      110,
+                      116,
+                      105,
+                      116,
+                      121
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "vrf_program",
+              "address": "Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz"
+            },
+            {
+              "name": "slot_hashes",
+              "address": "SysvarS1otHashes111111111111111111111111111"
+            },
+            {
+              "name": "system_program",
+              "address": "11111111111111111111111111111111"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "retry_vrf",
+      "docs": [
+        "Permissionless retry after `vrf_timeout_s` elapsed since `requested_at`.",
+        "Increments the attempt and re-requests with a fresh caller_seed."
+      ],
+      "discriminator": [
+        247,
+        198,
+        70,
+        200,
+        136,
+        177,
+        124,
+        197
+      ],
+      "accounts": [
+        {
+          "name": "table"
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vrf",
+          "accounts": [
+            {
+              "name": "oracle_queue",
+              "docs": [
+                "request (keepers use the table's configured queue). WRITABLE, see",
+                "RequestVrfAccounts."
+              ],
+              "writable": true
+            },
+            {
+              "name": "program_identity",
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      105,
+                      100,
+                      101,
+                      110,
+                      116,
+                      105,
+                      116,
+                      121
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "vrf_program",
+              "address": "Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz"
+            },
+            {
+              "name": "slot_hashes",
+              "address": "SysvarS1otHashes111111111111111111111111111"
+            },
+            {
+              "name": "system_program",
+              "address": "11111111111111111111111111111111"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "reveal_salt",
+      "docs": [
+        "§8.2 / D6（ER；occupant 或 session key）：揭示盐，只写本人 PlayerHand。"
+      ],
+      "discriminator": [
+        11,
+        109,
+        254,
+        128,
+        82,
+        47,
+        99,
+        12
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger"
+        },
+        {
+          "name": "player_hand",
+          "writable": true
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        },
+        {
+          "name": "hand_id",
+          "type": "u64"
+        },
+        {
+          "name": "salt",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "revoke_session",
+      "docs": [
+        "D2（L1，占用者）：撤销 session_key。"
+      ],
+      "discriminator": [
+        86,
+        92,
+        198,
+        120,
+        144,
+        2,
+        7,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_session",
+      "docs": [
+        "D2（L1，占用者）：设置/替换 session_key 与有效期（≤ now + 7 天）。"
+      ],
+      "discriminator": [
+        156,
+        135,
+        126,
+        111,
+        184,
+        206,
+        194,
+        141
+      ],
+      "accounts": [
+        {
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "session_key",
+          "type": "pubkey"
+        },
+        {
+          "name": "session_expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "sit_down",
+      "docs": [
+        "§5.2.1（L1）：入座。占用者 ATA → TableVault，写 SeatLedger，",
+        "deposited_total += buy_in。断言 I-L1。"
+      ],
+      "discriminator": [
+        17,
+        21,
+        140,
+        237,
+        149,
+        56,
+        191,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "player_ata",
+          "docs": [
+            "占用者本人的 ATA（资金来源）。"
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        },
+        {
+          "name": "buy_in",
+          "type": "u64"
+        },
+        {
+          "name": "session_key",
+          "type": "pubkey"
+        },
+        {
+          "name": "session_expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "stand_up",
+      "docs": [
+        "§5.2.5（ER；session key 或占用者签名）：手牌中 = 立即 fold；手牌边界",
+        "= owed += stack、状态 Left、安排 commit。断言 I-ER。"
+      ],
+      "discriminator": [
+        0,
+        17,
+        202,
+        143,
+        95,
+        210,
+        199,
+        229
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger"
+        },
+        {
+          "name": "player_hand"
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "commit_payer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "sweep_rake",
+      "docs": [
+        "§5.2.7（L1，permissionless）：按快照把 rake 划到 treasury ATA。",
+        "断言 I-L1、I-B。"
+      ],
+      "discriminator": [
+        8,
+        64,
+        18,
+        95,
+        96,
+        177,
+        71,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "table",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "treasury_ata",
+          "docs": [
+            "ATA(ProgramConfig.treasury, mint)。"
+          ],
+          "writable": true
+        },
+        {
+          "name": "caller",
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "take_seat",
+      "docs": [
+        "§5.2.2（ER，permissionless）：读 SeatLedger 克隆，把买入计入筹码。",
+        "断言 I-ER。"
+      ],
+      "discriminator": [
+        7,
+        166,
+        54,
+        232,
+        71,
+        160,
+        121,
+        122
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger",
+          "docs": [
+            "seeds 钉死；owner/discriminator/字段由 fund::read_seat_ledger_clone",
+            "手工校验。"
+          ]
+        },
+        {
+          "name": "player_hand",
+          "docs": [
+            "PlayerHand PDA；只读校验「已清零」+ §11.2 权限更新的被权限账户。"
+          ]
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "commit_payer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  109,
+                  105,
+                  116,
+                  95,
+                  112,
+                  97,
+                  121,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "address": "MagicVau1t999999999999999999999999999999999"
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "caller",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "top_up",
+      "docs": [
+        "§5.2.3（L1）：占用者本人补码，deposited_total += amount。断言 I-L1。"
+      ],
+      "discriminator": [
+        236,
+        225,
+        96,
+        9,
+        60,
+        106,
+        77,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "player_ata",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "vrf_callback",
+      "docs": [
+        "VRF fulfillment callback. Authenticated by the scoped VRF identity PDA",
+        "(injected by `#[vrf_callback]`); stale/mismatched requests are ignored",
+        "with `Ok(())`. Only writes randomness into Deck — never logs it."
+      ],
+      "discriminator": [
+        248,
+        224,
+        55,
+        227,
+        56,
+        10,
+        108,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "vrf_program_identity",
+          "docs": [
+            "Scoped VRF identity PDA, bound to this program. Its presence as a signer proves",
+            "the callback was issued by the VRF program for this program."
+          ],
+          "signer": true
+        },
+        {
+          "name": "deck",
+          "docs": [
+            "Private deck; only randomness lands here. Runs on the ER, where the",
+            "clone is owned by this program (see RequestVrf note)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "game",
+          "docs": [
+            "Pending request slot to match against callback_args."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "randomness",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "callback_args",
+          "type": "bytes"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Deck",
+      "discriminator": [
+        192,
+        215,
+        78,
+        133,
+        216,
+        161,
+        59,
+        154
+      ]
+    },
+    {
+      "name": "Game",
+      "discriminator": [
+        27,
+        90,
+        166,
+        125,
+        74,
+        100,
+        121,
+        18
+      ]
+    },
+    {
+      "name": "HandProof",
+      "discriminator": [
+        98,
+        52,
+        51,
+        81,
+        99,
+        231,
+        241,
+        153
+      ]
+    },
+    {
+      "name": "HandSecrets",
+      "discriminator": [
+        26,
+        68,
+        107,
+        232,
+        164,
+        235,
+        93,
+        190
+      ]
+    },
+    {
+      "name": "PlayerHand",
+      "discriminator": [
+        16,
+        240,
+        39,
+        61,
+        10,
+        73,
+        250,
+        160
+      ]
+    },
+    {
+      "name": "ProgramConfig",
+      "discriminator": [
+        196,
+        210,
+        90,
+        231,
+        144,
+        149,
+        140,
+        63
+      ]
+    },
+    {
+      "name": "SeatLedger",
+      "discriminator": [
+        96,
+        10,
+        227,
+        182,
+        63,
+        159,
+        59,
+        124
+      ]
+    },
+    {
+      "name": "Table",
+      "discriminator": [
+        34,
+        100,
+        138,
+        97,
+        236,
+        129,
+        230,
+        112
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "VrfNotArmed",
+      "msg": "vrf"
+    },
+    {
+      "code": 6001,
+      "name": "VrfNotPending",
+      "msg": "vrf"
+    },
+    {
+      "code": 6002,
+      "name": "VrfTimeoutNotElapsed",
+      "msg": "vrf"
+    },
+    {
+      "code": 6003,
+      "name": "VrfArmRejected",
+      "msg": "vrf"
+    },
+    {
+      "code": 6004,
+      "name": "ValidatorNotAllowed",
+      "msg": "validator"
+    },
+    {
+      "code": 6005,
+      "name": "Unauthorized",
+      "msg": "admin"
+    },
+    {
+      "code": 6006,
+      "name": "TableNotActive",
+      "msg": "state"
+    },
+    {
+      "code": 6007,
+      "name": "KindNotAllowed",
+      "msg": "table"
+    },
+    {
+      "code": 6008,
+      "name": "SeatNotEmpty",
+      "msg": "seat"
+    },
+    {
+      "code": 6009,
+      "name": "NotSeated",
+      "msg": "seat"
+    },
+    {
+      "code": 6010,
+      "name": "SeatMismatch",
+      "msg": "seat"
+    },
+    {
+      "code": 6011,
+      "name": "SeatNotClean",
+      "msg": "seat"
+    },
+    {
+      "code": 6012,
+      "name": "SeatInHand",
+      "msg": "state"
+    },
+    {
+      "code": 6013,
+      "name": "BadBuyIn",
+      "msg": "funds"
+    },
+    {
+      "code": 6014,
+      "name": "BadAmount",
+      "msg": "funds"
+    },
+    {
+      "code": 6015,
+      "name": "SessionTooLong",
+      "msg": "session"
+    },
+    {
+      "code": 6016,
+      "name": "BadSession",
+      "msg": "auth"
+    },
+    {
+      "code": 6017,
+      "name": "NotOccupant",
+      "msg": "auth"
+    },
+    {
+      "code": 6018,
+      "name": "BadSnapshot",
+      "msg": "snapshot"
+    },
+    {
+      "code": 6019,
+      "name": "StaleSnapshot",
+      "msg": "snapshot"
+    },
+    {
+      "code": 6020,
+      "name": "Conservation",
+      "msg": "conservation"
+    },
+    {
+      "code": 6021,
+      "name": "Overflow",
+      "msg": "math"
+    },
+    {
+      "code": 6022,
+      "name": "StaleAction",
+      "msg": "stale"
+    },
+    {
+      "code": 6023,
+      "name": "BadPhase",
+      "msg": "phase"
+    },
+    {
+      "code": 6024,
+      "name": "BadAction",
+      "msg": "action"
+    },
+    {
+      "code": 6025,
+      "name": "TimeoutNotElapsed",
+      "msg": "timeout"
+    },
+    {
+      "code": 6026,
+      "name": "BadSalt",
+      "msg": "salt"
+    },
+    {
+      "code": 6027,
+      "name": "BadFeeVault",
+      "msg": "commit"
+    }
+  ],
+  "types": [
+    {
+      "name": "ActionArg",
+      "docs": [
+        "act 的玩家动作参数（§7.1；映射到 solpoker-core 的 engine::Action）。"
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Fold"
+          },
+          {
+            "name": "Check"
+          },
+          {
+            "name": "Call"
+          },
+          {
+            "name": "Bet",
+            "fields": [
+              "u64"
+            ]
+          },
+          {
+            "name": "RaiseTo",
+            "fields": [
+              "u64"
+            ]
+          },
+          {
+            "name": "AllIn"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateTableArgs",
+      "docs": [
+        "create_table 的完整牌桌配置（design §3.2 Table 字段；mint 走账户传入以做",
+        "owner 校验与 ATA 派生，table_id 进 seeds）。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table_id",
+            "type": "u32"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "0=Human 1=AgentOnly 2=Mixed"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "sb",
+            "type": "u64"
+          },
+          {
+            "name": "bb",
+            "type": "u64"
+          },
+          {
+            "name": "ante",
+            "type": "u64"
+          },
+          {
+            "name": "min_buy_in_bb",
+            "type": "u16"
+          },
+          {
+            "name": "max_buy_in_bb",
+            "type": "u16"
+          },
+          {
+            "name": "rake_bps",
+            "type": "u16"
+          },
+          {
+            "name": "rake_cap_bb",
+            "type": "u16"
+          },
+          {
+            "name": "rake_min_pot_bb",
+            "type": "u16"
+          },
+          {
+            "name": "action_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "commit_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "reveal_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "vrf_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "vrf_max_attempts",
+            "type": "u8"
+          },
+          {
+            "name": "max_strikes",
+            "type": "u8"
+          },
+          {
+            "name": "commit_every_n_hands",
+            "type": "u8"
+          },
+          {
+            "name": "heartbeat_s",
+            "type": "u32"
+          },
+          {
+            "name": "escape_stale_s",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deck",
+      "docs": [
+        "ER deck state (private account, members = [] per §4). PDA",
+        "[\"deck\", table, epoch (u16 BE)]。只有 VRF 回调与发牌/结算指令可写。",
+        "",
+        "Stage 6 Phase 3 起携带 §3.2/§8.8 的整手秘密与抽牌状态：`salts`（AwaitSeed",
+        "从 PlayerHand 复制，供后续各街重算 seed_k）、`used_mask`（已抽牌位图，",
+        "核心 `DrawMachine` 剩余牌堆的持久化形式）、`draw_no`（一手内连续编号）。",
+        "三者让跨指令的确定性重建成为可能——`advance` 每次用它们 + Game.transcript",
+        "把抽牌机状态恢复出来，逐字节对齐 `solpoker_core::deal`（hand.rs 有 parity",
+        "测试钉死）。手牌结束（Settle/Void）时全部清零。",
+        "",
+        "Zero-copy Pod；总大小 472 字节（8 的整数倍）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hand_id",
+            "type": "u64"
+          },
+          {
+            "name": "used_mask",
+            "docs": [
+              "已抽出的牌位图（bit c = 牌 c 已发出）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "draw_no",
+            "docs": [
+              "下一张牌的 draw_no（§8.4，一手内连续编号）。"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "vrf_out",
+            "docs": [
+              "Raw VRF outputs per draw: [preflop, flop, turn, river, runout].",
+              "Written only by `vrf_callback`; never logged (§15). Cleared at hand end."
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                5
+              ]
+            }
+          },
+          {
+            "name": "salts",
+            "docs": [
+              "本手已揭示的盐（AwaitSeed 校验通过后从 PlayerHand 复制）。"
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                9
+              ]
+            }
+          },
+          {
+            "name": "vrf_attempt_used",
+            "docs": [
+              "Which attempt produced each entry (for HandProof audit, §8.7)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充：472 = 8×59。"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Game",
+      "docs": [
+        "ER game state (design §3.2). PDA [\"game\", table]，公开。While delegated,",
+        "the account owner is the delegation program on L1; ER 上的克隆归本程序所有。",
+        "",
+        "Zero-copy Pod（见模块头决策记录）。字段按对齐降序排列：32 字节数组 →",
+        "u64/i64 → VrfSlot → SeatState×9 → u32 → u16 → 小数组 → u8 标志；总大小",
+        "1544 字节（8 的整数倍，无隐式填充）。`button_initialized` /",
+        "`maintenance_requested` 是 u8（0/1）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "transcript",
+            "docs": [
+              "事件流链式哈希；v1 不存完整事件字节（见模块头决策记录）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "hand_id",
+            "type": "u64"
+          },
+          {
+            "name": "pot",
+            "docs": [
+              "本手所有投入（含 ante）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "current_bet",
+            "type": "u64"
+          },
+          {
+            "name": "last_full_raise",
+            "type": "u64"
+          },
+          {
+            "name": "action_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "phase_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "rake_total",
+            "docs": [
+              "累计 rake（只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_commit_at",
+            "type": "i64"
+          },
+          {
+            "name": "vrf",
+            "docs": [
+              "VRF request slot (design §3.2)。solpoker-core `VrfSlot` 的公开镜像，",
+              "不带 randomness——秘密绝不落在公开账户（§3.2 字段纪律）。"
+            ],
+            "type": {
+              "defined": {
+                "name": "VrfSlot"
+              }
+            }
+          },
+          {
+            "name": "seats",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "SeatState"
+                  }
+                },
+                9
+              ]
+            }
+          },
+          {
+            "name": "action_seq",
+            "docs": [
+              "X8：本手内每个改变局面的事件 +1，每手开始归零；act 必须带上。"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "occupied_mask",
+            "type": "u16"
+          },
+          {
+            "name": "hand_mask",
+            "type": "u16"
+          },
+          {
+            "name": "live_mask",
+            "type": "u16"
+          },
+          {
+            "name": "actionable_mask",
+            "type": "u16"
+          },
+          {
+            "name": "pending_to_act_mask",
+            "type": "u16"
+          },
+          {
+            "name": "board",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "board_src",
+            "docs": [
+              "每张公共牌来自哪个 VRF（deck_index 编码）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "phase",
+            "docs": [
+              "0=Idle 1=Commit 2=AwaitSeed 3=Preflop 4=AwaitStreet 5=Betting",
+              "6=AwaitRunout 7=Settle 8=Void"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "street",
+            "type": "u8"
+          },
+          {
+            "name": "button",
+            "type": "u8"
+          },
+          {
+            "name": "button_initialized",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "board_len",
+            "type": "u8"
+          },
+          {
+            "name": "to_act",
+            "type": "u8"
+          },
+          {
+            "name": "hands_since_commit",
+            "type": "u8"
+          },
+          {
+            "name": "maintenance_requested",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HandProof",
+      "docs": [
+        "ER 公开手牌证明环形缓冲（design §3.2）。PDA [\"proof\", table]，16 手环形。",
+        "Zero-copy Pod；拆分后总大小 16×232 + 8 = 3,720 字节（盐/VRF 在 HandSecrets）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "entries",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "ProofEntry"
+                  }
+                },
+                16
+              ]
+            }
+          },
+          {
+            "name": "head",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "HandSecrets",
+      "docs": [
+        "盐与 VRF 输出的环形缓冲（从 HandProof 拆出，见 ProofEntry 的偏差记录）。",
+        "PDA [\"secrets\", table]。16 条，与 HandProof.head 同步推进。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "entries",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "SecretsEntry"
+                  }
+                },
+                16
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PlayerHand",
+      "docs": [
+        "ER 私有底牌账户（design §3.2）。PDA [\"hand\", table, epoch (u16 BE), idx]，",
+        "is_private = true，members = [当前占用者钱包]（空座时 members = []，",
+        "换人按 §11.2 顺序替换）。体积很小，保持 borsh。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hand_id",
+            "type": "u64"
+          },
+          {
+            "name": "cards",
+            "docs": [
+              "0xFF 表示没有牌。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "salt",
+            "docs": [
+              "D6：揭示交易只写这里。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "salt_hand_id",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProgramConfig",
+      "docs": [
+        "Global program configuration (design §3.2). PDA [\"config\"], L1, never",
+        "delegated. Created once by `init_config`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "rake 可能付到 ATA(treasury, mint)。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "tee_validator",
+            "docs": [
+              "MTEW…；委托时显式传入，禁止 None。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "gateway",
+            "docs": [
+              "仅 D5 标准模式使用；原子模式不需要。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "flags",
+            "docs": [
+              "PAUSED | ESCAPE_SUPPORTED | …"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "version",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "deleg_payer_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProofEntry",
+      "docs": [
+        "单手结算/作废的证明（元数据部分）。**设计偏差记录（2026-10-07）**：",
+        "设计的 ProofEntry 是单账户 680B×16 ≈ 10.9KB——超过 CPI create_account",
+        "的 10,240B 上限，且委托程序的 buffer 同样受限，链上无法创建/委托。所以",
+        "把「盐与 VRF 输出」拆到 HandSecrets（[\"secrets\", table]），本结构只留",
+        "元数据；验证一手牌时两个账户都要读（§8.7 步骤 2 改为从 HandSecrets 取盐",
+        "和 VRF）。公开的数据一字节不少。",
+        "Zero-copy Pod；`_pad` 把结构补齐到 232 字节（8 的整数倍）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hand_id",
+            "type": "u64"
+          },
+          {
+            "name": "rake",
+            "type": "u64"
+          },
+          {
+            "name": "settled_at",
+            "type": "i64"
+          },
+          {
+            "name": "occupancy_ids",
+            "type": {
+              "array": [
+                "u64",
+                9
+              ]
+            }
+          },
+          {
+            "name": "deltas",
+            "type": {
+              "array": [
+                "i64",
+                9
+              ]
+            }
+          },
+          {
+            "name": "transcript_final",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "hole",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    2
+                  ]
+                },
+                9
+              ]
+            }
+          },
+          {
+            "name": "hand_mask",
+            "type": "u16"
+          },
+          {
+            "name": "board",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "docs": [
+              "0=Settled 1=Void"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "button",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充：232 = 8×29。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeatLedger",
+      "docs": [
+        "L1 半边座位账本（design §3.2 / D1）。PDA [\"seat\", table, idx (u8)]，",
+        "**永不委托**；金额跨层只增不减，按差额入账。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "idx",
+            "type": "u8"
+          },
+          {
+            "name": "occupant",
+            "docs": [
+              "Pubkey::default() 表示空座。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "occupancy_id",
+            "docs": [
+              "每次新入座 +1。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "0=Human 1=Agent"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "agent_owner",
+            "docs": [
+              "kind = Agent 时等于 AgentProfile.owner。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "session_key",
+            "docs": [
+              "D2 会话 key。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "session_expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "payout",
+            "docs": [
+              "X7：cash_out 只付 ATA(payout, mint)；入座时固定。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "deposited_total",
+            "docs": [
+              "入座与补码的累计（跨所有占用者，只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "paid_total",
+            "docs": [
+              "cash_out 的累计（只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeatState",
+      "docs": [
+        "ER 半边座位账本（design §3.2 / D1），内嵌在 Game 里。Zero-copy Pod；",
+        "`folded` / `all_in` / `acted` / `leave_requested` 是 u8（0/1）。`_pad0`",
+        "把结构补齐到 152 字节（8 的整数倍）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "occupant",
+            "type": "pubkey"
+          },
+          {
+            "name": "salt_commit",
+            "docs": [
+              "承诺值公开；盐本身在私有 PlayerHand 里，不在这里。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "next_salt_commit",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "occupancy_id",
+            "type": "u64"
+          },
+          {
+            "name": "stack",
+            "type": "u64"
+          },
+          {
+            "name": "credited_total",
+            "docs": [
+              "已计入筹码的入座与补码累计（只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "owed_total",
+            "docs": [
+              "已释放、等待 L1 兑付的累计（只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "in_hand",
+            "type": "u64"
+          },
+          {
+            "name": "street_bet",
+            "type": "u64"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "0=Human 1=Agent"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "0=Empty 1=Seated 2=Left"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "folded",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "all_in",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "acted",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "strikes",
+            "type": "u8"
+          },
+          {
+            "name": "leave_requested",
+            "docs": [
+              "u8（0/1；bool 不是 Pod）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad0",
+            "docs": [
+              "显式填充：152 = 8×19。"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SecretsEntry",
+      "docs": [
+        "每手的盐与 VRF（456 字节 × 16 = 7,296 + 8 = 7,304，低于 10,240 上限）。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "salts",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                9
+              ]
+            }
+          },
+          {
+            "name": "vrf_out",
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                5
+              ]
+            }
+          },
+          {
+            "name": "vrf_mask",
+            "docs": [
+              "用到了哪几个 VRF（bit i = deck_index i）。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充：456 = 8×57。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Table",
+      "docs": [
+        "L1 table configuration (design §3.2). PDA [\"table\", table_id (u32 LE)].",
+        "Never delegated; carries every tunable so parameters live on-chain, not in",
+        "code (§2 设计原则 5)。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table_id",
+            "type": "u32"
+          },
+          {
+            "name": "admin",
+            "docs": [
+              "Stage 6 过渡期保留：create_table / delegate_table / debug_arm_vrf 仍以",
+              "此 key 的签名为门禁；生产鉴权（ProgramConfig.admin）在后续 Phase 接入。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "0=Human 1=AgentOnly 2=Mixed"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "max_seats",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "docs": [
+              "0=Active 1=Maintenance 2=Escaping 3=Escaped"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "tUSDC / Circle USDC；create_table 拒绝非 classic SPL-Token mint",
+              "（Token-2022 转账手续费 / transfer hook 扩展，E4 之后再支持）。"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "sb",
+            "type": "u64"
+          },
+          {
+            "name": "bb",
+            "type": "u64"
+          },
+          {
+            "name": "ante",
+            "type": "u64"
+          },
+          {
+            "name": "min_buy_in_bb",
+            "type": "u16"
+          },
+          {
+            "name": "max_buy_in_bb",
+            "type": "u16"
+          },
+          {
+            "name": "rake_bps",
+            "type": "u16"
+          },
+          {
+            "name": "rake_cap_bb",
+            "type": "u16"
+          },
+          {
+            "name": "rake_min_pot_bb",
+            "type": "u16"
+          },
+          {
+            "name": "action_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "commit_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "reveal_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "vrf_timeout_s",
+            "type": "u16"
+          },
+          {
+            "name": "vrf_max_attempts",
+            "type": "u8"
+          },
+          {
+            "name": "max_strikes",
+            "type": "u8"
+          },
+          {
+            "name": "commit_every_n_hands",
+            "type": "u8"
+          },
+          {
+            "name": "heartbeat_s",
+            "docs": [
+              "有资金在桌、又没有新 commit 时的心跳间隔（秒）。"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "escape_stale_s",
+            "docs": [
+              "快照超过这么久没更新，才允许发起逃生（秒）。"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "rake_swept_total",
+            "docs": [
+              "已划到 treasury 的 rake 累计（只增）。"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "epoch",
+            "docs": [
+              "逃生后 +1（§5.4）；是 Deck / PlayerHand PDA seeds 的一部分。"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_auth_bump",
+            "type": "u8"
+          },
+          {
+            "name": "commit_payer_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VrfSlot",
+      "docs": [
+        "Public mirror of the core VRF slot (see module docs). `attempt` is 1-based",
+        "(core convention). `requested_at` is 0 unless state == Pending.",
+        "Zero-copy Pod；`_pad` 把结构补齐到 16 字节。"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "requested_at",
+            "type": "i64"
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "VrfState"
+              }
+            }
+          },
+          {
+            "name": "target",
+            "type": {
+              "defined": {
+                "name": "VrfTarget"
+              }
+            }
+          },
+          {
+            "name": "attempt",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "显式填充：16 = 8×2。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "VrfState",
+      "docs": [
+        "Core VRF slot states (solpoker-core `VrfState`), persisted inside Game.",
+        "Lifecycle per §6.2 / §9: act/advance sets Ready (arm), request_vrf sets",
+        "Pending, vrf_callback sets Fulfilled (randomness in Deck), advance",
+        "consumes Fulfilled and resets to Idle; retry exhaustion lands on Void and",
+        "the settlement path voids the hand.",
+        "",
+        "`#[repr(u8)]`（判别值 0..=4，与 borsh 时代顺序一致）。bytemuck 不为枚举",
+        "derive Pod，下面手工 impl："
+      ],
+      "repr": {
+        "kind": "rust"
+      },
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Idle"
+          },
+          {
+            "name": "Ready"
+          },
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "Fulfilled"
+          },
+          {
+            "name": "Void"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VrfTarget",
+      "docs": [
+        "Which VRF draw a street needs. Wire encoding MUST match",
+        "`solpoker_core::vrf::VrfTarget::to_u8` (Preflop=0..Runout=4) because it",
+        "feeds `caller_seed` (pinned CI vector in solpoker-core).",
+        "`#[repr(u8)]` + 手工 Pod impl（SAFETY 注记同 VrfState）。"
+      ],
+      "repr": {
+        "kind": "rust"
+      },
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Preflop"
+          },
+          {
+            "name": "Flop"
+          },
+          {
+            "name": "Turn"
+          },
+          {
+            "name": "River"
+          },
+          {
+            "name": "Runout"
+          }
+        ]
+      }
+    }
+  ]
+}

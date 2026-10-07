@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anchor-lang/core": "^1.0.2",
     "@magicblock-labs/ephemeral-rollups-sdk": "0.17.3",
     "@phala/dcap-qvl": "^0.3.9",
     "@privy-io/react-auth": "3.47.0",
@@ -17,9 +18,12 @@
     "@solana-program/token": "^0.6.0",
     "@solana/kit": "^3.0.3",
     "@solana/web3.js": "1.98.4",
+    "@types/bn.js": "^5.2.0",
+    "bn.js": "^5.2.5",
     "next": "15.5.9",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

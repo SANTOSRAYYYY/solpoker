@@ -1,0 +1,53 @@
+/* ---- Stage 7 牌桌 ---- */
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.spread { justify-content: space-between; }
+
+.table-area {
+  padding: 16px;
+  background: radial-gradient(ellipse at center, #14361f 0%, #0d1f14 70%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.pot { font-size: 18px; font-weight: 600; color: #f0c040; }
+
+.board { display: flex; gap: 8px; justify-content: center; margin: 14px 0; min-height: 56px; align-items: center; }
+
+.card {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 60px;
+  background: #fafafa; border-radius: 6px;
+  font-size: 20px; font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+}
+.card-back { background: #2a1a4a; color: #6b5a9e; border: 1px solid #4a3a7a; }
+
+.seats { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin: 12px 0; }
+.seat {
+  min-width: 96px; padding: 8px 10px; text-align: center;
+  background: rgba(0,0,0,.35); border: 1px solid var(--border); border-radius: 8px;
+}
+.seat.me { border-color: #9945FF; }
+.seat.actor { border-color: #14F195; box-shadow: 0 0 8px rgba(20,241,149,.35); }
+.seat-addr { font-size: 12px; color: var(--text-muted); }
+.seat-stack { font-size: 15px; font-weight: 600; }
+.seat-bet { font-size: 12px; color: #f0c040; }
+.dealer {
+  display: inline-block; background: #f0c040; color: #000;
+  border-radius: 50%; width: 16px; height: 16px; line-height: 16px; font-size: 11px; font-weight: 700;
+}
+.allin { color: var(--danger); font-size: 11px; }
+
+.myhand { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 8px; }
+
+.actions {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 12px; background: var(--bg-elevated);
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px;
+}
+.raise-input {
+  width: 110px; padding: 8px 10px;
+  background: #0e0e14; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 14px;
+}
