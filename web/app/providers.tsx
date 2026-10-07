@@ -45,8 +45,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
           // Solana-only 应用：登录弹窗只列 Solana 钱包（2026-10-07 用户反馈：
           // 没配 Solana 连接器时弹窗只给 EVM 钱包做 SIWE 登录，Privy 随之
           // 派生一个 SVM 地址，并不是用户自己的 Solana 钱包）。
+          // 不再限制 walletList：列出探测到的全部 Solana 钱包（OKX/Bitget 等
+          // 也能出现）。
           walletChainType: "solana-only" as never,
-          walletList: ["phantom", "solflare", "backpack"] as never,
         },
         // 探测浏览器里的外部 Solana 钱包（Phantom/Solflare/Backpack…）——
         // 不配这个，登录弹窗根本不会出现 Solana 钱包选项。
