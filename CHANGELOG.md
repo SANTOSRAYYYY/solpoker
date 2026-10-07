@@ -52,6 +52,11 @@
 
 ### 遗留问题
 
+- **（2026-10-07 用户决定）钱包通道收敛为 Privy 单通道**：SIWS 在后端开启后，
+  直连钱包路径（wallet-standard，commit c9dd871）按用户要求移除，实现保留在
+  git 历史中可随时恢复。当前所有钱包连接（Phantom/Solflare/Backpack/内嵌/
+  邮箱）统一走 Privy；钱包分类简化为「Privy 内嵌 vs 外部 Solana」。浏览器端
+  已验证：完整 SIWS 登录（"All set!"）、会话持久、多钱包选择与标签正确。
 - **（2026-10-07 已解决替代方案）直连 Solana 钱包上线**：Privy 的 SIWS 仍开着
   服务端开关问题，但前端新增「直接连接 Solana 钱包」通道（`lib/direct-wallet.ts`，
   wallet-standard）：Phantom/Solflare/Backpack 等扩展**不经过 Privy 登录**即可
