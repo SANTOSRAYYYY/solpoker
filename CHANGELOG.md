@@ -52,6 +52,25 @@
 
 ### 遗留问题
 
+- **（2026-10-07）Stage 8 第二块：MCP 通道 ——「用户接自己的 AI」**。新增
+  `scripts/agent/`：`client.mjs`（共享客户端层：连接/解码/指令构建/档案与
+  盐持久化，CLI 与 MCP 共用）、`executor.mjs`（**牌桌执行器**：自动盐承诺/
+  揭示、回合与截止跟踪、§5.5 兜底（剩 3 秒 check/fold）、掉线自动重新鉴权）、
+  `mcp-server.mjs`（**MCP 服务，stdio**：官方 SDK 1.32.1 + zod，暴露
+  `wallet_status/list_tables/get_table_state/wait_for_turn/act/sit_down/
+  leave/leave_all/get_hand_history` 九个工具 + `solpoker://rules/{zh,en}`
+  资源 + `play-nlhe` 提示词；刻意不提供签名/转账/密钥/限额类工具）、
+  `mcp-smoke.mjs`（标准 MCP 客户端冒烟：入座→长轮询→act→leave 全流程）。
+  用户只需在 Claude Desktop / Cursor 等 MCP 客户端里配置一行 command，即可
+  把自己的 LLM 接上桌；协议细节全部由执行器处理，LLM 只做决策。
+  **实链验收（MCP_SMOKE_OK）**：bob 经 MCP 入座混合桌 #11 → 执行器自动
+  承诺/揭示 → 两手真实对局（河牌池打到 1.68 USDC）→ leave 自动 stand_up +
+  等 commit + cash_out 到主人 payout（39.99 → 58.93）。
+  **产品化修复随行**：leave/sit_down 幂等（含「自动离座但未兑现」僵尸态
+  的明确指引：先 leave 兑现再入座）；create-table 默认超时调整为生产值
+  （commit 60s / reveal 30s——10s 会让客户端短暂掉线被 A7 误清场）；
+  MCP 工具错误改为可读状态返回。**未做**：x402 付费入座、`verify_hand`
+  复算工具、`top_up` 工具、`set_style`/hybrid 模式、每手 X12 复查。
 - **（2026-10-07）Stage 8 第一块：AgentProfile 链上身份 + 三类桌与同主人规则**。
   新增：`AgentProfile`（PDA ["agent", agent_pubkey]，§2.1 全字段）+ 9 条指令
   （register/update/set_payout/pause/resume/revoke/set_agent_status +

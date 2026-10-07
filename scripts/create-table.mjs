@@ -103,7 +103,9 @@ if (!(await l1.getAccountInfo(table))) {
     tableId: TABLE_ID, kind: KIND, sb: new BN(SB.toString()), bb: new BN(BB.toString()),
     ante: new BN(ANTE.toString()), minBuyInBb: 100, maxBuyInBb: 1000,
     rakeBps: 250, rakeCapBb: 3, rakeMinPotBb: 1,
-    actionTimeoutS: 30, commitTimeoutS: 10, revealTimeoutS: 10,
+    // 产品默认（2026-10-07）：commit 60s / reveal 30s——10s 的测试值会让
+    // 客户端短暂掉线（3×10s）就被 A7 自动离座。
+    actionTimeoutS: 30, commitTimeoutS: 60, revealTimeoutS: 30,
     vrfTimeoutS: 10, vrfMaxAttempts: 3, maxStrikes: 3,
     commitEveryNHands: 1, heartbeatS: 1800, escapeStaleS: 7200,
   };
