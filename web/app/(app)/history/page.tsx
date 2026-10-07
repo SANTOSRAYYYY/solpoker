@@ -37,9 +37,9 @@ import { verifyVector, webCrypto, dealFromReplay } from "@/lib/deal-verify.mjs";
 import { DEAL_VECTORS } from "@/lib/vectors";
 import {
   readGameLive,
-  readHandProof,
+  readHandProofLive,
   readHandReplay,
-  readHandSecrets,
+  readHandSecretsLive,
   type ProofEntryView,
   type ReplayEntryView,
   type SecretsEntryView,
@@ -237,8 +237,8 @@ export default function HistoryPage() {
         if (stop) return;
         try {
           const [proof, sec, live, rep] = await Promise.all([
-            readHandProof(ctx.l1, tableId),
-            readHandSecrets(ctx.l1, tableId),
+            readHandProofLive(er, ctx.l1, tableId),
+            readHandSecretsLive(er, ctx.l1, tableId),
             readGameLive(er, ctx.l1, tableId).catch(() => null),
             readHandReplay(er, ctx.l1, tableId).catch(() => null),
           ]);

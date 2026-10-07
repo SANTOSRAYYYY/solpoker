@@ -358,6 +358,21 @@ export async function readHandProof(
   }
 }
 
+/** 读 HandProof：委托账户 → 优先 ER（实时），回落 L1（commit 后的快照）。 */
+export async function readHandProofLive(
+  er: Connection,
+  l1: Connection,
+  tableId: number
+): Promise<HandProofView | null> {
+  try {
+    const acc = await er.getAccountInfo(pdasFor(tableId).handProof);
+    if (acc && acc.data.length >= HAND_PROOF_SIZE) return decodeHandProof(acc.data);
+  } catch {
+    /* 回落 L1 */
+  }
+  return readHandProof(l1, tableId);
+}
+
 // --------------------------------------------------------------- HandSecrets
 export interface SecretsEntryView {
   salts: Uint8Array[]; // 9 × 32
@@ -485,6 +500,21 @@ export async function readHandReplay(
     /* ignore */
   }
   return null;
+}
+
+/** 读 HandSecrets：委托账户 → 优先 ER，回落 L1。 */
+export async function readHandSecretsLive(
+  er: Connection,
+  l1: Connection,
+  tableId: number
+): Promise<(SecretsEntryView | null)[] | null> {
+  try {
+    const acc = await er.getAccountInfo(pdasFor(tableId).handSecrets);
+    if (acc) return decodeHandSecrets(acc.data);
+  } catch {
+    /* 回落 L1 */
+  }
+  return readHandSecrets(l1, tableId);
 }
 
 export { TABLE_IDS_FILTER };

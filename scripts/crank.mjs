@@ -138,6 +138,7 @@ async function main() {
   console.log(`crank online — tables ${tableIds.join(",")}, deployer ${deployer.publicKey.toBase58().slice(0, 8)}`);
 
   const vrfWaitUntil = new Map(); // table -> ts，等待 VRF 履行期间不重复 request
+  const vrfRetryUntil = new Map(); // table -> ts，Pending 超时后 retry 的冷却
   for (;;) {
     for (const tableId of tableIds) {
       const table = tablePda(tableId);
@@ -167,8 +168,12 @@ async function main() {
     // permissionless (design X7) and the program pins the payout ATA recorded at
     // sit_down, so the crank can only ever send the money back to its owner.
     // This frees the seat for the next player instead of leaving it locked.
+    // 座位账本一次并行读完（9 个串行 RPC 是每轮延迟的主要来源）
+    const sweepAccs = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => l1.getAccountInfo(seatPda(table, i)))
+    );
     for (let i = 0; i < 9; i++) {
-      const ledAcc = await l1.getAccountInfo(seatPda(table, i)); // 账本在 L1（未委托）
+      const ledAcc = sweepAccs[i];
       if (!ledAcc) continue;
       const occ = ledAcc.data.subarray(41, 73);
       if (occ.every((b) => b === 0)) continue; // empty seat
@@ -180,6 +185,9 @@ async function main() {
       const deposited = ledAcc.data.readBigUInt64LE(186);
       const paid = ledAcc.data.readBigUInt64LE(194);
       if (deposited <= paid) continue; // nothing to pay out
+      // 同一个（已存/已付）快照只尝试一次：程序拒绝过的座位不要每轮重试
+      const sweepKey = `${tableId}:${i}:${deposited}:${paid}`;
+      if (sweepTried.has(sweepKey)) continue;
       const payout = new PublicKey(ledAcc.data.subarray(154, 186));
       const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
       const ixs = [];
@@ -209,12 +217,16 @@ async function main() {
       return; // one action per pass
     }
     // 1) take_seat：比较每个座位 L1 账本与 game 里的 occupancy_id
+    // 座位账本一次并行读完（9 个串行 RPC 是每轮延迟的主要来源）
+    const seatAccs = await Promise.all(
+      Array.from({ length: 9 }, (_, i) => er.getAccountInfo(seatPda(table, i)))
+    );
     for (let i = 0; i < 9; i++) {
       const seatOff = 152 + i * 152;
       const gameOcc = g.readBigUInt64LE(seatOff + 96);
       const seatStatus = g[seatOff + 145];
       if (seatStatus === 1) continue; // 已 Seated
-      const ledgerAcc = await er.getAccountInfo(seatPda(table, i));
+      const ledgerAcc = seatAccs[i];
       if (!ledgerAcc) continue;
       // SeatLedger: disc(8) table(32) idx(1) occupant(32) occupancy_id(8)@73
       const ledgerOcc = ledgerAcc.data.readBigUInt64LE(73);
@@ -268,6 +280,32 @@ async function main() {
         console.log(`[t${tableId}] request_vrf: ${sig.slice(0, 12)}…`);
         vrfWaitUntil.set(tableId, Date.now() + 4000);
         return;
+      }
+    }
+
+    // 2b) VRF Pending 超时 → retry_vrf（§6.3：vrf_timeout_s 之后重试，最多 vrf_max_attempts 次）。
+    //     不重试的话，oracle 一慢这一手必然作废（devnet 实测连续两手都是这样废掉的）。
+    if (vrfState === 2) {
+      const until = vrfRetryUntil.get(tableId) ?? 0;
+      if (Date.now() > until) {
+        const requestedAt = Number(g.readBigInt64LE(136));
+        const tAcc = await l1.getAccountInfo(table);
+        const vrfTimeoutS = tAcc ? tAcc.data[119] | (tAcc.data[120] << 8) : 10;
+        if (requestedAt > 0 && now - requestedAt >= vrfTimeoutS) {
+          try {
+            const ix = await program.methods
+              .retryVrf()
+              .accounts({ table, game, payer: deployer.publicKey, vrf: { oracleQueue: ER_VRF_QUEUE } })
+              .instruction();
+            const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} retry_vrf`, ER_CU);
+            console.log(`[t${tableId}] retry_vrf: ${sig.slice(0, 12)}…`);
+          } catch (e) {
+            console.log(`[t${tableId}] retry_vrf skip: ${String(e.message ?? e).slice(0, 80)}`);
+          }
+          vrfRetryUntil.set(tableId, Date.now() + 15000);
+          return;
+        }
+        vrfRetryUntil.set(tableId, Date.now() + 3000);
       }
     }
 
