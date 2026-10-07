@@ -1,0 +1,174 @@
+{
+  "expected": {
+    "board": [
+      23,
+      20,
+      7,
+      27,
+      25
+    ],
+    "board_src": [
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "button": 1,
+    "draws": [
+      {
+        "card": 45,
+        "draw_no": 0,
+        "retry": 0
+      },
+      {
+        "card": 46,
+        "draw_no": 1,
+        "retry": 0
+      },
+      {
+        "card": 33,
+        "draw_no": 2,
+        "retry": 0
+      },
+      {
+        "card": 15,
+        "draw_no": 3,
+        "retry": 0
+      },
+      {
+        "card": 23,
+        "draw_no": 4,
+        "retry": 0
+      },
+      {
+        "card": 20,
+        "draw_no": 5,
+        "retry": 0
+      },
+      {
+        "card": 7,
+        "draw_no": 6,
+        "retry": 0
+      },
+      {
+        "card": 27,
+        "draw_no": 7,
+        "retry": 0
+      },
+      {
+        "card": 25,
+        "draw_no": 8,
+        "retry": 0
+      }
+    ],
+    "hole": {
+      "0": [
+        45,
+        33
+      ],
+      "1": [
+        46,
+        15
+      ]
+    },
+    "salt_commitments": {
+      "0": "3d407081ea018e80403ed5c413615226164df141c22a45de0408f1f7d0eb28ba",
+      "1": "5a65faa64b3d0715da4c6d2c868941575ec9f0cd321ebe2e8b7e525c227deb79"
+    },
+    "salt_digest": "dda0f8edb6cfb40edb01c8606cff67786cc65dc3d58a83909dc6a2024ef58d7b",
+    "seed_flop": "9f10b39d6ac2b477e382872e8a1d8b338ad003cd1a34aec07b1e14b2d0626c17",
+    "seed_preflop": "d439d0ac46f7b2bfabd36be33de27acb424e33a80ec195d590041a047dcee400",
+    "seed_river": "9174a5f6cd8b8a606154ba6714735ec67854d6fad2783b0c582c5ed10404cd08",
+    "seed_runout": "3f8c5dee2be94a3e6f90954955119b051bc62377dffc2d9acc5d0b269ba1e505",
+    "seed_turn": "828e38305d0de59785d3b4633454f8ee79188cff1661b0f69a8751f5166595fd",
+    "transcript_final": "7897a59c693ef9c66587f1ff64995e12917182b586469f2818540c1b42d0ea0d"
+  },
+  "inputs": {
+    "button_initialized": false,
+    "forced": [
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 0
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 1
+      },
+      {
+        "amount": 100000,
+        "kind": 1,
+        "seat": 1
+      },
+      {
+        "amount": 200000,
+        "kind": 2,
+        "seat": 0
+      }
+    ],
+    "hand_id": 1,
+    "hand_mask": 3,
+    "occupancy_ids": [
+      9000,
+      9001,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "occupants": [
+      "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "prev_button": null,
+    "program_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "salts": {
+      "0": "c6bc9411c5cd81306df87390efdf5d515037abb39ab88c8eacdf427098823e98",
+      "1": "7a77ca1909a61ba948c18cb26791a548b1e2f3d7dbbfec8c4a0a08a593b1f369"
+    },
+    "script": [
+      {
+        "type": "runout"
+      }
+    ],
+    "stacks": [
+      20000000,
+      20000000,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "table": "5555555555555555555555555555555555555555555555555555555555555555",
+    "vrf_attempts": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1
+    },
+    "vrf_outputs": {
+      "0": "f88ab29bb48f00321158d26ee83b83ae42d1c3fb9c0a390c8e66dc5a7e5ec48c",
+      "1": "40eae3aec259938f506ea15061058ddd5e2019e7e2e6c13eb53e30210dddbab0",
+      "2": "aa9d0bf4da0d0990cd47c3e35a2d6a43d01718d1ac7ba7d719e7d3fab0d7f532",
+      "3": "64582cd29e0d089dd0ef02f887f1d366ebbd6c85f5054b7e91df6297bbb4616a",
+      "4": "fb914478385300c3082e52654ace7de751959aa9e131f4ba3dc9fc7293955c91"
+    }
+  },
+  "name": "runout"
+}

@@ -33,6 +33,8 @@ import { useWalletCtx } from "@/components/wallet-context";
 import { ER_RPC } from "@/lib/config";
 import { pdasFor } from "@/lib/solpoker-client";
 import { fmtUsdc, type GameView } from "@/lib/game-state";
+import { verifyVector, webCrypto } from "@/lib/deal-verify.mjs";
+import { DEAL_VECTORS } from "@/lib/vectors";
 import {
   readHandProof,
   readHandSecrets,
@@ -184,6 +186,15 @@ export default function HistoryPage() {
         seeds: string[];
         commits: { seat: number; computed: string; onchain: string | null; ok: boolean | null }[];
         conservation: { sum: string; rake: string; ok: boolean };
+      }
+  >({ phase: "idle" });
+  /** 引擎自检：用页面同一套 deal-verify 跑 Stage-4 向量 */
+  const [engine, setEngine] = useState<
+    | { phase: "idle" }
+    | { phase: "running" }
+    | {
+        phase: "done";
+        results: { name: string; ok: boolean; board: string; button: number; diffs: string[] }[];
       }
   >({ phase: "idle" });
 
@@ -536,34 +547,35 @@ export default function HistoryPage() {
                 )}
               </div>
 
-              {/* 事件流 / 下一步 */}
+              {/* 历史手牌整手复算：为什么还差一步 */}
               <div className="panel p-5">
-                <SectionTitle zh="还没做到的：整手 52 张复算" en="What's still missing" />
+                <SectionTitle zh="历史手牌整手复算：为什么还差一步" en="What's still missing" />
                 <p className="text-[12.5px] leading-relaxed text-mist-dim">
-                  每张牌的抽取输入里包含 <span className="font-mono">transcript_digest</span>
-                  （从 HandStart 到该张牌之前的所有事件：盲注、每次下注/跟注/加注）。
-                  HandProof 只存最终摘要，所以完整复算需要重放**该手的 L1 交易历史**。
-                  这是 <span className="font-mono">verify_hand</span> 工具的下一步，
-                  参考实现在{" "}
-                  <a
-                    href="https://github.com/SANTOSRAYYYY/solpoker/blob/main/reference/solpoker_deal.py"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-accent-200 hover:underline"
-                  >
-                    reference/solpoker_deal.py
-                  </a>
-                  （Stage 4 已与 Rust 逐字节一致）。
+                  整手 52 张的复算输入除了 VRF 输出与盐（HandSecrets 有）之外，还有两样东西：
+                  <span className="text-mist">开局筹码快照</span>与
+                  <span className="text-mist">下注事件流</span>（盲注、每次行动都进
+                  transcript，而 transcript_digest 是每张牌的抽取输入）。
+                  v1 的 HandProof 只存了事件流的**最终哈希**（design §8.7 的记档偏差："v1
+                  不存完整事件字节"），所以从链上现在的账户里**推不回**这两样 ——
+                  哈希不可逆，这不是实现没做，是数据没上链。
+                </p>
+                <p className="mt-2 text-[12.5px] leading-relaxed text-mist-dim">
+                  两条补齐路线（都需要你拍板）：
+                  <br />· <span className="text-mist">A. 记录器</span>：让 crank（或第三方观察者）
+                  在对局进行时把每手的这些输入写成 JSON 证据包；谁都能自己跑一个，用本页同一引擎复算，
+                  并与链上 HandProof / HandSecrets 逐字段对锚（记录器无法造假，只能选择不给你数据）。
+                  <br />· <span className="text-mist">B. 程序升级</span>：把开局筹码与事件流摘要进
+                  proof entry（设计 §8.7 本来就打算公开它们），链上自带全部复算输入。
                 </p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <div className="rounded-lg border border-mint/25 bg-mint/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 已可验证：守恒 · 盐摘要 · 种子 · 当前手承诺
+                    ✓ 已能验证：引擎自检（6 向量）· 守恒 · 盐摘要 · 种子 · 当前手承诺
                   </div>
                   <div className="rounded-lg border border-warn/25 bg-warn/5 p-3 text-[12px] text-mist-dim">
-                    ⏳ 待做：事件流重放 → 52 张牌序
+                    ⏳ 待补齐：开局筹码 + 事件流（记录器 或 程序升级）
                   </div>
                   <div className="rounded-lg border border-accent-500/25 bg-accent-500/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 已可验证：L1 上的一切都在（tx 历史可自行抓取）
+                    ✓ 链上锚点齐备：board / hole / deltas / transcript_final / salts / VRF
                   </div>
                 </div>
               </div>
@@ -583,6 +595,84 @@ export default function HistoryPage() {
           </div>
         </section>
       </div>
+
+      {/* ---------------------------------------------- 复算引擎自检（与手牌无关，始终可见） */}
+      <section className="panel mt-6 p-5">
+        <SectionTitle
+          zh="复算引擎自检（Stage-4 向量）"
+          en="Engine self-test"
+          right={
+            <Badge tone={engine.phase === "done" && engine.results.every((r) => r.ok) ? "mint" : "plain"}>
+              {engine.phase === "done"
+                ? engine.results.every((r) => r.ok)
+                  ? "6/6 一致 ✓"
+                  : "有差异"
+                : "未运行"}
+            </Badge>
+          }
+        />
+        <p className="text-[12.5px] leading-relaxed text-mist-dim">
+          本页的复算引擎（<span className="font-mono">web/lib/deal-verify.mjs</span>）是发牌协议的 JS
+          移植，与 Rust 程序、Python 参考实现三方逐字节一致。下面这个按钮用的是**页面里同一份代码 +
+          浏览器 WebCrypto**，复算仓库里的 6 个 Stage-4 测试向量（满桌 9 人、庄位轮转、拒绝采样重抽、
+          全下合并跑完），逐字段比对 board / button / draws / transcripts。
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            className="btn-casino btn-brand px-5 py-2.5 text-[13px]"
+            disabled={engine.phase === "running"}
+            onClick={async () => {
+              setEngine({ phase: "running" });
+              const results = [];
+              for (const v of DEAL_VECTORS) {
+                try {
+                  const { diffs, got } = await verifyVector(webCrypto, v);
+                  results.push({
+                    name: v.name,
+                    ok: diffs.length === 0,
+                    board: got.board.join(","),
+                    button: got.button,
+                    diffs,
+                  });
+                } catch (e) {
+                  results.push({
+                    name: v.name,
+                    ok: false,
+                    board: "—",
+                    button: -1,
+                    diffs: [String(e instanceof Error ? e.message : e)],
+                  });
+                }
+              }
+              setEngine({ phase: "done", results });
+            }}
+          >
+            {engine.phase === "running" ? "复算中…" : "跑 6 个向量（在浏览器里复算）"}
+          </button>
+          <span className="text-[11.5px] text-mist-faint">
+            命令行同一套引擎：<span className="font-mono">node scripts/agent/deal-verify-selftest.mjs</span>
+          </span>
+        </div>
+        {engine.phase === "done" && (
+          <div className="mt-3 space-y-1 font-mono text-[11.5px]">
+            {engine.results.map((r) => (
+              <div key={r.name} className="flex flex-wrap items-baseline gap-2">
+                <Badge tone={r.ok ? "mint" : "danger"}>{r.ok ? "PASS" : "FAIL"}</Badge>
+                <span className="text-mist-dim">{r.name}</span>
+                <span className="text-mist-faint">
+                  board=[{r.board}] button={r.button}
+                </span>
+                {!r.ok && <span className="text-loss">{r.diffs[0]}</span>}
+              </div>
+            ))}
+            <div className={engine.results.every((r) => r.ok) ? "pt-1 text-win" : "pt-1 text-loss"}>
+              {engine.results.every((r) => r.ok)
+                ? `引擎自检通过：${engine.results.length}/${engine.results.length} 向量与参考实现逐字节一致 ✓`
+                : "引擎自检未通过 —— 请勿采信本页的复算结果"}
+            </div>
+          </div>
+        )}
+      </section>
     </main>
   );
 }

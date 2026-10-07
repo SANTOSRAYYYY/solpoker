@@ -1,0 +1,182 @@
+{
+  "expected": {
+    "board": [
+      30,
+      19,
+      46
+    ],
+    "board_src": [
+      1,
+      1,
+      1
+    ],
+    "button": 0,
+    "draws": [
+      {
+        "card": 8,
+        "draw_no": 0,
+        "retry": 0
+      },
+      {
+        "card": 24,
+        "draw_no": 1,
+        "retry": 0
+      },
+      {
+        "card": 1,
+        "draw_no": 2,
+        "retry": 0
+      },
+      {
+        "card": 33,
+        "draw_no": 3,
+        "retry": 0
+      },
+      {
+        "card": 28,
+        "draw_no": 4,
+        "retry": 0
+      },
+      {
+        "card": 15,
+        "draw_no": 5,
+        "retry": 0
+      },
+      {
+        "card": 30,
+        "draw_no": 6,
+        "retry": 0
+      },
+      {
+        "card": 19,
+        "draw_no": 7,
+        "retry": 0
+      },
+      {
+        "card": 46,
+        "draw_no": 8,
+        "retry": 0
+      }
+    ],
+    "hole": {
+      "0": [
+        1,
+        15
+      ],
+      "4": [
+        8,
+        33
+      ],
+      "8": [
+        24,
+        28
+      ]
+    },
+    "salt_commitments": {
+      "0": "de88f57f728fea4503242b5541410ff91dd9264ec0976b1fd8d21612e110df3e",
+      "4": "72e0f8120cf3a7d92064bee0816b921a4076c44ff937220aae09e05ec345fe81",
+      "8": "01e6bc7e0c42dfe07212fa0b007c6d1b426527531cae0261bf5bec77bb7d2bc9"
+    },
+    "salt_digest": "6807abe3dfd135d5a5970a3423d6553494621357814a5d4a0e69622c410e78ab",
+    "seed_flop": "49a9c3d2d4a1bb0bed1decbe1f82e8d0f752ad44fe8242b64cd1d3d3fab1affd",
+    "seed_preflop": "3a33ad75088bf9beeb7bb823ec31aa3b23b7ab81c389fc7b851bac5370110a6e",
+    "seed_river": "9514ea00aa9619e5a76ea74b27c138e3e710258be9dafbb564c54fea9f314809",
+    "seed_runout": "dc84ec99f9411ae06d2b3c6b39ba75f8504ec83ad5b4f75bbdc7530a045fceea",
+    "seed_turn": "4ab04773df46a04ad37d4fa8aabfc2bb26d87c39d54c8a13f8834046eef36397",
+    "transcript_final": "b6133245d6a6620c927753ec867cbf9f8aafb955d0370215432a07de5fb74a2a"
+  },
+  "inputs": {
+    "button_initialized": false,
+    "forced": [
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 0
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 4
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 8
+      },
+      {
+        "amount": 100000,
+        "kind": 1,
+        "seat": 4
+      },
+      {
+        "amount": 200000,
+        "kind": 2,
+        "seat": 8
+      }
+    ],
+    "hand_id": 1,
+    "hand_mask": 273,
+    "occupancy_ids": [
+      9000,
+      0,
+      0,
+      0,
+      9004,
+      0,
+      0,
+      0,
+      9008
+    ],
+    "occupants": [
+      "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      null,
+      null,
+      null,
+      "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+      null,
+      null,
+      null,
+      "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8"
+    ],
+    "prev_button": null,
+    "program_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "salts": {
+      "0": "f60d62f6d35cfbc4239ca87dfc41d0b63f6f8fa75dd4b0e3d4cdc5ce30121a1d",
+      "4": "92cbdcfff13de4f2d46d118c3589f778693053434af7648f010ae4d958b14595",
+      "8": "ac85a38dd553e9ca2fdef64c0b86d4735e6a4793012377afa8122d9d392e0c84"
+    },
+    "script": [
+      {
+        "street": 1,
+        "type": "street"
+      }
+    ],
+    "stacks": [
+      20000000,
+      0,
+      0,
+      0,
+      20000000,
+      0,
+      0,
+      0,
+      20000000
+    ],
+    "table": "3333333333333333333333333333333333333333333333333333333333333333",
+    "vrf_attempts": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1
+    },
+    "vrf_outputs": {
+      "0": "d1d73d298e081c2a46de6c2831d5522a4bdf633f5312c1242423b41794629325",
+      "1": "c4155956bbe51b0016d166af65ee9e23c94c7c9b427d4c1d41d364134253d0a9",
+      "2": "cfe8f53dd228e470c418b6eed2294d43a3a7835f6e59e7e0f18d7ba9de4a7625",
+      "3": "3e0f8ad8d846e67cedf0d9554e86d8d388230415dd877c51594d98e98ab2e21b",
+      "4": "017e411baef43b6433f29fdf120bff4c701739c8da08eae2acc287d13c702d2a"
+    }
+  },
+  "name": "3p_sparse"
+}

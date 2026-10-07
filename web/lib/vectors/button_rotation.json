@@ -1,0 +1,330 @@
+{
+  "expected": {
+    "board": [
+      36,
+      15,
+      6,
+      18,
+      50
+    ],
+    "board_src": [
+      1,
+      1,
+      1,
+      2,
+      3
+    ],
+    "button": 5,
+    "draws": [
+      {
+        "card": 13,
+        "draw_no": 0,
+        "retry": 0
+      },
+      {
+        "card": 17,
+        "draw_no": 1,
+        "retry": 0
+      },
+      {
+        "card": 25,
+        "draw_no": 2,
+        "retry": 0
+      },
+      {
+        "card": 4,
+        "draw_no": 3,
+        "retry": 0
+      },
+      {
+        "card": 43,
+        "draw_no": 4,
+        "retry": 0
+      },
+      {
+        "card": 0,
+        "draw_no": 5,
+        "retry": 0
+      },
+      {
+        "card": 16,
+        "draw_no": 6,
+        "retry": 0
+      },
+      {
+        "card": 1,
+        "draw_no": 7,
+        "retry": 0
+      },
+      {
+        "card": 22,
+        "draw_no": 8,
+        "retry": 0
+      },
+      {
+        "card": 3,
+        "draw_no": 9,
+        "retry": 0
+      },
+      {
+        "card": 11,
+        "draw_no": 10,
+        "retry": 0
+      },
+      {
+        "card": 51,
+        "draw_no": 11,
+        "retry": 0
+      },
+      {
+        "card": 29,
+        "draw_no": 12,
+        "retry": 0
+      },
+      {
+        "card": 8,
+        "draw_no": 13,
+        "retry": 0
+      },
+      {
+        "card": 5,
+        "draw_no": 14,
+        "retry": 0
+      },
+      {
+        "card": 32,
+        "draw_no": 15,
+        "retry": 0
+      },
+      {
+        "card": 24,
+        "draw_no": 16,
+        "retry": 0
+      },
+      {
+        "card": 19,
+        "draw_no": 17,
+        "retry": 0
+      },
+      {
+        "card": 36,
+        "draw_no": 18,
+        "retry": 0
+      },
+      {
+        "card": 15,
+        "draw_no": 19,
+        "retry": 0
+      },
+      {
+        "card": 6,
+        "draw_no": 20,
+        "retry": 0
+      },
+      {
+        "card": 18,
+        "draw_no": 21,
+        "retry": 0
+      },
+      {
+        "card": 50,
+        "draw_no": 22,
+        "retry": 0
+      }
+    ],
+    "hole": {
+      "0": [
+        4,
+        29
+      ],
+      "1": [
+        43,
+        8
+      ],
+      "2": [
+        0,
+        5
+      ],
+      "3": [
+        16,
+        32
+      ],
+      "4": [
+        1,
+        24
+      ],
+      "5": [
+        22,
+        19
+      ],
+      "6": [
+        13,
+        3
+      ],
+      "7": [
+        17,
+        11
+      ],
+      "8": [
+        25,
+        51
+      ]
+    },
+    "salt_commitments": {
+      "0": "aea3efd87de3ef36434e43acb0808bf491e112ff5ff8fc129ab7c51a78f3fca9",
+      "1": "fd86c3e2e06bed790aedc8f57d639f318b13e0dfc648e6c34e0f4d29082e4c7c",
+      "2": "43ff86cdc1e1f6ad87337500b54d6170e3438c72bf2c013f22d904ae2d607a85",
+      "3": "30f21b65133ace7d9f636f72e6e14db0762a7da56730c2bb873fa798b01f4c46",
+      "4": "a5774f53d748eb2b68c8724200f153704723c2d3c56510f6b19e1361950d76c8",
+      "5": "fed5db2f8639f6d495b80c3782feb18b4db32dd1796746ca2fec293d5440123c",
+      "6": "9822abe17dec62ce17a7e3ea58601e533745354e010d1fbebfa63d5624c5d365",
+      "7": "77053b9f3d3c598552be90ce5b7fccea5fd4691afa74c7f669a9ce0a6bb75f48",
+      "8": "c0147c8895a53f068c40950c1436c4d37b376e5b0aa925323de7610f263f58a3"
+    },
+    "salt_digest": "da0251fac82573122edcf1f44bbe38b52b12a881aae26b1e3ad059981059d738",
+    "seed_flop": "ea30f97f1410061aa348ce6f502928ea06303ee7809806dec179b9c189f054a5",
+    "seed_preflop": "1a87db71db5c23b89346891d9f02a3c5aa584d2a0c5a94f3f6a13f403345ded7",
+    "seed_river": "e405a70b71cf07487440e32a09a36da2795c653614b1701f06b5d0c3cd30d8d1",
+    "seed_runout": "d5c12d8ef81ac038ba762cb33c78906a58e577991a59624270e646214b954ab4",
+    "seed_turn": "d6dfa45997fe44b046dc047b9a0b13d500136a2c9809f2b7a2a4ba294bc09bb7",
+    "transcript_final": "ab6d5f1d1a581a7f546b092e534d87b546ba6202c65431f3fce47a8b298d8942"
+  },
+  "inputs": {
+    "button_initialized": true,
+    "forced": [
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 0
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 1
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 2
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 3
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 4
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 5
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 6
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 7
+      },
+      {
+        "amount": 20000,
+        "kind": 0,
+        "seat": 8
+      },
+      {
+        "amount": 100000,
+        "kind": 1,
+        "seat": 6
+      },
+      {
+        "amount": 200000,
+        "kind": 2,
+        "seat": 7
+      }
+    ],
+    "hand_id": 2,
+    "hand_mask": 511,
+    "occupancy_ids": [
+      9000,
+      9001,
+      9002,
+      9003,
+      9004,
+      9005,
+      9006,
+      9007,
+      9008
+    ],
+    "occupants": [
+      "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+      "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+      "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+      "a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6",
+      "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+      "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8"
+    ],
+    "prev_button": 4,
+    "program_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "salts": {
+      "0": "f07277b9bef5261622434d2be753f38ace9ba5f79ee8395e0646e4269f7ff949",
+      "1": "fdc2b5529aa64f4a3d0d25c9d2691a0eb4795341e04fb7f32d331eac86f25342",
+      "2": "93ab9d6cc89e8f59c812cd2e96112009e6e24424c1258972232d89de028d5004",
+      "3": "88d265c7af8771ef2fca74d89d072733106dadea3ec75b05e8eb72a2f6250131",
+      "4": "2d4d8207cbbc46915f4faca76f0b07714e5e902824b085793b22ed2b48ed3bf4",
+      "5": "89e713a7a0ece21b4af8e120aa9143403b01d4f6508c9940bd4bfe2373677e3d",
+      "6": "484d7ea9299d07c7b5bd55d5dd803db00dca56fe384f9af6ce2ea07eb0f81250",
+      "7": "a5c7dede10adecc7679b7ed627d4dffa8142b726b9d92f776cb4c26ccbb314b8",
+      "8": "4c32670f2f413bbdcb0174591d6288ef3478efc4f5d74ec7065cf9d6422734ee"
+    },
+    "script": [
+      {
+        "street": 1,
+        "type": "street"
+      },
+      {
+        "street": 2,
+        "type": "street"
+      },
+      {
+        "street": 3,
+        "type": "street"
+      }
+    ],
+    "stacks": [
+      20000000,
+      20000000,
+      20000000,
+      20000000,
+      20000000,
+      20000000,
+      20000000,
+      20000000,
+      20000000
+    ],
+    "table": "9999999999999999999999999999999999999999999999999999999999999999",
+    "vrf_attempts": {
+      "0": 1,
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1
+    },
+    "vrf_outputs": {
+      "0": "437be6bca969660f0aa3537e24e29fcf073068034ea956ad1b529b476463e6b1",
+      "1": "c66e5901be9351616ccde65940fdfa527a66375855af427958b829fca9d8b247",
+      "2": "75df2e0f8680d7003f8539b56a689d750db4b85aaf5ad0c75561fe7e2ba1958c",
+      "3": "9f05c6ef113ac0a4e13cbd248c676a86c3e0296277665405efa5f79fa678c0aa",
+      "4": "87505605331fb9bae79585f3dc891468cd6763a996a17aa1aff5f18c3e10f333"
+    }
+  },
+  "name": "button_rotation"
+}

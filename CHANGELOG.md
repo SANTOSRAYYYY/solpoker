@@ -52,6 +52,26 @@
 
 ### 遗留问题
 
+- **（2026-10-08）发牌复算引擎移植 + 向量自证整齐（verify_hand 的地基）**。
+  新增 `web/lib/deal-verify.mjs`：`reference/solpoker_deal.py` 的 JS 移植（salt_commitment /
+  salt_digest / street_seed / first_button / encode_event 13 种事件 / transcript_init+append /
+  draw_card 拒绝采样 / deal_hand 整手发牌），**crypto 可插拔**（浏览器用 WebCrypto、
+  Node 用 `web/lib/deal-verify-node.mjs` 的 node:crypto）——同一份算法，两条后端，不会漂移。
+  注意：`deal-verify.mjs` 里**不能出现 `node:` 前缀 import**（webpack 会 `UnhandledSchemeError`
+  直接 500，实测踩过），所以 Node 后端单独成文件。
+  **自证整齐**：`scripts/agent/deal-verify-selftest.mjs` 跑 `vectors/v1/*.json` 六个 Stage-4 向量
+  （单挑/3人/满桌9人/庄位轮转/拒绝采样重抽/全下 runout），逐字段比对 board / board_src / button /
+  draws（含 retry 计数）/ hole / salt_digest / 各街 seed / transcript_final —— **6/6 与 Rust/Python
+  参考实现逐字节一致**（`DEAL_VERIFY_SELFTEST_OK`）。同一套引擎也搬进了 `/history` 页面：
+  「复算引擎自检」按钮用**页面里这份代码 + 浏览器 WebCrypto** 当场跑 6 个向量，实测 6/6 PASS。
+  **然后是一个必须讲清楚的结论**：整手 52 张复算除了盐与 VRF（HandSecrets 有）之外，还需要
+  **开局筹码快照**与**下注事件流**（盲注、每次行动都进 transcript，而 transcript_digest 是每张牌的
+  抽取输入）。v1 的 HandProof 只存了事件流的**最终哈希**（设计 §8.7 的记档偏差："v1 不存完整事件
+  字节"），哈希不可逆 —— 所以历史手牌无法从当前链上账户整手复算，这不是实现没做，是数据没上链。
+  两条补齐路线（待用户拍板）：**A. 记录器**（crank 或第三方在对局进行时记录每手输入成 JSON 证据包，
+  用同一引擎复算并与链上 HandProof/HandSecrets 对锚——记录器无法造假，只能选择不给数据）；
+  **B. 程序升级**（把开局筹码与事件流写进 proof entry，§8.7 本来就打算公开）。
+  页面上两个面板都写明了现状，并给出「已能验证 / 待补齐 / 链上锚点齐备」三格小结。
 - **（2026-10-08）UI 接真实数据：五个正式页面全部落地（/、/table/[id]、/agents、/trust、/history）**。
   视觉稿经用户确认（"可以非常好"）后按「大厅 → 对局页 → Agent → 信任 → 手牌验证」逐屏接入链上数据。
   **主题**：`web/app/mock/mock.css` → `web/app/theme.css` 挂到**根布局**（全局 Tailwind + Solana
