@@ -1,29 +1,26 @@
 "use client";
 
+// Privy 接入——严格照抄官方 Solana recipe
+// (docs.privy.io/recipes/solana/getting-started-with-privy-and-solana)：
+// - loginMethods: ['wallet', 'email']
+// - appearance.showWalletLoginFirst + walletChainType: 'solana-only'
+// - externalWallets.solana.connectors = toSolanaWalletConnectors()
+// - embeddedWallets.solana.createOnLogin（3.47.0 类型确认 per-chain 合法）
+// - solana.rpcs（官方说明：仅嵌入式钱包 UI 流程需要；devnet 替换 mainnet
+//   是本项目要求，其余字段与 recipe 逐字一致）
+
 import { PrivyProvider } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 
-// Design refs: docs/design/stage1-design.md §13, §16.
-// Config verified against Privy v3.47.0 docs (2026-10-06):
-// - embeddedWallets.solana.createOnLogin is per-chain (moved in v3);
-// - solana.rpcs only needed for embedded-wallet UI flows; we supply devnet
-//   endpoints because the project targets Solana devnet (see context block v6).
 const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 const DEVNET_RPC = "https://api.devnet.solana.com";
 const DEVNET_WS = "wss://api.devnet.solana.com";
 
-/**
- * Whether a Privy app ID is configured. Pages and hooks use this to decide
- * whether wallet functionality is available; without an ID the scaffold still
- * builds and renders chrome.
- */
+/** 未配置 app ID 时页面框架仍可构建渲染（钱包功能不可用）。 */
 export const PRIVY_CONFIGURED = PRIVY_APP_ID.length > 0;
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  // Scaffold path: without a real app ID, render the page chrome without the
-  // Privy provider so builds and design review work. Production and any real
-  // dev run must set NEXT_PUBLIC_PRIVY_APP_ID.
   if (!PRIVY_CONFIGURED) {
     return (
       <>
@@ -38,24 +35,18 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
-        // Match the dark Solana theme (GUI test 2026-10-06: default modal is light).
+        loginMethods: ["wallet", "email"],
         appearance: {
           theme: "dark",
           accentColor: "#9945FF",
-          // Solana-only 应用：登录弹窗只列 Solana 钱包（2026-10-07 用户反馈：
-          // 没配 Solana 连接器时弹窗只给 EVM 钱包做 SIWE 登录，Privy 随之
-          // 派生一个 SVM 地址，并不是用户自己的 Solana 钱包）。
-          // 不再限制 walletList：列出探测到的全部 Solana 钱包（OKX/Bitget 等
-          // 也能出现）。
-          walletChainType: "solana-only" as never,
+          showWalletLoginFirst: true,
+          walletChainType: "solana-only",
         },
-        // 探测浏览器里的外部 Solana 钱包（Phantom/Solflare/Backpack…）——
-        // 不配这个，登录弹窗根本不会出现 Solana 钱包选项。
         externalWallets: {
           solana: {
             connectors: toSolanaWalletConnectors(),
           },
-        } as never,
+        },
         embeddedWallets: {
           solana: {
             createOnLogin: "users-without-wallets",
