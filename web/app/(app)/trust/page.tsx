@@ -58,7 +58,7 @@ const ITEMS: Item[] = [
     zh: "发牌无法被操纵",
     en: "Provably fair shuffle",
     by: "VRF 随机数 + 双方各自提交的盐（commit–reveal）",
-    how: "按 HandProof 复算每一张牌（验证器页面已在做）",
+    how: "按 HandProof + HandReplay 复算每一张牌（逐张比对），并可按链上事件日志复算行动序列",
     links: [{ label: "验证器", href: "/history" }],
     trust: "VRF 诚实，或至少有一名玩家诚实地生成了盐",
   },
@@ -97,10 +97,11 @@ const ITEMS: Item[] = [
   {
     zh: "历史可审计",
     en: "History is on L1",
-    by: "每手牌 commit Game 与 HandProof，完整事件留在 L1 提交历史",
-    how: "用验证器复算任意一手牌",
+    by: "每手牌 commit Game / HandProof / HandReplay，行动事件 emit 进链上事件日志",
+    how: "用验证器复算任意一手牌：52 张逐张重抽 + 行动序列对链上锚点",
     links: [{ label: "验证器", href: "/history" }],
-    trust: "RPC 节点对历史交易的保留期",
+    trust:
+      "RPC 节点对历史交易的保留期（约一周）—— 牌面与结果的链上锚点永久保留，但重放行动流所需的交易日志会过期",
   },
 ];
 

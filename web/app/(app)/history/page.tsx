@@ -33,7 +33,8 @@ import { useWalletCtx } from "@/components/wallet-context";
 import { ER_RPC } from "@/lib/config";
 import { pdasFor } from "@/lib/solpoker-client";
 import { fmtUsdc, type GameView } from "@/lib/game-state";
-import { verifyVector, webCrypto, dealFromReplay } from "@/lib/deal-verify.mjs";
+import { verifyVector, webCrypto, dealFromReplay, verifyActionStream } from "@/lib/deal-verify.mjs";
+import { fetchHandEvents } from "@/lib/act-log.mjs";
 import { DEAL_VECTORS } from "@/lib/vectors";
 import {
   readGameLive,
@@ -199,6 +200,18 @@ export default function HistoryPage() {
     | { phase: "idle" }
     | { phase: "running" }
     | { phase: "done"; ok: boolean; draws: number; matched: number; diffs: string[] }
+  >({ phase: "idle" });
+  /** 行动流验证结果（从 ER 交易日志重建行动序列 → 对 street_end / transcript_final） */
+  const [stream, setStream] = useState<
+    | { phase: "idle" }
+    | { phase: "running" }
+    | {
+        phase: "done";
+        ok: boolean;
+        events: number;
+        perStreet: { street: number; actions: number; closed: boolean }[];
+        diffs: string[];
+      }
   >({ phase: "idle" });
   /** 引擎自检：用页面同一套 deal-verify 跑 Stage-4 向量 */
   const [engine, setEngine] = useState<
@@ -613,6 +626,109 @@ export default function HistoryPage() {
                   </div>
                 )}
 
+                {/* 行动流验证（§7）：从 ER 交易日志重建行动序列 → 对街锚点与 transcript_final */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    className="btn-casino btn-glass px-5 py-2.5 text-[13px]"
+                    disabled={
+                      stream.phase === "running" ||
+                      !replayEntry ||
+                      !entry ||
+                      replayEntry.layoutVer !== 2
+                    }
+                    onClick={async () => {
+                      if (!replayEntry || !entry || tableId === null) return;
+                      setStream({ phase: "running" });
+                      try {
+                        const gamePda = pdasFor(tableId).game;
+                        const { events } = await fetchHandEvents(
+                          webCrypto,
+                          er,
+                          gamePda,
+                          entry.handId,
+                          { limit: 500 }
+                        );
+                        const r = await verifyActionStream(webCrypto, {
+                          table: [...pdasFor(tableId).table.toBytes()]
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join(""),
+                          handId: entry.handId.toString(),
+                          handMask: entry.handMask,
+                          button: entry.button,
+                          saltDigest: [...replayEntry.saltDigest]
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join(""),
+                          drawDigest: replayEntry.drawDigest.map((d) =>
+                            [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                          ),
+                          streetEnd: replayEntry.streetEnd.map((d) =>
+                            [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                          ),
+                          streetsUsed: replayEntry.streetsUsed,
+                          vrfOut: secret
+                            ? secret.vrfOut.map((d) =>
+                                [...d].map((b) => b.toString(16).padStart(2, "0")).join("")
+                              )
+                            : [],
+                          vrfAttemptUsed: replayEntry.vrfAttemptUsed,
+                          events,
+                          deltas: entry.deltas.map((x) => x.toString()),
+                          rake: entry.rake.toString(),
+                          transcriptFinal: [...entry.transcriptFinal]
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join(""),
+                        } as never);
+                        setStream({
+                          phase: "done",
+                          ok: r.ok,
+                          events: events.length,
+                          perStreet: r.perStreet,
+                          diffs: r.diffs,
+                        });
+                      } catch (e) {
+                        setStream({
+                          phase: "done",
+                          ok: false,
+                          events: 0,
+                          perStreet: [],
+                          diffs: [String(e instanceof Error ? e.message : e)],
+                        });
+                      }
+                    }}
+                  >
+                    {stream.phase === "running" ? "重建行动流中…" : "验证行动流（从 ER 交易日志）"}
+                  </button>
+                  {replayEntry && replayEntry.layoutVer !== 2 && (
+                    <span className="text-[11.5px] text-warn">
+                      这一手没有街锚点（v1 记录）——需要新程序打出的手牌
+                    </span>
+                  )}
+                </div>
+                {stream.phase === "done" && (
+                  <div className="mt-3 rounded-xl border border-accent-500/20 bg-black/30 p-4 font-mono text-[11.5px] leading-relaxed">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={stream.ok ? "mint" : "danger"}>
+                        {stream.ok ? "行动流验证通过 ✓" : "行动流验证不一致 ✗"}
+                      </Badge>
+                      <span className="text-mist-dim">
+                        {stream.events} 条规范事件 ·{" "}
+                        {stream.perStreet
+                          .map((s) => `街${s.street}:${s.actions}条${s.closed ? "✓" : "✗"}`)
+                          .join(" ")}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-mist-faint">
+                      含义：这些行动事件（金额/座号/类型）哈希后与链上 street_end / transcript_final
+                      完全一致 —— 行动序列无法被篡改或伪造。
+                    </div>
+                    {stream.diffs.slice(0, 5).map((d, i) => (
+                      <div key={i} className="mt-1 text-loss">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {check.phase === "done" && (
                   <div className="mt-4 space-y-2 rounded-xl border border-accent-500/20 bg-black/30 p-4 font-mono text-[11.5px] leading-relaxed">
                     <div className="flex items-center gap-2 text-mist">
@@ -662,22 +778,28 @@ export default function HistoryPage() {
                   实测（桌 #14 手 #1，已结算）：**逐张 9/9 通过**。
                 </p>
                 <p className="mt-2 text-[12.5px] leading-relaxed text-mist-dim">
-                  还差的：① <span className="text-mist">replay 环之外的旧手牌</span>（环长 8 手，
-                  更早的手牌只有最终哈希，无法整手复算）；②
-                  <span className="text-mist">「事件流 → transcript_final」这一步</span> ——
-                  下注序列不公开上链（事件流无界），所以无法独立验证某条 transcript 就是真实行动序列；
-                  能验证的是「VRF + 盐 + 每街前置摘要 → 这 52 张牌」，加上玩家自己的盐承诺
-                  （当前手可与链上逐座比对）。要把最后一步也补上，需要把事件流也存证（另行设计）。
+                  并且从 2026-10-08 起，<span className="text-mist">行动序列本身也可验证</span>：
+                  程序把每次行动/超时的**规范事件**（座号、类型、金额）emit 成链上交易日志，
+                  上面的「验证行动流」会把这些事件按序追加到街首摘要上 —— 复现出链上的
+                  <span className="text-mist">街结束锚点</span>与
+                  <span className="text-mist">transcript_final</span> 才算通过。
+                  实测（桌 #14 手 #3，已结算）：**8 条事件、四街全中**。
+                </p>
+                <p className="mt-2 text-[12.5px] leading-relaxed text-mist-dim">
+                  还差的：① <span className="text-mist">replay 环之外的旧手牌</span>（环长 8 手）；
+                  ② 行动事件存在 <span className="text-mist">ER 交易日志</span>里，受
+                  <span className="text-mist">RPC 历史保留期</span>限制（约一周，需 MagicBlock 书面确认）——
+                  链上锚点永久保留，但重放所需的日志会过期。
                 </p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <div className="rounded-lg border border-mint/25 bg-mint/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 整手复算（replay 环内 8 手）· 守恒 · 盐摘要与逐街种子 · 当前手盐承诺
+                    ✓ 整手复算（牌）· 行动流验证（事件）· 守恒 · 盐摘要 · 引擎 6/6 自检
                   </div>
                   <div className="rounded-lg border border-warn/25 bg-warn/5 p-3 text-[12px] text-mist-dim">
-                    ⏳ 环外旧手牌 · 事件流存证（设计待定）
+                    ⏳ 环外旧手牌 · ER 日志保留期（主网需确认）
                   </div>
                   <div className="rounded-lg border border-accent-500/25 bg-accent-500/5 p-3 text-[12px] text-mist-dim">
-                    ✓ 引擎自检：6/6 向量与 Rust/Python 逐字节一致
+                    ✓ 链上锚点永久：board/hole/deltas/transcript_final/street_end/salts/VRF
                   </div>
                 </div>
               </div>

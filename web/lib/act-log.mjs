@@ -42,49 +42,57 @@ function base64ToBytes(b64) {
 export async function fetchHandEvents(crypto, er, gamePda, handId, opts = {}) {
   const target = BigInt(handId);
   const disc = await handEventDiscriminator(crypto);
-  const sigs = await er.getSignaturesForAddress(gamePda, { limit: opts.limit ?? 400 });
-  const ordered = [...sigs].reverse(); // 旧 → 新
+  const sigs = await er.getSignaturesForAddress(gamePda, { limit: opts.limit ?? 300 });
+  // 新 → 旧扫描：目标手的事件最先遇到，遇到更小的 hand_id 就能停（省掉大量拉取）
+  const newestFirst = sigs.filter((s) => !s.err);
+  const batch = opts.concurrency ?? 8;
 
-  const events = [];
+  const events = []; // 收集顺序 = 新→旧，最后反转
   let scanned = 0;
-  for (const info of ordered) {
-    if (info.err) continue;
-    let tx;
-    try {
-      tx = await er.getTransaction(info.signature, { maxSupportedTransactionVersion: 0 });
-    } catch {
-      continue;
-    }
-    scanned++;
-    const logs = tx?.meta?.logMessages ?? [];
-    for (const line of logs) {
-      const idx = line.indexOf("Program data: ");
-      if (idx < 0) continue;
-      let raw;
-      try {
-        raw = base64ToBytes(line.slice(idx + "Program data: ".length).trim());
-      } catch {
-        continue;
+  let stoppedEarly = false;
+  for (let i = 0; i < newestFirst.length && !stoppedEarly; i += batch) {
+    const slice = newestFirst.slice(i, i + batch);
+    const txs = await Promise.all(
+      slice.map((info) =>
+        er
+          .getTransaction(info.signature, { maxSupportedTransactionVersion: 0 })
+          .catch(() => null)
+      )
+    );
+    for (const tx of txs) {
+      if (!tx) continue;
+      scanned++;
+      const logs = tx.meta?.logMessages ?? [];
+      for (const line of logs) {
+        const idx = line.indexOf("Program data: ");
+        if (idx < 0) continue;
+        let raw;
+        try {
+          raw = base64ToBytes(line.slice(idx + "Program data: ".length).trim());
+        } catch {
+          continue;
+        }
+        if (raw.length !== DISCRIMINATOR_LEN + BODY_LEN) continue;
+        if (!bytesEq(raw.slice(0, DISCRIMINATOR_LEN), disc)) continue;
+        const b = raw.subarray(DISCRIMINATOR_LEN);
+        const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+        const hid = dv.getBigUint64(0, true);
+        if (hid < target) {
+          stoppedEarly = true;
+          break;
+        }
+        if (hid > target) continue;
+        events.push({
+          seq: dv.getUint32(8, true),
+          tag: b[12],
+          seat: b[13],
+          kind: b[14],
+          amount: dv.getBigUint64(15, true),
+        });
       }
-      if (raw.length !== DISCRIMINATOR_LEN + BODY_LEN) continue;
-      if (!bytesEq(raw.slice(0, DISCRIMINATOR_LEN), disc)) continue;
-      const b = raw.subarray(DISCRIMINATOR_LEN);
-      const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-      const hid = dv.getBigUint64(0, true);
-      if (hid !== target) {
-        // 新→旧扫描时，出现更小的 hand_id 说明目标手的事件已经翻过去了
-        if (hid < target) return { events, scanned, stoppedEarly: true };
-        continue;
-      }
-      events.push({
-        seq: dv.getUint32(8, true),
-        tag: b[12],
-        seat: b[13],
-        kind: b[14],
-        amount: dv.getBigUint64(15, true),
-      });
+      if (stoppedEarly) break;
     }
-    // 一个 tx 内多条日志已按顺序加入；跨 tx 的顺序由 ordered 保证
   }
-  return { events, scanned, stoppedEarly: false };
+  events.reverse(); // 新→旧 → 发生顺序
+  return { events, scanned, stoppedEarly };
 }
