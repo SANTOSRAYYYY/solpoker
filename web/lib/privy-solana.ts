@@ -117,9 +117,12 @@ export function useSignChallenge() {
  * (Anchor) and serializes it before passing it in. Returns the signed
  * serialized transaction bytes.
  *
+ * 2026-10-07 实锤修复（读 SDK 源码确认）：solana 子包的 useSignTransaction
+ * 默认 `chain: "solana:mainnet"`——Privy 会在错误的链上处理/预演我们的
+ * devnet 交易，签名流程直接崩（用户点「坐下」即 Application error 的根因）。
+ * 必须显式传 devnet。
+ *
  * TODO (待核实): web3.js v1 bytes round-trip on the latest React SDK.
- * The official SPL recipe still uses web3.js v1 but has a typo; verify with a
- * real transaction before relying on this for sit_down.
  */
 export function useSignL1Transaction() {
   const { signTransaction } = useSignTransaction();
@@ -130,7 +133,8 @@ export function useSignL1Transaction() {
     const { signedTransaction } = await signTransaction({
       transaction: txBytes,
       wallet,
-    });
+      chain: "solana:devnet",
+    } as Parameters<typeof signTransaction>[0]);
     // Defence: sign-only wallets return a raw 64-byte signature instead of a
     // full transaction; callers must detect length == 64 and attach the sig
     // themselves before broadcasting.
