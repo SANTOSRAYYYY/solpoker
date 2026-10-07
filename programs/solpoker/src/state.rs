@@ -325,6 +325,56 @@ pub struct SecretsEntry {
 }
 
 // ---------------------------------------------------------------------------
+// HandReplay（§8.7 落地，2026-10-08）：让「整手 52 张复算」只用链上数据就能做
+// ---------------------------------------------------------------------------
+//
+// 背景：整手复算的输入 = salt_digest + 每张牌抽取前的 transcript_digest + VRF 输出 + 盐。
+// v1 只存了 transcript_final（最终哈希），哈希不可逆，所以历史手牌无法复算
+// （见 docs/design/hand-replay-design.md）。本账户补上那两个**中间摘要**：
+//
+//   - salt_digest：有它 + HandSecrets 的 VRF 输出即可算出 5 个 seed_k；
+//   - draw_digest[k]：第 k 条街**第一张牌抽取前**的 transcript 摘要。街内后续牌的
+//     前置摘要可由「牌序 + 该街的 HoleDealt/BoardDealt 事件」确定性重建。
+//
+// 为什么不扩 HandProof/Deck：那会改既有账户大小 → 老桌全部失效。独立账户则零影响：
+// 新程序部署后给每桌补一次 init_replay 即可开始记录，历史手牌只是「没有 replay」。
+//
+// 尺寸：ReplayEntry 504 字节（8×63）× 8 手 = 4,032 + head(1) + pad(7) + disc(8)
+// = 4,048 字节 ≪ 10,240（CPI create_account 上限）。
+#[account(zero_copy)]
+#[repr(C)]
+#[derive(Default)]
+pub struct HandReplay {
+    pub entries: [ReplayEntry; REPLAY_RING],
+    pub head: u8,
+    pub _pad: [u8; 7],
+}
+
+/// replay 环长度（与 HandProof 的 16 手不同步：完整复算数据只保最近 8 手）。
+pub const REPLAY_RING: usize = 8;
+
+#[zero_copy]
+#[derive(Default, Debug)]
+pub struct ReplayEntry {
+    /// 槽位归属：写入时与 game.hand_id 比对（0 = 空槽）。
+    pub hand_id: u64,
+    /// 该手 9 个 occupant —— 让「occupants + salts → salt_digest」这一步也能被验证。
+    pub occupants: [Pubkey; MAX_SEATS],
+    /// salt_digest = sha256("solpoker/salts/v1" ‖ table ‖ hand_id ‖ hand_mask ‖ 每座 …)
+    pub salt_digest: [u8; 32],
+    /// [preflop, flop, turn, river, runout] 各街第一张牌抽取前的 transcript。
+    pub draw_digest: [[u8; 32]; 5],
+    /// 每个 VRF 目标实际用的 attempt（重建 VrfFulfilled 事件需要）。
+    pub vrf_attempt_used: [u8; 5],
+    /// 0=Settled 1=Void（与 ProofEntry.status 同义）。
+    pub status: u8,
+    /// bit k = 该街确实发过牌（draw_digest[k] 有效）。
+    pub streets_used: u8,
+    /// 显式填充：504 = 8×63。
+    pub _pad: [u8; 9],
+}
+
+// ---------------------------------------------------------------------------
 // VRF slot mirror (unchanged — see module docs)
 // ---------------------------------------------------------------------------
 
@@ -528,4 +578,37 @@ pub struct AgentProfile {
 pub struct OwnerAllowlist {
     pub owner: Pubkey,
     pub bump: u8,
+}
+
+// ---------------------------------------------------------------------------
+// HandReplay 布局钉子：尺寸与槽位数写死在测试里，改动必须显式过这里。
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod replay_layout_tests {
+    use super::*;
+
+    #[test]
+    fn replay_entry_is_504_bytes_and_account_fits_cpi_limit() {
+        // ReplayEntry：8 + 288 + 32 + 160 + 5 + 1 + 1 + 9 = 504（8 的整数倍，无隐式填充）
+        assert_eq!(core::mem::size_of::<ReplayEntry>(), 504);
+        // HandReplay：8 × 504 + 1(head) + 7(pad) = 4,040；加 8 字节 discriminator = 4,048
+        assert_eq!(core::mem::size_of::<HandReplay>(), 4040);
+        assert_eq!(8 + core::mem::size_of::<HandReplay>(), 4048);
+        // CPI create_account 上限 10,240：留足余量
+        assert!(8 + core::mem::size_of::<HandReplay>() < 10_240);
+        assert_eq!(REPLAY_RING, 8);
+    }
+
+    #[test]
+    fn replay_slot_cycles_over_ring() {
+        // 槽位 = hand_id % RING（hand.rs 的 replay_slot 与之同义）
+        let slot = |h: u64| (h as usize) % REPLAY_RING;
+        assert_eq!(slot(1), 1);
+        assert_eq!(slot(8), 0);
+        assert_eq!(slot(9), 1);
+        // 相邻两手永不撞槽
+        for h in 1u64..64 {
+            assert_ne!(slot(h), slot(h + 1));
+        }
+    }
 }
