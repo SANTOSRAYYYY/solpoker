@@ -41,6 +41,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
         appearance: {
           theme: "dark",
           accentColor: "#9945FF",
+          // 把真 Solana 钱包排在钱包列表前面（2026-10-07 用户反馈：默认列表
+          // 诱导用户连了 EVM 钱包，Privy 随之派生一个 SVM 地址，并不是用户
+          // 自己的 Solana 钱包）。
+          walletList: ["phantom", "solflare", "backpack", "metamask"] as never,
         },
         embeddedWallets: {
           solana: {

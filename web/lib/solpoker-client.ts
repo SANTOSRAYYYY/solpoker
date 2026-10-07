@@ -1,4 +1,4 @@
-// SolPoker chain client: PDA helpers, instruction builders, tx senders.
+﻿// SolPoker chain client: PDA helpers, instruction builders, tx senders.
 //
 // Key rules learned in Stage 6 (CHANGELOG):
 // - every ER game-loop tx MUST carry ComputeBudget setComputeUnitLimit(ER_CU)
@@ -38,9 +38,27 @@ const u32le = (n: number) => {
 const pda = (seeds: Uint8Array[], program: PublicKey = PROGRAM_ID) =>
   PublicKey.findProgramAddressSync(seeds, program)[0];
 
-export const pdas = (() => {
-  const table = pda([u8s("table"), u32le(TABLE_ID)]);
-  return {
+export interface TablePdas {
+  table: PublicKey;
+  vaultAuth: PublicKey;
+  game: PublicKey;
+  handProof: PublicKey;
+  handSecrets: PublicKey;
+  deck: PublicKey;
+  commitPayer: PublicKey;
+  seat: (i: number) => PublicKey;
+  hand: (i: number) => PublicKey;
+  permission: (acc: PublicKey) => PublicKey;
+}
+
+const pdaCache = new Map<number, TablePdas>();
+
+/** 按桌推导全部 PDA（缓存）。大厅模式下桌号由用户选择，不能再用模块级常量。 */
+export function pdasFor(tableId: number): TablePdas {
+  const hit = pdaCache.get(tableId);
+  if (hit) return hit;
+  const table = pda([u8s("table"), u32le(tableId)]);
+  const t: TablePdas = {
     table,
     vaultAuth: pda([u8s("vault_auth"), table.toBytes()]),
     game: pda([u8s("game"), table.toBytes()]),
@@ -48,13 +66,17 @@ export const pdas = (() => {
     handSecrets: pda([u8s("secrets"), table.toBytes()]),
     deck: pda([u8s("deck"), table.toBytes(), new Uint8Array([0, 0])]),
     commitPayer: pda([u8s("commit_payer"), table.toBytes()]),
-    seat: (i: number) => pda([u8s("seat"), table.toBytes(), new Uint8Array([i])]),
-    hand: (i: number) =>
+    seat: (i) => pda([u8s("seat"), table.toBytes(), new Uint8Array([i])]),
+    hand: (i) =>
       pda([u8s("hand"), table.toBytes(), new Uint8Array([0, 0]), new Uint8Array([i])]),
-    permission: (acc: PublicKey) =>
-      pda([u8s("permission:"), acc.toBytes()], PERMISSION_PROGRAM),
+    permission: (acc) => pda([u8s("permission:"), acc.toBytes()], PERMISSION_PROGRAM),
   };
-})();
+  pdaCache.set(tableId, t);
+  return t;
+}
+
+/** 兼容旧调用点：默认桌的 PDA（新代码应显式用 pdasFor(tableId)）。 */
+export const pdas = pdasFor(TABLE_ID);
 
 function u8s(s: string): Uint8Array {
   return new TextEncoder().encode(s);
@@ -167,6 +189,7 @@ export function sleep(ms: number): Promise<void> {
 
 // ---------- instruction builders ----------
 export async function ixCommitSalt(
+  t: TablePdas,
   program: anchor.Program,
   idx: number,
   handId: bigint,
@@ -176,15 +199,16 @@ export async function ixCommitSalt(
   return program.methods
     .commitSalt(idx, new BN(handId.toString()), Array.from(commitment))
     .accounts({
-      table: pdas.table,
-      game: pdas.game,
-      seatLedger: pdas.seat(idx),
+      table: t.table,
+      game: t.game,
+      seatLedger: t.seat(idx),
       signer,
     })
     .instruction();
 }
 
 export async function ixRevealSalt(
+  t: TablePdas,
   program: anchor.Program,
   idx: number,
   handId: bigint,
@@ -194,9 +218,9 @@ export async function ixRevealSalt(
   return program.methods
     .revealSalt(idx, new BN(handId.toString()), Array.from(salt))
     .accounts({
-      table: pdas.table,
-      seatLedger: pdas.seat(idx),
-      playerHand: pdas.hand(idx),
+      table: t.table,
+      seatLedger: t.seat(idx),
+      playerHand: t.hand(idx),
       signer,
     })
     .instruction();
@@ -205,6 +229,7 @@ export async function ixRevealSalt(
 export type ActKind = "fold" | "check" | "call" | "bet" | "raiseTo" | "allIn";
 
 export async function ixAct(
+  t: TablePdas,
   program: anchor.Program,
   idx: number,
   handId: bigint,
@@ -217,9 +242,9 @@ export async function ixAct(
   return program.methods
     .act(idx, new BN(handId.toString()), actionSeq, normalized)
     .accounts({
-      table: pdas.table,
-      game: pdas.game,
-      seatLedger: pdas.seat(idx),
+      table: t.table,
+      game: t.game,
+      seatLedger: t.seat(idx),
       signer,
     })
     .instruction();
@@ -245,6 +270,7 @@ function normalizeActionArg(action: ActKind, amount: bigint | null) {
 }
 
 export async function ixStandUp(
+  t: TablePdas,
   program: anchor.Program,
   idx: number,
   signer: PublicKey,
@@ -253,10 +279,10 @@ export async function ixStandUp(
   return program.methods
     .standUp(idx)
     .accounts({
-      table: pdas.table,
-      game: pdas.game,
-      seatLedger: pdas.seat(idx),
-      playerHand: pdas.hand(idx),
+      table: t.table,
+      game: t.game,
+      seatLedger: t.seat(idx),
+      playerHand: t.hand(idx),
       permission: extra.permission,
       commitPayer: extra.commitPayer,
       vault: extra.vault,

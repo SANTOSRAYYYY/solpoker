@@ -36,6 +36,65 @@ export function useSolanaWallet(): ConnectedStandardSolanaWallet | null {
   );
 }
 
+// ---------------------------------------------------------------------------
+// 钱包选择器（2026-10-07 用户反馈）：Privy 会给 EVM 外部钱包派生一个 SVM 钱包
+// ——那不是用户自己的 Solana 钱包。把全部连接的钱包列出来让用户选，默认优先
+// 真 Solana 钱包（Phantom/Solflare/Backpack…），其次内嵌，最后 EVM 派生。
+// ---------------------------------------------------------------------------
+
+export type WalletKind = "embedded" | "solana" | "derived";
+
+export interface WalletOption {
+  address: string;
+  name: string;
+  kind: WalletKind;
+  kindLabel: string;
+  wallet: ConnectedStandardSolanaWallet;
+}
+
+const SOLANA_WALLET_NAMES = new Set([
+  "Phantom",
+  "Solflare",
+  "Backpack",
+  "Glow",
+  "Slope",
+  "Torus",
+]);
+
+export function classifyWallet(w: ConnectedStandardSolanaWallet): WalletKind {
+  const name = w.standardWallet.name;
+  if (name === "Privy") return "embedded";
+  if (SOLANA_WALLET_NAMES.has(name)) return "solana";
+  return "derived";
+}
+
+const KIND_LABEL: Record<WalletKind, string> = {
+  embedded: "Privy 内嵌钱包",
+  solana: "外部 Solana 钱包",
+  derived: "EVM 派生 SVM（非你的 Solana 钱包）",
+};
+
+export function useWalletOptions(): WalletOption[] {
+  const { wallets } = useWallets();
+  return (wallets ?? []).map((w) => {
+    const kind = classifyWallet(w);
+    return {
+      address: w.address,
+      name: w.standardWallet.name,
+      kind,
+      kindLabel: KIND_LABEL[kind],
+      wallet: w,
+    };
+  });
+}
+
+/** 默认选择：真 Solana 钱包 > 内嵌 > EVM 派生。 */
+export function defaultWalletAddress(options: WalletOption[]): string | null {
+  const rank: Record<WalletKind, number> = { solana: 0, embedded: 1, derived: 2 };
+  const sorted = [...options].sort((a, b) => rank[a.kind] - rank[b.kind]);
+  return sorted[0]?.address ?? null;
+}
+
 /**
  * Signs the L1 auth challenge (stage1-design.md §13) with the wallet.
  * The challenge is arbitrary 32-byte data from crypto.getRandomValues;

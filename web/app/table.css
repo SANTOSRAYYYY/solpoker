@@ -119,6 +119,14 @@
 }
 .raise-input:focus { outline: none; border-color: #9945FF; }
 
+select {
+  padding: 6px 8px;
+  background: #0e0e14; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  max-width: 340px;
+}
+select:focus { outline: none; border-color: #9945FF; }
+
 /* 按钮加大一号用于行动坞 */
 .action-dock .btn { padding: 10px 18px; font-size: 15px; }
 

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 // SolPoker 牌桌页（Stage 7）：Privy 钱包 → TEE attestation 门控 → 入座 →
 // 对局（session key 自动打盐/行动）→ 站起兑现。
@@ -21,22 +21,24 @@ import BN from "bn.js";
 import "./table.css";
 import { PRIVY_CONFIGURED } from "./providers";
 import {
-  useSolanaWallet,
+  useWalletOptions,
+  defaultWalletAddress,
   useSignChallenge,
   useSignL1Transaction,
+  type WalletOption,
 } from "@/lib/privy-solana";
 import { establishTeeSession, type TeeSession } from "@/lib/tee-auth";
 import { useGame } from "@/lib/use-game";
 import {
   L1_RPC,
-  TABLE_ID,
+  TABLE_ID as DEFAULT_TABLE_ID,
   TUSDC_MINT,
   SESSION_KEY_LAMPORTS,
   SESSION_TTL_S,
   PHASES,
 } from "@/lib/config";
 import {
-  pdas,
+  pdasFor,
   makeProgram,
   sendWalletSigned,
   TxError,
@@ -44,7 +46,9 @@ import {
 import { fmtUsdc, phaseName } from "@/lib/game-state";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
+import { scanTables, type TableInfo } from "@/lib/tables";
 import type { GameView } from "@/lib/game-state";
+import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 
 // ?demo=1：用假数据渲染牌桌（免登录的排版走查；不产生任何链上行为）。
 const DEMO_GAME: GameView = {
@@ -139,16 +143,80 @@ type TeeState =
 
 export default function Home() {
   const { authenticated } = usePrivy();
-  const wallet = useSolanaWallet();
+  const walletOptions = useWalletOptions();
   const signChallenge = useSignChallenge();
   const signL1 = useSignL1Transaction();
+
+  // ---- 钱包选择（EVM 派生 SVM ≠ 用户的 Solana 钱包；默认优先真 Solana 钱包，
+  // 选择持久化） ----
+  const [walletAddr, setWalletAddr] = useState<string | null>(null);
+  useEffect(() => {
+    if (walletAddr && walletOptions.some((o) => o.address === walletAddr)) return;
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("solpoker:wallet");
+    } catch {
+      /* ignore */
+    }
+    const valid = saved && walletOptions.some((o) => o.address === saved);
+    setWalletAddr(valid ? saved : defaultWalletAddress(walletOptions));
+  }, [walletOptions, walletAddr]);
+  const pickWallet = (addr: string) => {
+    setWalletAddr(addr);
+    try {
+      localStorage.setItem("solpoker:wallet", addr);
+    } catch {
+      /* ignore */
+    }
+  };
+  const wallet: ConnectedStandardSolanaWallet | null =
+    walletOptions.find((o) => o.address === walletAddr)?.wallet ?? null;
+
+  // ---- 桌选择（扫描链上 Table 账户；选择持久化） ----
+  const l1 = useMemo(() => new Connection(L1_RPC, "confirmed"), []);
+  const [tables, setTables] = useState<TableInfo[]>([]);
+  const [tableId, setTableId] = useState<number>(DEFAULT_TABLE_ID);
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("solpoker:table");
+    } catch {
+      /* ignore */
+    }
+    if (saved !== null && !Number.isNaN(Number(saved))) setTableId(Number(saved));
+  }, []);
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      for (;;) {
+        if (stop) return;
+        try {
+          setTables(await scanTables(l1));
+        } catch {
+          // 下一轮重试
+        }
+        await new Promise((r) => setTimeout(r, 10000));
+      }
+    })();
+    return () => {
+      stop = true;
+    };
+  }, [l1]);
+  const pickTable = (id: number) => {
+    setTableId(id);
+    try {
+      localStorage.setItem("solpoker:table", String(id));
+    } catch {
+      /* ignore */
+    }
+  };
+  const pdas = useMemo(() => pdasFor(tableId), [tableId]);
 
   const [tee, setTee] = useState<TeeState>({ phase: "idle" });
   const [notice, setNotice] = useState<string | null>(null);
 
-  const l1 = useMemo(() => new Connection(L1_RPC, "confirmed"), []);
   const teeToken = tee.phase === "ok" ? tee.session.token : null;
-  const driver = useGame(teeToken ? wallet : null, teeToken);
+  const driver = useGame(teeToken ? wallet : null, teeToken, tableId);
   const { game, myHand, mySeat } = driver;
 
   const connectTee = useCallback(async () => {
@@ -202,7 +270,7 @@ export default function Home() {
     setNotice(null);
     try {
       const pk = new PublicKey(wallet.address);
-      const sessionKey = loadOrCreateSessionKey(TABLE_ID, seatIdx, wallet.address);
+      const sessionKey = loadOrCreateSessionKey(tableId, seatIdx, wallet.address);
       const program = makeProgram(l1);
       const playerAta = getAssociatedTokenAddressSync(TUSDC_MINT, pk);
 
@@ -373,9 +441,28 @@ export default function Home() {
             {!demo && (
               <>
                 <div className="statusbar">
-                  <span>
-                    <code>{wallet!.address.slice(0, 4)}…{wallet!.address.slice(-4)}</code>
-                  </span>
+                  {walletOptions.length > 1 ? (
+                    <label className="muted">
+                      钱包{" "}
+                      <select
+                        value={walletAddr ?? ""}
+                        onChange={(e) => pickWallet(e.target.value)}
+                      >
+                        {walletOptions.map((o) => (
+                          <option key={o.address} value={o.address}>
+                            {o.name} · {o.kindLabel} · {o.address.slice(0, 4)}…{o.address.slice(-4)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <span>
+                      <code>{wallet!.address.slice(0, 4)}…{wallet!.address.slice(-4)}</code>
+                      {walletOptions[0] && (
+                        <span className="muted">（{walletOptions[0].kindLabel}）</span>
+                      )}
+                    </span>
+                  )}
                   <span>
                     SOL <span className="bal">{solBal === null ? "…" : solBal.toFixed(3)}</span>
                   </span>
@@ -395,9 +482,33 @@ export default function Home() {
                     <span className="ok-text">TEE 已验证 ✓</span>
                   )}
                 </div>
+                {walletOptions.some((o) => o.kind === "derived" && o.address === walletAddr) && (
+                  <p className="error-text">
+                    当前选中的是 EVM 派生 SVM 地址，不是你自己的 Solana 钱包——在状态条左侧换一个。
+                  </p>
+                )}
                 {tee.phase === "error" && (
                   <p className="error-text">TEE 连接失败：{tee.message}（点按钮重试）</p>
                 )}
+
+                {/* ---- 桌选择 ---- */}
+                <div className="statusbar">
+                  <label className="muted">
+                    牌桌{" "}
+                    <select value={tableId} onChange={(e) => pickTable(Number(e.target.value))}>
+                      {tables.length === 0 && (
+                        <option value={tableId}>#{tableId}（扫描中…）</option>
+                      )}
+                      {tables.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          #{t.id} · 盲注 {t.blindsText} · {t.maxSeats} 人桌
+                          {t.status !== 0 ? "（维护中）" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="muted">换桌前请先在当前桌站起并兑现</span>
+                </div>
               </>
             )}
             {demo && (
@@ -601,7 +712,7 @@ export default function Home() {
 
       <footer className="footer">
         <span className="muted">
-          桌 #{TABLE_ID} · 阶段机 {PHASES.join(" → ")} · crank 驱动 advance/VRF/commit
+          桌 #{tableId} · 阶段机 {PHASES.join(" → ")} · crank 驱动 advance/VRF/commit
         </span>
       </footer>
     </div>

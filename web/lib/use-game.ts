@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 // The game driver hook: polls Game + own PlayerHand + SeatLedger, derives the
 // player's seat, and auto-plays the salt commit/reveal protocol with the
@@ -18,12 +18,11 @@ import {
 import {
   ER_RPC,
   L1_RPC,
-  TABLE_ID,
   ER_CU,
   EPHEMERAL_VAULT,
 } from "./config";
 import {
-  pdas,
+  pdasFor,
   makeProgram,
   sendAndConfirm,
   ixCommitSalt,
@@ -48,19 +47,28 @@ export interface GameDriver {
 
 export function useGame(
   wallet: ConnectedStandardSolanaWallet | null,
-  teeToken: string | null
+  teeToken: string | null,
+  tableId: number
 ): GameDriver {
   const [game, setGame] = useState<GameView | null>(null);
   const [myHand, setMyHand] = useState<HandView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const pdas = useMemo(() => pdasFor(tableId), [tableId]);
   const er = useMemo(
     () =>
       new Connection(teeToken ? `${ER_RPC}?token=${teeToken}` : ER_RPC, "confirmed"),
     [teeToken]
   );
   const program = useMemo(() => makeProgram(er), [er]);
+
+  // 换桌时清空旧状态
+  useEffect(() => {
+    setGame(null);
+    setMyHand(null);
+    setError(null);
+  }, [tableId]);
 
   const walletAddr = wallet?.address ?? null;
   const walletPk = useMemo(
@@ -81,7 +89,7 @@ export function useGame(
   const sessionKey = useMemo(
     () =>
       mySeat !== null && walletAddr
-        ? loadOrCreateSessionKey(TABLE_ID, mySeat, walletAddr)
+        ? loadOrCreateSessionKey(tableId, mySeat, walletAddr)
         : null,
     [mySeat, walletAddr]
   );
@@ -144,14 +152,14 @@ export function useGame(
       if (game.phase === 1 && inHand && isZero32(seat.saltCommit)) {
         saltBusy.current = true;
         try {
-          const salt = loadOrCreateSalt(TABLE_ID, game.handId, mySeat, walletAddr!);
+          const salt = loadOrCreateSalt(tableId, game.handId, mySeat, walletAddr!);
           const commitment = await saltCommitment(
             pdas.table.toBytes(),
             game.handId,
             walletPk.toBytes(),
             salt
           );
-          const ix = await ixCommitSalt(
+          const ix = await ixCommitSalt(pdas, 
             program,
             mySeat,
             game.handId,
@@ -175,8 +183,8 @@ export function useGame(
       ) {
         saltBusy.current = true;
         try {
-          const salt = loadOrCreateSalt(TABLE_ID, game.handId, mySeat, walletAddr!);
-          const ix = await ixRevealSalt(
+          const salt = loadOrCreateSalt(tableId, game.handId, mySeat, walletAddr!);
+          const ix = await ixRevealSalt(pdas, 
             program,
             mySeat,
             game.handId,
@@ -203,7 +211,7 @@ export function useGame(
       setBusy(kind);
       setError(null);
       try {
-        const ix = await ixAct(
+        const ix = await ixAct(pdas, 
           program,
           mySeat,
           game.handId,
@@ -229,7 +237,7 @@ export function useGame(
     setBusy("standUp");
     setError(null);
     try {
-      const ix = await ixStandUp(program, mySeat, sessionKey.publicKey, {
+      const ix = await ixStandUp(pdas, program, mySeat, sessionKey.publicKey, {
         permission: pdas.permission(pdas.hand(mySeat)),
         commitPayer: pdas.commitPayer,
         vault: EPHEMERAL_VAULT,
