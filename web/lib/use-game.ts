@@ -194,6 +194,9 @@ export function useGame(
   }, [game, myHand, mySeat, sessionKey, walletPk, walletAddr, er, program]);
 
   // ---- actions ----
+  // 金额解析必须安全：非数字输入得到 null 而不是 BigInt(NaN) 崩溃
+  // （2026-10-07 用户实测：事件处理器里未捕获的 RangeError 会直接命中
+  // Next.js 错误边界 = "Application error: a client-side exception"）。
   const act = useCallback(
     async (kind: ActKind, amount?: bigint) => {
       if (!game || mySeat === null || !sessionKey) return;
@@ -211,8 +214,9 @@ export function useGame(
         );
         await sendAndConfirm(er, [ix], [sessionKey], `act ${kind}`, ER_CU);
       } catch (e) {
+        // 错误已经通过 setError 上屏；绝不再向外抛——事件处理器里的
+        // unhandled rejection 在 Next 生产构建里会顶出整页错误边界。
         setError(e instanceof Error ? e.message : String(e));
-        throw e;
       } finally {
         setBusy(null);
       }
@@ -233,7 +237,6 @@ export function useGame(
       await sendAndConfirm(er, [ix], [sessionKey], "stand_up", ER_CU);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      throw e;
     } finally {
       setBusy(null);
     }

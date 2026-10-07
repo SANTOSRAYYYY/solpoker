@@ -1,8 +1,9 @@
 "use client";
 
 // SolPoker 牌桌页（Stage 7）：Privy 钱包 → TEE attestation 门控 → 入座 →
-// 对局（session key 自动打盐/行动）→ 站起兑现。盲注档位与买入规则全部读
-// 链上 Table 账户；Game/手牌状态走 devnet-tee（PER）。
+// 对局（session key 自动打盐/行动）→ 站起兑现。
+// 排版：椭圆绿毡牌桌 + 环绕座位（自己恒在正下方）+ 中央底池/公共牌 +
+// 底部行动坞。金额输入一律经 parseUsdcInput（非法输入禁按钮，不再崩溃）。
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -40,11 +41,48 @@ import {
   sendWalletSigned,
   TxError,
 } from "@/lib/solpoker-client";
-import { cardText, cardColor, fmtUsdc, phaseName } from "@/lib/game-state";
+import { fmtUsdc, phaseName } from "@/lib/game-state";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
+import { parseUsdcInput } from "@/lib/amount";
+import type { GameView } from "@/lib/game-state";
+
+// ?demo=1：用假数据渲染牌桌（免登录的排版走查；不产生任何链上行为）。
+const DEMO_GAME: GameView = {
+  table: PublicKey.default,
+  transcript: new Uint8Array(32),
+  handId: 7n,
+  pot: 340_000n,
+  currentBet: 100_000n,
+  lastFullRaise: 100_000n,
+  actionDeadline: 0n,
+  rakeTotal: 10_000n,
+  vrfState: 0,
+  vrfTarget: 0,
+  vrfAttempt: 0,
+  seats: [
+    { occupant: PublicKey.default, saltCommit: new Uint8Array(32), occupancyId: 1n, stack: 19_780_000n, inHand: 100_000n, streetBet: 100_000n, kind: 0, status: 1, folded: false, allIn: false, acted: true, strikes: 0, leaveRequested: false },
+    { occupant: PublicKey.default, saltCommit: new Uint8Array(32), occupancyId: 1n, stack: 20_210_000n, inHand: 50_000n, streetBet: 50_000n, kind: 0, status: 1, folded: false, allIn: false, acted: false, strikes: 0, leaveRequested: false },
+    { occupant: PublicKey.default, saltCommit: new Uint8Array(32), occupancyId: 2n, stack: 14_000_000n, inHand: 0n, streetBet: 0n, kind: 0, status: 1, folded: true, allIn: false, acted: true, strikes: 0, leaveRequested: false },
+    ...Array.from({ length: 6 }, () => ({ occupant: PublicKey.default, saltCommit: new Uint8Array(32), occupancyId: 0n, stack: 0n, inHand: 0n, streetBet: 0n, kind: 0, status: 0, folded: false, allIn: false, acted: false, strikes: 0, leaveRequested: false })),
+  ],
+  actionSeq: 3,
+  occupiedMask: 0b111,
+  handMask: 0b011,
+  liveMask: 0b011,
+  actionableMask: 0b001,
+  pendingMask: 0b001,
+  board: [4 * 4 + 1, 9 * 4 + 2, 11 * 4 + 0],
+  boardSrc: [0, 0, 0],
+  phase: 5,
+  street: 1,
+  button: 1,
+  boardLen: 3,
+  toAct: 0,
+};
+const DEMO_HAND = { handId: 7n, cards: [12 * 4 + 1, 12 * 4 + 1], saltHandId: 7n };
 
 // ---------------------------------------------------------------------------
-// small pieces
+// pieces
 // ---------------------------------------------------------------------------
 
 function LoginButton() {
@@ -63,13 +101,30 @@ function LoginButton() {
   );
 }
 
-function Card({ card, hidden }: { card: number; hidden?: boolean }) {
-  if (hidden) return <span className="card card-back">🂠</span>;
+const RANKS = ["2","3","4","5","6","7","8","9","T","J","Q","K","A"];
+const SUITS = ["♠","♥","♦","♣"];
+
+function Card({ card, hidden, large }: { card: number; hidden?: boolean; large?: boolean }) {
+  const cls = `card${large ? " card-lg" : ""}`;
+  if (hidden || card >= 52) return <span className={`${cls} card-back`} />;
+  const red = (card & 3) === 1 || (card & 3) === 2;
   return (
-    <span className="card" style={{ color: cardColor(card) }}>
-      {cardText(card)}
+    <span className={`${cls} ${red ? "red" : "black"}`}>
+      <span className="r">{RANKS[card >> 2]}</span>
+      <span className="s">{SUITS[card & 3]}</span>
     </span>
   );
+}
+
+// 座位在椭圆上的角度（度）：座位 i 基准角 = 90 + i*40（从正下方起逆时针），
+// 入座后整体旋转，让「我」恒在正下方（90°）。
+function seatPos(i: number, mySeat: number | null, occupied: number[]): { left: string; top: string } {
+  const base = 90 + i * 40;
+  const shift = mySeat !== null ? 90 - (90 + mySeat * 40) : 0;
+  const rad = ((base + shift) * Math.PI) / 180;
+  const x = 50 + 44 * Math.cos(rad);
+  const y = 50 + 46 * Math.sin(rad);
+  return { left: `${x}%`, top: `${y}%` };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,15 +194,15 @@ export default function Home() {
   const [buyIn, setBuyIn] = useState("20");
   const [seatIdx, setSeatIdx] = useState(0);
   const [sitBusy, setSitBusy] = useState(false);
+  const buyInAmount = parseUsdcInput(buyIn);
 
   const sitDown = useCallback(async () => {
-    if (!wallet || !game) return;
+    if (!wallet || !game || buyInAmount === null) return;
     setSitBusy(true);
     setNotice(null);
     try {
       const pk = new PublicKey(wallet.address);
       const sessionKey = loadOrCreateSessionKey(TABLE_ID, seatIdx, wallet.address);
-      const amount = BigInt(Math.round(parseFloat(buyIn) * 1e6));
       const program = makeProgram(l1);
       const playerAta = getAssociatedTokenAddressSync(TUSDC_MINT, pk);
 
@@ -155,7 +210,6 @@ export default function Home() {
       if (!(await l1.getAccountInfo(playerAta))) {
         tx.add(createAssociatedTokenAccountInstruction(pk, playerAta, pk, TUSDC_MINT));
       }
-      // X10: session key 预充手续费（L1）。
       tx.add(
         SystemProgram.transfer({
           fromPubkey: pk,
@@ -167,7 +221,7 @@ export default function Home() {
         await program.methods
           .sitDown(
             seatIdx,
-            new BN(amount.toString()),
+            new BN(buyInAmount.toString()),
             sessionKey.publicKey,
             new BN(Math.floor(Date.now() / 1000) + SESSION_TTL_S)
           )
@@ -189,7 +243,7 @@ export default function Home() {
         tx.serialize({ requireAllSignatures: false, verifySignatures: false })
       );
       const sig = await sendWalletSigned(l1, signed, "sit_down");
-      setNotice(`入座已提交：${sig.slice(0, 16)}…（crank 会计入筹码，约几秒）`);
+      setNotice(`入座已提交：${sig.slice(0, 16)}…（crank 正在计入筹码，几秒后出现在桌上）`);
     } catch (e) {
       setNotice(
         `入座失败：${e instanceof TxError ? e.message : e instanceof Error ? e.message : String(e)}`
@@ -197,7 +251,7 @@ export default function Home() {
     } finally {
       setSitBusy(false);
     }
-  }, [wallet, game, buyIn, seatIdx, l1, signL1]);
+  }, [wallet, game, buyInAmount, seatIdx, l1, signL1]);
 
   // ---- cash out (L1, permissionless, wallet-signed) ----
   const cashOut = useCallback(async () => {
@@ -248,20 +302,36 @@ export default function Home() {
     }
   }, [wallet, mySeat, game, l1, signL1]);
 
-  // ---- raise input ----
+  // ---- 行动区派生 ----
   const [raiseTo, setRaiseTo] = useState("");
-  const myTurn =
-    game !== null &&
-    mySeat !== null &&
-    (game.phase === 3 || game.phase === 5) &&
-    game.toAct === mySeat;
-  const toCall =
-    game && mySeat !== null ? game.currentBet - game.seats[mySeat].streetBet : 0n;
-  const minRaiseTo =
-    game && mySeat !== null
-      ? game.currentBet > 0n
-        ? game.currentBet + game.lastFullRaise
-        : game.lastFullRaise
+  const raiseAmount = parseUsdcInput(raiseTo);
+
+  // ---- demo 模式（?demo=1）：只看排版，不触链 ----
+  const [demo] = useState(
+    () => typeof window !== "undefined" && /[?&]demo=1/.test(window.location.search)
+  );
+  const viewGame = demo ? DEMO_GAME : game;
+  const viewSeat = demo ? 0 : mySeat;
+  const viewHand = demo ? DEMO_HAND : myHand;
+  const viewOccupied = useMemo(
+    () =>
+      viewGame
+        ? viewGame.seats.map((s, i) => (s.status !== 0 ? i : -1)).filter((i) => i >= 0)
+        : [],
+    [viewGame]
+  );
+  const viewMyTurn =
+    viewGame !== null &&
+    viewSeat !== null &&
+    (viewGame.phase === 3 || viewGame.phase === 5) &&
+    viewGame.toAct === viewSeat;
+  const viewToCall =
+    viewGame && viewSeat !== null ? viewGame.currentBet - viewGame.seats[viewSeat].streetBet : 0n;
+  const viewMinRaise =
+    viewGame && viewSeat !== null
+      ? viewGame.currentBet > 0n
+        ? viewGame.currentBet + viewGame.lastFullRaise
+        : viewGame.lastFullRaise
       : 0n;
 
   // -------------------------------------------------------------------------
@@ -286,113 +356,132 @@ export default function Home() {
         {!PRIVY_CONFIGURED && (
           <p className="error-text">未配置 NEXT_PUBLIC_PRIVY_APP_ID（见 web/README.md）</p>
         )}
-        {!authenticated && PRIVY_CONFIGURED && (
-          <p className="muted">连接钱包开始。测试网代币：tUSDC 由运营方发放。</p>
+
+        {!demo && !authenticated && PRIVY_CONFIGURED && (
+          <div className="panel">
+            <h3>隐私德州扑克 · Solana devnet-tee</h3>
+            <p className="muted">
+              底牌只存在 TEE 里，只有你的钱包能读；牌序由 MagicBlock VRF + 双方盐决定，赛后可复算。
+              连接钱包开始（测试代币 tUSDC 由运营方发放）。
+            </p>
+          </div>
         )}
 
-        {authenticated && wallet && (
+        {(demo || (authenticated && wallet)) && (
           <>
-            <section className="tee-panel">
-              <div className="row spread">
-                <span className="muted">
-                  钱包 <code>{wallet.address.slice(0, 4)}…{wallet.address.slice(-4)}</code>
-                  　SOL {solBal === null ? "…" : solBal.toFixed(3)}　tUSDC{" "}
-                  {usdcBal === null ? "…" : usdcBal.toFixed(2)}
-                </span>
-                {tee.phase !== "ok" ? (
-                  <button
-                    className="btn btn-positive"
-                    onClick={connectTee}
-                    disabled={tee.phase === "working"}
-                  >
-                    {tee.phase === "working" ? "校验 TEE…" : "连接 TEE"}
-                  </button>
-                ) : (
-                  <span className="ok-text">TEE 已验证 ✓</span>
-                )}
-              </div>
-              {tee.phase === "error" && (
-                <p className="error-text">TEE 连接失败：{tee.message}（点按钮重试）</p>
-              )}
-            </section>
-
-            {tee.phase === "ok" && game && (
+            {/* ---- 状态条（demo 模式不显示） ---- */}
+            {!demo && (
               <>
-                {/* ---- 桌面 ---- */}
-                <section className="table-area">
-                  <div className="row spread">
-                    <h2 className="tier-title">
-                      桌 #{TABLE_ID}　阶段：{phaseName(game.phase)}　手 #{game.handId.toString()}
-                    </h2>
-                    <span className="pot">底池 {fmtUsdc(game.pot)}</span>
-                  </div>
+                <div className="statusbar">
+                  <span>
+                    <code>{wallet!.address.slice(0, 4)}…{wallet!.address.slice(-4)}</code>
+                  </span>
+                  <span>
+                    SOL <span className="bal">{solBal === null ? "…" : solBal.toFixed(3)}</span>
+                  </span>
+                  <span>
+                    tUSDC <span className="bal">{usdcBal === null ? "…" : usdcBal.toFixed(2)}</span>
+                  </span>
+                  <span className="grow" />
+                  {tee.phase !== "ok" ? (
+                    <button
+                      className="btn btn-positive"
+                      onClick={connectTee}
+                      disabled={tee.phase === "working"}
+                    >
+                      {tee.phase === "working" ? "校验 TEE…" : "连接 TEE"}
+                    </button>
+                  ) : (
+                    <span className="ok-text">TEE 已验证 ✓</span>
+                  )}
+                </div>
+                {tee.phase === "error" && (
+                  <p className="error-text">TEE 连接失败：{tee.message}（点按钮重试）</p>
+                )}
+              </>
+            )}
+            {demo && (
+              <p className="muted">demo 排版走查模式（假数据，不触链）。</p>
+            )}
 
-                  <div className="board">
-                    {game.board.slice(0, game.boardLen).map((c, i) => (
-                      <Card key={i} card={c} />
-                    ))}
-                    {game.boardLen === 0 && <span className="muted">（未发公共牌）</span>}
-                  </div>
-
-                  <div className="seats">
-                    {game.seats.map((s, i) => {
-                      if (s.status === 0) return null;
-                      const isMe = mySeat === i;
+            {(demo || (tee.phase === "ok" && game)) && viewGame && (
+              <>
+                {/* ---- 椭圆牌桌 ---- */}
+                <div className="felt-wrap">
+                  <div className="felt">
+                    <div className="felt-center">
+                      <div className="pot-badge">底池 {fmtUsdc(viewGame.pot)}</div>
+                      <div className="board">
+                        {viewGame.boardLen > 0 ? (
+                          viewGame.board.slice(0, viewGame.boardLen).map((c, i) => <Card key={i} card={c} />)
+                        ) : (
+                          <span className="muted">
+                            {phaseName(viewGame.phase)} · 手 #{viewGame.handId.toString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {viewOccupied.map((i) => {
+                      const s = viewGame.seats[i];
+                      const isMe = viewSeat === i;
                       const isActor =
-                        game.toAct === i && (game.phase === 3 || game.phase === 5);
+                        viewGame.toAct === i && (viewGame.phase === 3 || viewGame.phase === 5);
                       return (
                         <div
                           key={i}
-                          className={`seat${isMe ? " me" : ""}${isActor ? " actor" : ""}`}
+                          className={`seat${isMe ? " me" : ""}${isActor ? " actor" : ""}${s.folded ? " folded" : ""}`}
+                          style={seatPos(i, viewSeat, viewOccupied)}
                         >
-                          <div className="seat-addr">
-                            {i === game.button && <span className="dealer">D </span>}
-                            {isMe ? "你" : `${s.occupant.toBase58().slice(0, 4)}…`}
-                            {s.folded && <span className="muted">（fold）</span>}
-                            {s.allIn && <span className="allin"> ALL-IN</span>}
+                          {i === viewGame.button && <span className="dealer-btn">D</span>}
+                          <div className="seat-name">
+                            {isMe ? "你" : `${s.occupant.toBase58().slice(0, 4)}…${s.occupant.toBase58().slice(-4)}`}
                           </div>
                           <div className="seat-stack">{fmtUsdc(s.stack)}</div>
-                          {s.inHand > 0n && <div className="seat-bet">注 {fmtUsdc(s.inHand)}</div>}
+                          {s.folded && <div className="seat-flags">FOLD</div>}
+                          {s.allIn && <div className="seat-flags">ALL-IN</div>}
+                          {s.inHand > 0n && <div className="seat-bet">{fmtUsdc(s.inHand)}</div>}
                         </div>
                       );
                     })}
                   </div>
+                </div>
 
-                  {/* ---- 我的手牌 ---- */}
-                  {mySeat !== null && (
-                    <div className="myhand">
-                      <span className="muted">你的手牌（仅你可见）：</span>
-                      {myHand && myHand.handId === game.handId ? (
-                        myHand.cards.map((c, i) => <Card key={i} card={c} />)
+                {/* ---- 我的手牌 ---- */}
+                {viewSeat !== null && (
+                  <div className="myhand">
+                    <span className="label">你的手牌（仅你可见）</span>
+                    <span className="cards">
+                      {viewHand && viewHand.handId === viewGame.handId ? (
+                        viewHand.cards.map((c, i) => <Card key={i} card={c} large />)
                       ) : (
                         <>
-                          <Card card={0xff} hidden />
-                          <Card card={0xff} hidden />
+                          <Card card={0xff} hidden large />
+                          <Card card={0xff} hidden large />
                         </>
                       )}
-                    </div>
-                  )}
-                </section>
+                    </span>
+                  </div>
+                )}
 
-                {/* ---- 行动区 ---- */}
-                {mySeat !== null && (
-                  <section className="actions">
-                    {myTurn ? (
+                {/* ---- 行动坞 ---- */}
+                {viewSeat !== null && (
+                  <div className="action-dock">
+                    {viewMyTurn ? (
                       <>
                         <button
                           className="btn btn-danger"
                           onClick={() => driver.act("fold")}
                           disabled={!!driver.busy}
                         >
-                          Fold
+                          弃牌
                         </button>
-                        {toCall === 0n ? (
+                        {viewToCall === 0n ? (
                           <button
                             className="btn btn-primary"
                             onClick={() => driver.act("check")}
                             disabled={!!driver.busy}
                           >
-                            Check
+                            过牌
                           </button>
                         ) : (
                           <button
@@ -400,26 +489,24 @@ export default function Home() {
                             onClick={() => driver.act("call")}
                             disabled={!!driver.busy}
                           >
-                            Call {fmtUsdc(toCall)}
+                            跟注 {fmtUsdc(viewToCall)}
                           </button>
                         )}
                         <input
                           className="raise-input"
-                          placeholder={`≥ ${fmtUsdc(minRaiseTo)}`}
+                          placeholder={`≥ ${fmtUsdc(viewMinRaise)}`}
                           value={raiseTo}
                           onChange={(e) => setRaiseTo(e.target.value)}
                         />
                         <button
                           className="btn btn-positive"
-                          disabled={!!driver.busy || !raiseTo}
+                          disabled={!!driver.busy || raiseAmount === null}
                           onClick={() =>
-                            driver.act(
-                              game.currentBet > 0n ? "raiseTo" : "bet",
-                              BigInt(Math.round(parseFloat(raiseTo) * 1e6))
-                            )
+                            raiseAmount !== null &&
+                            driver.act(viewGame.currentBet > 0n ? "raiseTo" : "bet", raiseAmount)
                           }
                         >
-                          {game.currentBet > 0n ? "Raise to" : "Bet"}
+                          {viewGame.currentBet > 0n ? "加注到" : "下注"}
                         </button>
                         <button
                           className="btn btn-muted"
@@ -430,14 +517,15 @@ export default function Home() {
                         </button>
                       </>
                     ) : (
-                      <span className="muted">
-                        {game.phase === 3 || game.phase === 5
-                          ? `等待座位 ${game.toAct} 行动…`
-                          : game.phase === 0
-                            ? "等待 crank 开下一手…"
-                            : `阶段 ${phaseName(game.phase)} 推进中（crank 自动）…`}
+                      <span className="hint">
+                        {viewGame.phase === 3 || viewGame.phase === 5
+                          ? `等待座位 ${viewGame.toAct} 行动…`
+                          : viewGame.phase === 0
+                            ? "手牌结束，crank 正在开下一手…"
+                            : `阶段 ${phaseName(viewGame.phase)} 推进中（crank 自动）…`}
                       </span>
                     )}
+                    <span className="grow" />
                     <button
                       className="btn btn-muted"
                       onClick={driver.standUp}
@@ -445,13 +533,13 @@ export default function Home() {
                     >
                       站起
                     </button>
-                  </section>
+                  </div>
                 )}
 
-                {/* ---- 入座区 ---- */}
-                {mySeat === null && (
-                  <section className="tee-panel">
-                    <h3 className="tier-title">入座（买入 tUSDC）</h3>
+                {/* ---- 入座面板 ---- */}
+                {viewSeat === null && (
+                  <div className="panel">
+                    <h3>入座（买入 tUSDC）</h3>
                     <div className="row">
                       <label>
                         座位{" "}
@@ -459,7 +547,7 @@ export default function Home() {
                           value={seatIdx}
                           onChange={(e) => setSeatIdx(Number(e.target.value))}
                         >
-                          {game.seats.map((s, i) =>
+                          {viewGame.seats.map((s, i) =>
                             s.status === 0 ? (
                               <option key={i} value={i}>
                                 {i}
@@ -476,7 +564,11 @@ export default function Home() {
                           onChange={(e) => setBuyIn(e.target.value)}
                         />
                       </label>
-                      <button className="btn btn-positive" onClick={sitDown} disabled={sitBusy}>
+                      <button
+                        className="btn btn-positive"
+                        onClick={sitDown}
+                        disabled={sitBusy || buyInAmount === null}
+                      >
                         {sitBusy ? "签名并发送…" : "坐下"}
                       </button>
                     </div>
@@ -484,13 +576,14 @@ export default function Home() {
                       一笔钱包签名完成：建 ATA（如需）+ 预充 session key + 买入。此后对局动作由
                       session key 自动签名，不再弹窗。
                     </p>
-                  </section>
+                  </div>
                 )}
 
                 <div className="row">
                   <button className="btn btn-primary" onClick={cashOut}>
                     兑现（cash_out）
                   </button>
+                  <span className="grow" />
                   <a className="footer-link" href="/trust">
                     信任页 →
                   </a>
@@ -508,7 +601,7 @@ export default function Home() {
 
       <footer className="footer">
         <span className="muted">
-          阶段机：{PHASES.join(" → ")}　|　crank 负责 advance/VRF/commit
+          桌 #{TABLE_ID} · 阶段机 {PHASES.join(" → ")} · crank 驱动 advance/VRF/commit
         </span>
       </footer>
     </div>
