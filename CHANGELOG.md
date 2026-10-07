@@ -52,6 +52,16 @@
 
 ### 遗留问题
 
+- **（2026-10-07 定位）Solana 钱包登录（SIWS）在 Privy 后台未开启**——用户实测
+  「所有 Solana 钱包连接失败：Could not log in with wallet」。直接拉取应用配置
+  取证（`node scripts/privy-app-config-full.mjs`）：
+  `wallet_auth: true`（SIWE 开，所以 EVM 钱包一直能连）但
+  **`solana_wallet_auth: false`（SIWS 关）**；`allowed_domains: []`（域名
+  白名单为空，不是白名单问题）。修复 = Privy 后台 Login Methods → Wallet →
+  开启 Solana/SIWS 开关（客户端代码已是官方 recipe，无需改动）。另注：
+  `embedded_wallet_config.*.create_on_login` 服务端为 "off"，但客户端
+  `createOnLogin` 仍会创建内嵌 Solana 钱包（用户此前经 EVM 登录即获得过），
+  邮箱登录路径可用作即时兜底。
 - 真机 playtest（Privy 登录 + 真钱包走完整对局）——`sit_down` 的 web3.js v1
   序列化经 Privy signTransaction 的兼容性是首验项（README 待核实 #1）。
 - 多桌大厅（当前固定桌 #9）；i18n；`showWalletUIs: false` 的授权策略。
