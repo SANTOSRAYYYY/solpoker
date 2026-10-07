@@ -526,7 +526,10 @@ export default function HistoryPage() {
                       setFull({ phase: "running" });
                       try {
                         const r = await dealFromReplay(webCrypto, {
-                          table: pdasFor(tableId!).table.toBase58(),
+                          // 引擎要 hex32（不是 base58）
+                          table: [...pdasFor(tableId!).table.toBytes()]
+                            .map((b) => b.toString(16).padStart(2, "0"))
+                            .join(""),
                           handId: entry.handId.toString(),
                           handMask: entry.handMask,
                           button: entry.button,

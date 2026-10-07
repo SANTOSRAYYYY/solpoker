@@ -413,7 +413,7 @@ export async function dealFromReplay(crypto, v) {
 
   // 2) 逐街重放
   const draws = [];
-  let used = 0;
+  let used = 0n; // 牌的位图：必须是 BigInt（用 Number 0 起步会在 |= 1n<<… 时混型报错）
   let drawNo = 0;
   const deckHas = (card) => (used & (1n << BigInt(card))) !== 0n;
   const take = (card) => {
