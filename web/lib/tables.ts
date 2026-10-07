@@ -4,7 +4,7 @@
 // mint(32)@47 sb(8)@79 bb(8)@87 ante(8)@95 …
 
 import { Connection, PublicKey } from "@solana/web3.js";
-import { PROGRAM_ID, TUSDC_MINT } from "./config";
+import { PROGRAM_ID, TABLE_IDS_FILTER, TUSDC_MINT } from "./config";
 import { fmtUsdc } from "./game-state";
 
 export interface TableInfo {
@@ -37,6 +37,8 @@ export async function scanTables(conn: Connection): Promise<TableInfo[]> {
   for (let id = 0; id < addrs.length; id++) {
     const acc = infos[id];
     if (!acc || acc.data.length < 145 || !acc.owner.equals(PROGRAM_ID)) continue;
+    // 大厅白名单：设置了 NEXT_PUBLIC_TABLE_IDS 就只显示列表内的桌。
+    if (TABLE_IDS_FILTER.length > 0 && !TABLE_IDS_FILTER.includes(id)) continue;
     const d = acc.data;
     const u64 = (o: number) => {
       let v = 0n;

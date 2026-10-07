@@ -33,7 +33,8 @@ node scripts/crank.mjs fund <钱包地址> [SOL=0.05] [tUSDC=25]
 | 变量 | 说明 |
 | --- | --- |
 | `NEXT_PUBLIC_PRIVY_APP_ID` | Privy 应用 ID（必填）。未配置时页面框架仍渲染，钱包功能不可用。 |
-| `NEXT_PUBLIC_TABLE_ID` | 牌桌 ID（默认 `9`——已在链上创建/委托/权限就绪的演示桌）。 |
+| `NEXT_PUBLIC_TABLE_ID` | 默认牌桌 ID（打开页面时预选；默认 `9`）。 |
+| `NEXT_PUBLIC_TABLE_IDS` | 大厅白名单（逗号分隔桌号，如 `5,6,7,8,9`）。设置后大厅只显示这些桌——避免历史测试桌混入（它们没有 crank 驱动、选了也玩不了）。留空显示全部。 |
 | `NEXT_PUBLIC_L1_RPC` | L1 RPC（默认 `https://rpc.magicblock.app/devnet`）。 |
 | `NEXT_PUBLIC_ER_RPC` | ER/TEE RPC（默认 `https://devnet-tee.magicblock.app`）。 |
 

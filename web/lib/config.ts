@@ -11,6 +11,14 @@ export const IDL = idl;
 // The one demo table for Stage 7 (created + delegated + permissions on-chain).
 export const TABLE_ID = Number(process.env.NEXT_PUBLIC_TABLE_ID ?? 9);
 
+// 大厅白名单（2026-10-07）：逗号分隔的桌号列表；设置后大厅只显示这些桌
+// （在跑的活桌）。留空 = 显示全部（含历史测试桌，会混入无法游玩的旧桌）。
+export const TABLE_IDS_FILTER: number[] = (process.env.NEXT_PUBLIC_TABLE_IDS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map(Number);
+
 // RPC endpoints. The browser uses the system proxy transparently, so it can
 // reach MagicBlock directly (no local relay needed).
 export const L1_RPC =
