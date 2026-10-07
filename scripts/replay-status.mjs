@@ -48,14 +48,27 @@ for (const id of ids) {
       const attempts = Array.from(d.slice(b + 488, b + 493));
       const status = d[b + 493];
       const streets = d[b + 494];
+      const layoutVer = d[b + 495];
+      const streetsEnded = layoutVer === 2 ? d[b + 136] : 0;
+      const streetEnd = Array.from({ length: 4 }, (_, k) =>
+        hex(d.slice(b + 8 + k * 32, b + 8 + k * 32 + 32))
+      );
       console.log(
-        `   槽${i} 手#${handId} status=${status} streets=0b${streets.toString(2).padStart(4, "0")}` +
-          ` salt_digest=${short(saltDigest)} attempts=[${attempts.join(",")}]`
+        `   槽${i} 手#${handId} status=${status} layout=v${layoutVer}` +
+          ` streets=0b${streets.toString(2).padStart(4, "0")} ended=0b${streetsEnded.toString(2).padStart(4, "0")}` +
+          ` attempts=[${attempts.join(",")}]`
       );
       console.log(
         `        draw_digest: ${digests.map((x, k) => `k${k}=${streets & (1 << k) ? short(x, 4) : "—"}`).join(" ")}`
       );
-      console.log(`        occupants: ${occupants.join(" ") || "(无)"}`);
+      if (layoutVer === 2) {
+        console.log(
+          `        street_end : ${streetEnd.map((x, k) => `k${k}=${streetsEnded & (1 << k) ? short(x, 4) : "—"}`).join(" ")}`
+        );
+        console.log(`        salt_digest=${short(saltDigest)}`);
+      } else {
+        console.log(`        salt_digest=${short(saltDigest)} occupants: ${occupants.join(" ") || "(无)"}`);
+      }
     }
   }
 
