@@ -45,8 +45,13 @@ export interface GameDriver {
   standUp: () => Promise<void>;
 }
 
+/** 只需要地址即可驱动对局：Privy 钱包与直连钱包（wallet-standard）都满足。 */
+export interface WalletLike {
+  address: string;
+}
+
 export function useGame(
-  wallet: ConnectedStandardSolanaWallet | null,
+  wallet: WalletLike | null,
   teeToken: string | null,
   tableId: number
 ): GameDriver {

@@ -52,6 +52,15 @@
 
 ### 遗留问题
 
+- **（2026-10-07 已解决替代方案）直连 Solana 钱包上线**：Privy 的 SIWS 仍开着
+  服务端开关问题，但前端新增「直接连接 Solana 钱包」通道（`lib/direct-wallet.ts`，
+  wallet-standard）：Phantom/Solflare/Backpack 等扩展**不经过 Privy 登录**即可
+  完成 TEE attestation 鉴权（钱包签 challenge）、读取余额/牌桌、`sit_down`
+  入座与 `cash_out` 兑现（钱包签 L1 交易）；对局动作沿用本地 session key。
+  Privy 的角色收敛为「没有钱包的用户」（邮箱登录 + 内嵌钱包）。已在浏览器
+  端到端实测（注入 wallet-standard 测试钱包）：探测 → 连接 → TEE 验证 ✓ →
+  余额 25 tUSDC → 坐下 → 链上确认 → crank 计入座位（20.00 上桌）。
+  另附 `scripts/sit-test-opponent.mjs`（真人坐下后一键安排带筹码的对手）。
 - **（2026-10-07 定位）Solana 钱包登录（SIWS）在 Privy 后台未开启**——用户实测
   「所有 Solana 钱包连接失败：Could not log in with wallet」。直接拉取应用配置
   取证（`node scripts/privy-app-config-full.mjs`）：

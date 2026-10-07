@@ -46,6 +46,11 @@ import {
 import { fmtUsdc, phaseName } from "@/lib/game-state";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
+import {
+  connectDirectWallet,
+  listInstalledSolanaWallets,
+  type DirectWallet,
+} from "@/lib/direct-wallet";
 import { scanTables, type TableInfo } from "@/lib/tables";
 import type { GameView } from "@/lib/game-state";
 import type { ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
@@ -172,6 +177,49 @@ export default function Home() {
   const wallet: ConnectedStandardSolanaWallet | null =
     walletOptions.find((o) => o.address === walletAddr)?.wallet ?? null;
 
+  // ---- 直连 Solana 钱包（wallet-standard，不经 Privy 登录；见
+  // lib/direct-wallet.ts 顶部说明）。Privy 应用未开启 SIWS（服务端
+  // solana_wallet_auth=false）期间，这是 Phantom/Solflare 的可用通道。 ----
+  const [directWallet, setDirectWallet] = useState<DirectWallet | null>(null);
+  const [installedWallets, setInstalledWallets] = useState<{ name: string }[]>([]);
+  const [directBusy, setDirectBusy] = useState(false);
+  useEffect(() => {
+    // 扩展注入有延迟（也可能是装完扩展后没刷新）：前 30 秒每 1.5 秒重探一次。
+    let ticks = 0;
+    const t = setInterval(() => {
+      ticks++;
+      const list = listInstalledSolanaWallets();
+      setInstalledWallets(list);
+      if (ticks >= 20) clearInterval(t);
+    }, 1500);
+    return () => clearInterval(t);
+  }, []);
+  const connectDirect = useCallback(async (name?: string) => {
+    setDirectBusy(true);
+    setNotice(null);
+    try {
+      const w = await connectDirectWallet(name);
+      setDirectWallet(w);
+      setTee({ phase: "idle" }); // 地址变了，重新做 TEE 鉴权
+      setNotice(`已连接 ${w.name}：${w.address.slice(0, 4)}…${w.address.slice(-4)}`);
+    } catch (e) {
+      setNotice(`连接钱包失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDirectBusy(false);
+    }
+  }, []);
+  const disconnectDirect = useCallback(() => {
+    setDirectWallet(null);
+    setTee({ phase: "idle" });
+    setNotice("已断开直连钱包");
+  }, []);
+
+  /** 对局/签名统一入口：直连钱包优先，其次 Privy 钱包。 */
+  const activeWallet: { address: string } | null = useMemo(
+    () => (directWallet ? { address: directWallet.address } : wallet ? { address: wallet.address } : null),
+    [directWallet, wallet]
+  );
+
   // ---- 桌选择（扫描链上 Table 账户；选择持久化） ----
   const l1 = useMemo(() => new Connection(L1_RPC, "confirmed"), []);
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -216,33 +264,33 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const teeToken = tee.phase === "ok" ? tee.session.token : null;
-  const driver = useGame(teeToken ? wallet : null, teeToken, tableId);
+  const driver = useGame(teeToken ? activeWallet : null, teeToken, tableId);
   const { game, myHand, mySeat } = driver;
 
   const connectTee = useCallback(async () => {
-    if (!wallet) return;
+    if (!activeWallet) return;
     try {
       setTee({ phase: "working" });
-      const session = await establishTeeSession(wallet.address, (b) =>
-        signChallenge(wallet, b)
+      const session = await establishTeeSession(activeWallet.address, (b) =>
+        directWallet ? directWallet.signMessage(b) : signChallenge(wallet!, b)
       );
       setTee({ phase: "ok", session });
     } catch (e) {
       setTee({ phase: "error", message: e instanceof Error ? e.message : String(e) });
     }
-  }, [wallet, signChallenge]);
+  }, [activeWallet, directWallet, wallet, signChallenge]);
 
   // ---- wallet balances (L1) ----
   const [solBal, setSolBal] = useState<number | null>(null);
   const [usdcBal, setUsdcBal] = useState<number | null>(null);
   useEffect(() => {
-    if (!wallet) return;
+    if (!activeWallet) return;
     let stop = false;
     (async () => {
       for (;;) {
         if (stop) return;
         try {
-          const pk = new PublicKey(wallet.address);
+          const pk = new PublicKey(activeWallet.address);
           setSolBal((await l1.getBalance(pk)) / 1e9);
           const ata = getAssociatedTokenAddressSync(TUSDC_MINT, pk);
           const acc = await l1.getTokenAccountBalance(ata).catch(() => null);
@@ -256,7 +304,7 @@ export default function Home() {
     return () => {
       stop = true;
     };
-  }, [wallet, l1]);
+  }, [activeWallet, l1]);
 
   // ---- sit down (L1, wallet-signed) ----
   const [buyIn, setBuyIn] = useState("20");
@@ -265,12 +313,12 @@ export default function Home() {
   const buyInAmount = parseUsdcInput(buyIn);
 
   const sitDown = useCallback(async () => {
-    if (!wallet || !game || buyInAmount === null) return;
+    if (!activeWallet || !game || buyInAmount === null) return;
     setSitBusy(true);
     setNotice(null);
     try {
-      const pk = new PublicKey(wallet.address);
-      const sessionKey = loadOrCreateSessionKey(tableId, seatIdx, wallet.address);
+      const pk = new PublicKey(activeWallet.address);
+      const sessionKey = loadOrCreateSessionKey(tableId, seatIdx, activeWallet.address);
       const program = makeProgram(l1);
       const playerAta = getAssociatedTokenAddressSync(TUSDC_MINT, pk);
 
@@ -306,10 +354,10 @@ export default function Home() {
       );
       tx.feePayer = pk;
       tx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
-      const signed = await signL1(
-        wallet,
-        tx.serialize({ requireAllSignatures: false, verifySignatures: false })
-      );
+      const unsigned = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+      const signed = directWallet
+        ? await directWallet.signTransaction(unsigned)
+        : await signL1(wallet!, unsigned);
       const sig = await sendWalletSigned(l1, signed, "sit_down");
       setNotice(`入座已提交：${sig.slice(0, 16)}…（crank 正在计入筹码，几秒后出现在桌上）`);
     } catch (e) {
@@ -319,19 +367,19 @@ export default function Home() {
     } finally {
       setSitBusy(false);
     }
-  }, [wallet, game, buyInAmount, seatIdx, l1, signL1]);
+  }, [wallet, directWallet, activeWallet, game, buyInAmount, seatIdx, l1, signL1]);
 
   // ---- cash out (L1, permissionless, wallet-signed) ----
   const cashOut = useCallback(async () => {
-    if (!wallet) return;
+    if (!activeWallet) return;
     setNotice(null);
     try {
-      const pk = new PublicKey(wallet.address);
+      const pk = new PublicKey(activeWallet.address);
       const program = makeProgram(l1);
       let idx = mySeat;
       if (idx === null && game) {
         for (let i = 0; i < game.seats.length; i++) {
-          if (game.seats[i].occupant.toBase58() === wallet.address) idx = i;
+          if (game.seats[i].occupant.toBase58() === activeWallet.address) idx = i;
         }
       }
       if (idx === null) throw new Error("没有找到你的座位");
@@ -357,10 +405,10 @@ export default function Home() {
       );
       tx.feePayer = pk;
       tx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
-      const signed = await signL1(
-        wallet,
-        tx.serialize({ requireAllSignatures: false, verifySignatures: false })
-      );
+      const unsigned = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+      const signed = directWallet
+        ? await directWallet.signTransaction(unsigned)
+        : await signL1(wallet!, unsigned);
       const sig = await sendWalletSigned(l1, signed, "cash_out");
       setNotice(`兑现完成：${sig.slice(0, 16)}…`);
     } catch (e) {
@@ -368,7 +416,7 @@ export default function Home() {
         `兑现失败：${e instanceof TxError ? e.message : e instanceof Error ? e.message : String(e)}`
       );
     }
-  }, [wallet, mySeat, game, l1, signL1]);
+  }, [wallet, directWallet, activeWallet, mySeat, game, l1, signL1]);
 
   // ---- 行动区派生 ----
   const [raiseTo, setRaiseTo] = useState("");
@@ -425,23 +473,55 @@ export default function Home() {
           <p className="error-text">未配置 NEXT_PUBLIC_PRIVY_APP_ID（见 web/README.md）</p>
         )}
 
-        {!demo && !authenticated && PRIVY_CONFIGURED && (
+        {!demo && !authenticated && !directWallet && (
           <div className="panel">
             <h3>隐私德州扑克 · Solana devnet-tee</h3>
             <p className="muted">
               底牌只存在 TEE 里，只有你的钱包能读；牌序由 MagicBlock VRF + 双方盐决定，赛后可复算。
-              连接钱包开始（测试代币 tUSDC 由运营方发放）。
+              用你自己的 Solana 钱包直接开玩，或用 Privy（邮箱/钱包）登录。
             </p>
+            <div className="row">
+              {installedWallets.length === 0 ? (
+                <span className="muted">
+                  未检测到浏览器 Solana 钱包扩展——装好 Phantom / Solflare / Backpack 后刷新即可直连；
+                  或使用右上角 Privy 登录（邮箱登录会创建内嵌钱包）。
+                </span>
+              ) : (
+                installedWallets.map((w) => (
+                  <button
+                    key={w.name}
+                    className="btn btn-positive"
+                    onClick={() => connectDirect(w.name)}
+                    disabled={directBusy}
+                  >
+                    {directBusy ? "连接中…" : `连接 ${w.name}`}
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         )}
 
-        {(demo || (authenticated && wallet)) && (
+        {(demo || directWallet || (authenticated && wallet)) && (
           <>
             {/* ---- 状态条（demo 模式不显示） ---- */}
             {!demo && (
               <>
                 <div className="statusbar">
-                  {walletOptions.length > 1 ? (
+                  {directWallet ? (
+                    <span>
+                      <code>
+                        {directWallet.address.slice(0, 4)}…{directWallet.address.slice(-4)}
+                      </code>
+                      <span className="muted">（{directWallet.name} 直连）</span>
+                      <button
+                        className="btn btn-muted btn-inline"
+                        onClick={disconnectDirect}
+                      >
+                        断开
+                      </button>
+                    </span>
+                  ) : walletOptions.length > 1 ? (
                     <label className="muted">
                       钱包{" "}
                       <select
@@ -457,7 +537,7 @@ export default function Home() {
                     </label>
                   ) : (
                     <span>
-                      <code>{wallet!.address.slice(0, 4)}…{wallet!.address.slice(-4)}</code>
+                      <code>{activeWallet!.address.slice(0, 4)}…{activeWallet!.address.slice(-4)}</code>
                       {walletOptions[0] && (
                         <span className="muted">（{walletOptions[0].kindLabel}）</span>
                       )}
@@ -482,11 +562,13 @@ export default function Home() {
                     <span className="ok-text">TEE 已验证 ✓</span>
                   )}
                 </div>
-                {walletOptions.some((o) => o.kind === "derived" && o.address === walletAddr) && (
-                  <p className="error-text">
-                    当前选中的是 EVM 派生 SVM 地址，不是你自己的 Solana 钱包——在状态条左侧换一个。
-                  </p>
-                )}
+                {!directWallet &&
+                  walletOptions.some((o) => o.kind === "derived" && o.address === walletAddr) && (
+                    <p className="error-text">
+                      当前选中的是 EVM 派生 SVM 地址，不是你自己的 Solana 钱包——在状态条左侧换一个，
+                      或断开改用直连钱包。
+                    </p>
+                  )}
                 {tee.phase === "error" && (
                   <p className="error-text">TEE 连接失败：{tee.message}（点按钮重试）</p>
                 )}
