@@ -52,6 +52,48 @@
 
 ### 遗留问题
 
+- **（2026-10-08）x402 标准模式落地：`credit_x402_deposit` + 本地网关/客户端模拟（devnet 实测通过）**。
+  **程序**：新指令 `credit_x402_deposit(idx, payer, amount, sig_lo, sig_hi)` ——
+  `config.gateway` 门禁；`DepositRecord`（PDA `["x402", sig_lo, sig_hi]`，~154B，`init`
+  语义防重复入账）记下付款人/桌/座/金额/时间/付款签名；座位为空按入座处理（金额与
+  §2.2/§2.3 身份规则同 `sit_down`，payout 钉死，**不设 session key**——占用者之后自己
+  `set_session`），已有同付款人座位按补码处理；金额须为 CENT 整数倍且 ≤ 最大买入；
+  `X402DepositCredited` 事件只含公开数据。信任边界如实写进指令文档：程序读不到别人的
+  交易，「谁付的钱」由网关认定，但 `DepositRecord` 的付款签名可让任何人到 L1 逐笔核对
+  （正好由 ① 的 L1 审计视图承接）。设计文档 §4.3 从「延后」改写为交付状态。
+  **本地模拟（零依赖，可跑）**：`scripts/x402-gateway.mjs`（402 报价 → 校验 → 入账 →
+  重复 409；`FACILITATOR_URL` 未设时用本地链上校验，**facilitator 选型仍是待定项**）+
+  `scripts/x402-pay.mjs`（标准客户端：ComputeBudget + TransferChecked + Memo）。
+  **devnet 实测（桌 #20 座 0）**：报价 `payTo` = 该桌 `vault_auth`（USDC 直达 TableVault，
+  不经运营方钱包）、最小买入 10 tUSDC → 付款 `3GbCEXrk…` → 入账 200（credit `5ujwU8hk…`、
+  DepositRecord `AMGT1bPb…`）→ 链上复核：`occupant = 付款人`、`payout = 付款人`、
+  `deposited_total = 10,000,000`、`paid_total = 0`、session_key 未设；重复提交同一签名 → 409。
+  **顺带修掉两个真坑**（都影响本轮 15 桌部署）：
+  ① `anchor build` 一直在 ID 校验上中止（`Program ID mismatch … Keypair file has E1fv…`），
+  导致 `target/deploy/solpoker.so` **从未重建**：链上程序看起来「部署成功」，实际跑的是旧
+  二进制（新指令派发报 `Custom:101 InstructionFallbackNotFound`，用 `sha256("global:<ix>")`
+  逐字节核对 discriminator 才定位到）。处理：`anchor build --ignore-keys -p solpoker` → 校验
+  `.so` 含各指令的 4 字节判别式半段 → `solana program extend` + `solana program deploy`。
+  现链上程序 1,213,008B 与本地逐字节一致（slot 508,698,938），新指令派发正常（回归测试：
+  非法金额返回 6014 BadBuyIn）。
+  ② `scripts/install-idl.mjs` 只认 `\n{`，Windows 的 `\r\n` 下报 "JSON start not found" ——
+  改为行首 `{` 正则。
+- **（2026-10-08）15 桌部署脚本 + 批量部署：L1 侧全部就绪（20–34），ER 权限被 devnet ER 阻塞**。
+  `scripts/deploy-tables.mjs`（配 `scripts/lib/deploy-table.mjs` 共享单桌逻辑，
+  `create-table.mjs` 也改成调用它）：预设 15 桌矩阵（20–34：盲注 0.05/0.1、0.1/0.2、
+  0.25/0.5、0.5/1.0 × 真人/混合/AI 三种桌型，ante = bb/10）；**按缺口续跑**（已存在的桌
+  只补缺失的委托与 ER 权限）；DelegPayer 余额预检 + `--topup` 自动补币 + 白名单/crank
+  参数输出。**实测**：15 桌 create_table + seats + hands + init_replay + 委托 ×15 全部成功
+  （DelegPayer 实测 ≈3.18M lamports/次委托，比旧估值高 36%——已更新估算常量并写进脚本）；
+  重跑三次全部走「续跑」路径（#31 补 3 个委托、#32–34 各补 15 个）。
+  **被阻塞的一步**：`init_permissions`（ER）对所有桌都失败：`Custom:6010`
+  （新程序下重测仍失败；L1 侧排查排除我方原因：权限 PDA 派生、8 座扫描、ACL 程序常量
+  `ACLseoPoy…` 两端一致、`solana program show` 显示委托记录齐全；**旧桌 5/9/13/14 的权限
+  账户也全数消失**（`0/10`），说明 devnet ER 发生过状态重置/ACL 侧变化——本会话前它们
+  还在正常跑）。已按「如实记录」处理：15 桌保持 L1 就绪，权限建好即可玩（`node
+  scripts/deploy-tables.mjs` 幂等续跑即补），大厅白名单暂不加 20–34 以免展示不能入座的桌。
+  ER 健康快照（存档）：`solana-core 4.0.0 / magicblock-core 1.0.0 / commit cc32775`，
+  ER 上程序账户已缓存为新版（1,213,056B）、ACL 程序存在（215,976B, LoaderV4）。
 - **（2026-10-08）i18n：字典 + Provider + 持久化，导航/大厅/对局全部接线（中英切换实测通过）**。
   `web/lib/i18n.tsx`：zh/en 双语字典（~160 键）+ `I18nProvider`（挂在根 `Providers` 里）
   + `useI18n()`。默认语言 = 浏览器语言（`zh*` → 中文，其余 → 英文）；用户点右上角
