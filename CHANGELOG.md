@@ -52,6 +52,37 @@
 
 ### 遗留问题
 
+- **（2026-10-08）更正 + 全桌可玩：`init_permissions` 的 6010 是本仓库脚本 bug（不是 ER 故障）；15 桌权限补齐，23 张桌全部可入座**。
+  **更正**：前一条「devnet ER 权限创建被阻塞」的判断**是错的**。真因在
+  `scripts/lib/deploy-table.mjs`：局部 helper `const pda = (seeds) => …programId…` 只接受一个
+  参数，`permission: (acc) => pda([b"permission:", acc], PERMISSION_PROGRAM)` 里第二个实参被
+  **静默忽略** → 权限 PDA 按**我们程序**而不是 **ACL 权限程序**推导 → 客户端传错地址 → 程序端
+  按 ACL 正确派生后 `require_keys_eq!` 失败，报 `SeatMismatch(6010)`。之前「老桌权限也消失」
+  同样是这个错误推导造成的误判：用正确派生查，桌 9/14/**20** 的权限**一直是 10/10**
+  （`owner=ACLseoPoy…`），ER 从未重置或拒绝过任何东西。**唯一一次真 ER 抖动**是本会话早期的
+  401 InvalidToken（`getAuthToken` 没解构 `{ token }`，也是我自己的 bug）。
+  **排查关键（值得复用）**：**在 L1 上模拟该指令并读日志** —— 日志直接给出
+  `AnchorError thrown in programs/solpoker/src/instructions/init_permissions.rs:126` 与
+  `Left: 3qfjaBx1…`（客户端传入）/ `Right: HaUJ9vVm…`（程序按 ACL 派生）两个地址，一眼定位
+  是哪一侧派生错了。注意 web3.js 的 `simulateTransaction` 会拒绝 `sigVerify` +
+  `replaceRecentBlockhash` 组合（"sigVerify may not be used with replaceRecentBlockhash"），
+  改用原始 JSON-RPC + `{ encoding:"base64", sigVerify:false, replaceRecentBlockhash:true }`。
+  **修复**：`tablePdas` 加 `pdaWith(seeds, program)` 显式传程序 + 注释警告；
+  `scripts/er-perm-probe.mjs` 改为**先 L1 模拟（失败则打印日志）再发 ER**，以后一眼就能诊断。
+  **结果**：`deploy-tables.mjs` 一次跑通 **11/11**（桌 22–26、28–33 补齐权限；20/21/27/34 此前已建）
+  → 逐桌复验 **23 张桌权限全部 10/10（`ALL_PERMISSIONS_OK`）**；大厅白名单更新为 23 桌；
+  crank 以全表列表重启（`crank-all.log`）。**端到端验收**：桌 20 座 0 = x402 入账的测试钱包
+  （10 tUSDC，`credit_x402_deposit`）、座 1 = `quick-sit carol`（10 tUSDC）→ crank 实测
+  **`[t20] take_seat[0]` / `take_seat[1]` 成功**（这条路径过去正因为「权限」而不可用）→
+  大厅显示 23 张桌、牌桌页显示「2 seated」、手牌进入 Commit 阶段 ✓。随后两个测试座位
+  `stand_up` 撤除（crank 会在手牌边界 commit 后兑付）。
+  **顺手修掉两个真问题**：① `scripts/stand-up-player.mjs` 的 ER 端点硬编码（本机 7799）改走
+  `env.mjs`（上次统一时漏网）；② **crank 在 Commit 阶段每秒空转 `advance`** —— 程序语义是
+  「每次敲 1 记 strike（上限 3）后重新计时」，所以无揭示的手牌要 ~3 分钟才自动释放座位，
+  而每秒一发纯烧手续费（实测白烧 ~180 笔）；现在按 `Game.phase_deadline(@112)` 门控，
+  重启后日志只剩必要动作。**撤座闭环实测**：crank 自动 strike-out → 释放座位 → commit →
+  `sweep cash_out` 把押金退回付款人（测试钱包 +10.01 → 49.86、carol +10 → 38.75，
+  桌 20 金库归零、两座 `occupant=default` 且 `deposited == paid`）—— 全程无需人工。
 - **（2026-10-08）`refund_x402_deposit` 落地 + 一个 SBF 栈破坏 bug 的完整排查（x402 标准模式两件套齐了）**。
   **程序**：新指令 `refund_x402_deposit(amount, sig_lo, sig_hi)` —— `config.gateway` 门禁；
   把「付了款但未入账」的钱从 TableVault 退回 `ATA(payer, mint)`（地址约束钉死收款方）；

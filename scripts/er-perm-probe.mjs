@@ -16,6 +16,7 @@ const { token } = await getAuthToken(ER_BASE_URL, deployer.publicKey, async (msg
   nacl.sign.detached(msg, deployer.secretKey)
 );
 const er = new Connection(`${ER_BASE_URL}?token=${token}`, "confirmed");
+const l1 = new Connection(process.env.L1_URL ?? process.env.HELIUS_RPC ?? process.env.NEXT_PUBLIC_L1_RPC ?? "https://rpc.magicblock.app/devnet", "confirmed");
 const program = new anchor.Program(idl, new anchor.AnchorProvider(er, new anchor.Wallet(deployer), { commitment: "confirmed" }));
 
 const tableId = Number(process.argv[2] ?? 27);
@@ -40,6 +41,31 @@ const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ unit
 tx.feePayer = deployer.publicKey;
 tx.recentBlockhash = (await er.getLatestBlockhash("confirmed")).blockhash;
 tx.sign(deployer);
+// 先 L1 模拟（拿日志）：多数指令的失败原因在这里一眼可见（6010 之类），
+// 且不会被 TEE「不返回日志」的特性挡住。
+{
+  const txSim = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), ix);
+  txSim.feePayer = deployer.publicKey;
+  txSim.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
+  txSim.sign(deployer);
+  const r = await fetch(process.env.L1_SIM_URL ?? (process.env.L1_URL ?? process.env.HELIUS_RPC ?? "https://rpc.magicblock.app/devnet"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0", id: 1, method: "simulateTransaction",
+      params: [Buffer.from(txSim.serialize()).toString("base64"), { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true }],
+    }),
+  });
+  const j = await r.json();
+  const v = j.result?.value;
+  if (v?.err) {
+    console.log("L1 模拟失败（直接看原因）:", JSON.stringify(v.err));
+    for (const l of v.logs ?? []) if (/AnchorError|Error Code|Left|Right|failed/.test(l)) console.log("  ", l.slice(0, 200));
+    process.exit(1);
+  }
+  console.log("L1 模拟通过（CU", v?.unitsConsumed, "），继续发 ER…");
+}
+
 const sig = await er.sendRawTransaction(tx.serialize(), { skipPreflight: true });
 for (let i = 0; i < 25; i++) {
   const st = await er.getSignatureStatuses([sig]);

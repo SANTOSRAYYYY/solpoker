@@ -383,6 +383,14 @@ async function main() {
         }
         if (eligible < 2) return;
       }
+      // Commit 阶段：只在承诺超时后才推进。advance 每次会敲 1 记 strike 并重新计时
+      // （max_strikes 次后自动释放缺盐座位）；而每秒空转会白烧手续费（2026-10-08 实测
+      // 无揭示的手牌白烧 ~180 笔），所以按 Game.phase_deadline(@112) 门控。
+      if (phase === 1) {
+        const phaseDeadline = g.readBigInt64LE(112);
+        if (phaseDeadline > 0n && BigInt(now) < phaseDeadline) return;
+      }
+
       // Commit 阶段需要所有座位提交盐承诺（未齐时 advance 会报错——吞掉）
       try {
         const handAccounts = Object.fromEntries(

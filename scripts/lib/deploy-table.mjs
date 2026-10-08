@@ -27,9 +27,17 @@ const u32le = (n) => {
   return b;
 };
 
-/** 一桌的全部 PDA（与 web/lib/solpoker-client.ts 的 pdasFor 对齐）。 */
+/** 一桌的全部 PDA（与 web/lib/solpoker-client.ts 的 pdasFor 对齐）。
+ *
+ *  注意：权限账户（permission）派生在 **ACL 权限程序** 下，不是我们程序——所以用
+ *  `pdaWith(seeds, program)` 显式传程序。2026-10-08 的坑：这里曾写成
+ *  `pda(seeds, PERMISSION_PROGRAM)`，而局部 `pda` 只接受一个参数（程序恒为本程序），
+ *  于是客户端派生出错误的权限 PDA，程序端断言（按 ACL 正确派生）失败报
+ *  `SeatMismatch(6010)`，被我误判成「devnet ER 故障」查了半天。**改这一行时务必
+ *  跑 `node scripts/er-perm-probe.mjs <id>` 复验。 */
 export function tablePdas(programId, tableId) {
-  const pda = (seeds) => PublicKey.findProgramAddressSync(seeds, programId)[0];
+  const pdaWith = (seeds, program) => PublicKey.findProgramAddressSync(seeds, program)[0];
+  const pda = (seeds) => pdaWith(seeds, programId);
   const table = pda([Buffer.from("table"), u32le(tableId)]);
   return {
     table,
@@ -42,7 +50,7 @@ export function tablePdas(programId, tableId) {
     replay: pda([Buffer.from("replay"), table.toBuffer()]),
     seat: (i) => pda([Buffer.from("seat"), table.toBuffer(), Buffer.from([i])]),
     hand: (i) => pda([Buffer.from("hand"), table.toBuffer(), Buffer.from([0, 0]), Buffer.from([i])]),
-    permission: (acc) => pda([Buffer.from("permission:"), acc.toBuffer()], PERMISSION_PROGRAM),
+    permission: (acc) => pdaWith([Buffer.from("permission:"), acc.toBuffer()], PERMISSION_PROGRAM),
   };
 }
 
