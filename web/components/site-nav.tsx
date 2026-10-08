@@ -15,6 +15,12 @@ const ANCHORS: { href: string; zh: string; en: string }[] = [
   { href: "#faq", zh: "常见问题", en: "FAQ" },
 ];
 
+/** 站内页面链接（锚点之外）：信任模型 / 产品文档。 */
+const LINKS: { href: string; zh: string; en: string }[] = [
+  { href: "/trust", zh: "信任", en: "Trust" },
+  { href: "/docs", zh: "产品文档", en: "Docs" },
+];
+
 export function SiteNav() {
   const { lang, setLang, t } = useI18n();
   const L = (zh: string, en: string) => (lang === "zh" ? zh : en);
@@ -24,7 +30,7 @@ export function SiteNav() {
       <div className="mx-auto flex h-14 max-w-[1200px] items-center gap-3 px-3 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
           <SolMark size={26} />
-          <span className="text-brand text-[18px] font-bold tracking-wide">
+          <span className="text-brand hidden text-[18px] font-bold tracking-wide sm:inline">
             SolPoker
           </span>
           <span className="badge badge-plain ml-1 hidden font-mono lg:inline-flex">
@@ -32,22 +38,25 @@ export function SiteNav() {
           </span>
         </Link>
 
-        <nav className="no-bar hidden flex-1 items-center gap-0.5 sm:flex">
+        <nav className="no-bar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
           {ANCHORS.map((a) => (
             <a
               key={a.href}
               href={a.href}
-              className="title-cn shrink-0 rounded-md px-2 py-2 text-[12.5px] text-mist-dim transition-colors hover:text-mist"
+              className="title-cn shrink-0 rounded-md px-1.5 py-2 text-[12px] text-mist-dim transition-colors hover:text-mist sm:px-2 sm:text-[12.5px]"
             >
               {L(a.zh, a.en)}
             </a>
           ))}
-          <Link
-            href="/docs"
-            className="title-cn shrink-0 rounded-md px-2 py-2 text-[12.5px] text-accent-200 transition-colors hover:text-mist"
-          >
-            {L("产品文档", "Docs")}
-          </Link>
+          {LINKS.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="title-cn shrink-0 rounded-md px-1.5 py-2 text-[12px] text-accent-200 transition-colors hover:text-mist sm:px-2 sm:text-[12.5px]"
+            >
+              {L(l.zh, l.en)}
+            </Link>
+          ))}
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
