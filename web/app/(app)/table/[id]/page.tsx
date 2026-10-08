@@ -1362,6 +1362,8 @@ export default function TablePage() {
             {pdas.table.toBase58().slice(0, 6)}…
           </span>{" "}
           · {tr("table.dataLabel")} {tee.phase === "ok" ? tr("table.dataErAuth") : source === "er" ? tr("table.dataErPublic") : tr("table.dataL1")}
+          {" · "}
+          <span className="font-mono">build {process.env.NEXT_PUBLIC_BUILD}</span>
         </span>
         <span className="flex items-center gap-4">
           <Link href="/trust" className="hover:text-mist-dim">
