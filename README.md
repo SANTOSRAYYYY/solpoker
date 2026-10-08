@@ -6,6 +6,8 @@ Solana 上的隐私德州扑克（v1 为单挑现金桌）。对局运行在 Mag
 
 > Status: **Stage 1** (design documents, awaiting sign-off). Stage 0 delivered the pinned toolchain, repo skeleton and delegation smoke test on the local stack and devnet-tee. See [CHANGELOG.md](CHANGELOG.md).
 >
+> **Running the testnet product**: [docs/runbook-testnet.md](docs/runbook-testnet.md) — start the four processes, add tables, verify hands, troubleshoot. One-command health check: `node scripts/testnet-health.mjs` (deep: `--deep <tableId>`).
+>
 > Design: [Stage 1 design](docs/design/stage1-design.md) · [AI tables and x402](docs/design/stage1-agents-x402.md) · [commit fees and escape hatch](docs/design/stage1-fees-escape.md) · [decisions](docs/design/decisions.md) · [pre-dev review](docs/design/pre-dev-review.md)
 
 ## Pinned toolchain

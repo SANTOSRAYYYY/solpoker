@@ -52,6 +52,22 @@
 
 ### 遗留问题
 
+- **（2026-10-08）测试网产品收尾：一条命令自检 + i18n 补完（agents/trust）+ 运维手册**。
+  **① `scripts/testnet-health.mjs`（只读）**：一条命令查「端点/程序账户/23 桌（委托 15/15 +
+  ER 权限 10/10）/四个本地服务/crank 日志新鲜度」，`--deep <tableId>` 再跑整手复算与行动流验证。
+  实测输出 **`TESTNET_HEALTH_OK`**（23 桌全绿、服务在线、`HAND_RECOMPUTE_OK` + `ACTION_STREAM_OK`）。
+  **② i18n 补完**：`/trust` 与 `/agents` 此前是纯中文（当初标注的覆盖边界），现在两页把
+  数据/文案就地双语化（条目 `by/how/trust` + 8 项信任条目 + 硬件表 + 风险边界表 + 页脚、
+  agent 页的工具清单/向导三步/同桌规则/安全边界/操作与通知），渲染按 `lang` 取值；
+  `AGENT_STATUS` 本来就是英文 ✓。浏览器实测两页英文模式渲染完整（"Trust model / No slogans
+  here…"、"My Agents / Register an on-chain identity…"），`npx tsc --noEmit` 通过。
+  **③ `docs/runbook-testnet.md`（运维手册）**：四个进程怎么起、`.env.local` 各项含义、
+  加桌（含 DelegPayer 估算与补币）、六种验证命令、排障表（僵尸座位/6199 快照陈旧/Commit 卡住/
+  401 token/「部署成功但跑旧 .so」/ER 不给日志时改用 L1 原始 JSON-RPC 模拟）、x402 三种用法、
+  已知边界（devnet 特性、v2 无 occupants、托管 MCP、逃生通道、4 条历史退款记录）、
+  改程序后的发布清单 + **SBF 栈纪律**。README 顶部加了指引。
+  **④ `scripts/program-parity.mjs`（新常驻）**：链上程序数据 vs 本地 `.so` 逐字节比对
+  （防「部署成功但跑的是旧 .so」），实测 `PROGRAM_PARITY_OK`。
 - **（2026-10-08）新桌端到端实测：15 张新桌不只会「能入座」，完整一手从发牌到复算全通**。
   `node scripts/stage7-player-sim.mjs 20`（两名测试玩家、除玩家签名外全由 crank 驱动）
   实测输出 **`STAGE7_PLAYER_SIM_OK`**：`sit_down ×2 → crank take_seat ×2（同时更新 PER
