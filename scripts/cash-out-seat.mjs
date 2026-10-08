@@ -1,12 +1,13 @@
 // 通用兑付：cash_out（permissionless，deployer 签名）把某桌某座位的 owed 付到
 // 其固定 payout ATA，条件满足时释放座位。用法:
 //   node scripts/cash-out-seat.mjs <tableId> <seatIdx>
+import { L1_RPC } from "./env.mjs";
 import fs from "node:fs";
 import { Connection, Keypair, PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
+const L1_URL = L1_RPC;
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const TABLE_ID = Number(process.argv[2] ?? 9);
 const SEAT = Number(process.argv[3] ?? 0);

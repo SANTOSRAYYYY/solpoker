@@ -30,6 +30,9 @@
 //! hash (Stage 6 Phase 1 decision 閳?full event bytes are re-derivable from
 //! HandProof + public fields).
 
+// clippy：座位号/抽牌序号就是数组下标（与 seat_bit、game.seats 平行），索引式循环
+// 比 zip 更贴合牌桌语义；手牌机与各街 helper 参数多（游戏状态本身就很宽），不宜再包一层。
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 use anchor_lang::prelude::*;
 use sha2::{Digest, Sha256};
 use solpoker_core::deal::{
@@ -552,7 +555,7 @@ pub fn apply_claim_timeout(table: &Table, game: &mut Game, now: i64) -> Result<(
         seq: game.action_seq,
         event_tag: EVENT_TAG_TIMEOUT,
         seat,
-        kind: auto_kind as u8,
+        kind: auto_kind,
         amount: 0,
     });
     game.action_seq = game
@@ -1369,8 +1372,8 @@ fn await_street(
 
 /// AwaitRunout: on fulfillment, deal ALL remaining board cards from the
 /// runout seed (RunoutStarted, VrfFulfilled(4), BoardDealt with actual street
-/// + vrf_src=4, StreetSkipped per skipped betting round), then Settle on the
-/// next advance.
+/// and vrf_src = 4, StreetSkipped per skipped betting round), then Settle on
+/// the next advance.
 #[inline(never)]
 fn await_runout(
     table: &Table,
@@ -1895,11 +1898,14 @@ mod tests {
 
     /// Replay one full deal through the persisted DealState driver, mirroring
     /// exactly what await_seed/await_street/await_runout do.
+    /// deal_state_full_run 的返回：抽牌序号 / 逐张牌 / 玩家的 draw 记录 / 最终 transcript。
+    type FullRun = (Vec<(u8, u8, u8)>, Vec<u8>, Vec<u8>, [u8; 32]);
+
     fn deal_state_full_run(
         inputs: &HandInputs,
         button: u8,
         preflop_events: &[Event],
-    ) -> (Vec<(u8, u8, u8)>, Vec<u8>, Vec<u8>, [u8; 32]) {
+    ) -> FullRun {
         let table = inputs.table;
         let hand_id = inputs.hand_id;
         let salt_digest = deal::salt_digest(
@@ -2451,7 +2457,7 @@ mod tests {
         for k in 0..2 * n {
             let seat = order[k % n];
             let slots = k / n;
-            let (card, dn) = st.draw(&seed0, &table_bytes(), hand_id, |c, dn| {
+            let (card, dn) = st.draw(&seed0, &table_bytes(), hand_id, |_c, dn| {
                 Event::HoleDealt { seat, draw_no: dn }
             });
             assert_eq!(card, hole_cards[seat as usize][slots], "底牌第 {k} 张必须一致");

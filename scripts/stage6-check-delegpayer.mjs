@@ -1,9 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import fs from "node:fs";
 const idl = JSON.parse(fs.readFileSync("target/idl/solpoker.json", "utf8"));
+import { L1_RPC } from "./env.mjs";
 const pid = new PublicKey(idl.address);
 const [delegPayer] = PublicKey.findProgramAddressSync([Buffer.from("deleg_payer")], pid);
-const l1 = new Connection("http://127.0.0.1:8898/devnet", "confirmed");
+const l1 = new Connection(L1_RPC, "confirmed");
 const info = await l1.getAccountInfo(delegPayer);
 console.log("DelegPayer", delegPayer.toBase58(), "lamports:", info ? info.lamports : "MISSING");
 const u32le = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };

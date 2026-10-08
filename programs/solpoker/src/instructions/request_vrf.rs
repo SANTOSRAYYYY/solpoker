@@ -2,8 +2,8 @@
 //!
 //! Real SDK signatures used (ephemeral-rollups-sdk 0.17.3):
 //! - `ephemeral_rollups_sdk::vrf::instructions::create_request_randomness_ix(
-//!      params: RequestRandomnessParams) -> compat::Instruction`
-//!    (source: ephemeral-vrf-sdk-0.17.3/src/instructions.rs)
+//!   params: RequestRandomnessParams) -> compat::Instruction`
+//!   (source: ephemeral-vrf-sdk-0.17.3/src/instructions.rs)
 //! - `RequestRandomnessParams { payer, oracle_queue, callback_program_id,
 //!      callback_discriminator, accounts_metas, caller_seed, callback_args }`
 //! - the `#[vrf]` attribute (ephemeral-vrf-sdk-vrf-macro-0.17.3/src/lib.rs)

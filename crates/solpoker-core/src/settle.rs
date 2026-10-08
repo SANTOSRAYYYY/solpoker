@@ -690,8 +690,8 @@ mod tests {
         // 3 人翻前全 fold 给 BB：live == 1，board_len < 5，不比牌。
         let mask = 0b111;
         let mut stacks = [0u64; 9];
-        for s in 0..3 {
-            stacks[s] = 1000 * CENT;
+        for st in stacks.iter_mut().take(3) {
+            *st = 1000 * CENT;
         }
         let mut e = Engine::new(&stacks, mask, mask, 0, 50 * CENT, 100 * CENT, 10 * CENT).unwrap();
         e.act(0, Action::Fold).unwrap();
@@ -719,8 +719,8 @@ mod tests {
     fn void_hand_refunds_everything_without_rake() {
         let mask = 0b111;
         let mut stacks = [0u64; 9];
-        for s in 0..3 {
-            stacks[s] = 1000 * CENT;
+        for st in stacks.iter_mut().take(3) {
+            *st = 1000 * CENT;
         }
         let mut e = Engine::new(&stacks, mask, mask, 0, 50 * CENT, 100 * CENT, 10 * CENT).unwrap();
         e.act(0, Action::RaiseTo(500 * CENT)).unwrap();

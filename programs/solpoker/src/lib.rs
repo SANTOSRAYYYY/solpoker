@@ -30,6 +30,10 @@
 //! empirically 2026-10-05 after E0432 `unresolved import crate`. Handlers stay
 //! in `src/instructions/`; only the context structs live here.
 
+// clippy::diverging_sub_expression：`#[program]`/`declare_id!` 宏展开里的 panic 分支
+// （程序 id 解析）会触发该误报，属宏内部实现，不在我们控制范围。
+#![allow(clippy::diverging_sub_expression)]
+
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{Mint, Token, TokenAccount};

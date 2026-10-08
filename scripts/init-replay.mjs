@@ -1,6 +1,7 @@
 // init-replay — 给已存在的桌补 HandReplay（§8.7 整手复算输入，2026-10-08）。
 //
 // 用法: node scripts/init-replay.mjs 5,6,7,8,9,11,12
+import { L1_RPC } from "./env.mjs";
 // 幂等：已创建/已委托的步骤自动跳过（可反复跑）。
 //
 // 每张桌两步（都是 L1 交易，deployer 付款）：
@@ -15,7 +16,7 @@ import {
 import * as anchor from "@anchor-lang/core";
 import BN from "bn.js";
 
-const L1_URL = process.env.L1_URL ?? "https://rpc.magicblock.app/devnet";
+const L1_URL = L1_RPC;
 const TEE_VALIDATOR = new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 

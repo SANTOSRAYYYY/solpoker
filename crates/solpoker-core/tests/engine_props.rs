@@ -162,9 +162,9 @@ fn drive(setup: &Setup, seed: u64) -> (Engine, solpoker_core::settle::Settlement
         assert_eq!(e.actionable_mask & !e.live_mask, 0);
         assert_eq!(e.live_mask & !e.hand_mask, 0);
         // 单调：strikes 手内不减少。
-        for i in 0..9 {
-            assert!(e.seats[i].strikes >= strikes_peak[i], "strikes 单调");
-            strikes_peak[i] = e.seats[i].strikes;
+        for (seat, peak) in e.seats.iter().zip(strikes_peak.iter_mut()) {
+            assert!(seat.strikes >= *peak, "strikes 单调");
+            *peak = seat.strikes;
         }
 
         let seat = e.to_act;

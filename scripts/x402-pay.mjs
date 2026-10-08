@@ -16,6 +16,7 @@ import {
 } from "@solana/spl-token";
 import BN from "bn.js";
 import { L1_RPC } from "./env.mjs";
+import { encode as bs58Encode } from "./lib/bs58.mjs";
 
 /** Memo 程序（标准 x402 客户端的「ComputeBudget + TransferChecked + Memo」三件套）。 */
 const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -89,7 +90,7 @@ if (!body.ok) process.exit(1);
 
 // 4) 复核：座位账本 + DepositRecord
 const seatInfo = await l1.getAccountInfo(seat);
-const deposited = seatInfo.data.readBigUInt64LE(154); // SeatLedger: deposited@154
+const deposited = seatInfo.data.readBigUInt64LE(186); // SeatLedger: deposited_total@186 (paid_total@194)
 const occupant = new PublicKey(seatInfo.data.slice(41, 73)).toBase58();
 console.log(
   `座位 ${seatIdx}: occupant=${occupant.slice(0, 8)}… deposited_total=${deposited} ` +
@@ -97,6 +98,15 @@ console.log(
 );
 const rec = await l1.getAccountInfo(new PublicKey(body.depositRecord));
 console.log(`DepositRecord ${body.depositRecord.slice(0, 10)}…: ${rec ? `存在 ${rec.data.length}B` : "不存在"}`);
+// 审计闭环：DepositRecord 里的 64 字节签名回编后必须等于付款交易签名
+let sigBack = null;
+if (rec) {
+  const sigBytes = rec.data.slice(89, 153); // DepositRecord: payer32 table32 seat1 amount8 credited_at8 sig64 bump1
+  sigBack = bs58Encode(sigBytes);
+  console.log(`DepositRecord.sig 回编 == 付款交易: ${sigBack === paySig}（${sigBack.slice(0, 12)}…）`);
+}
 console.log(
-  occupant === payer.publicKey.toBase58() && deposited >= BigInt(amount) ? "X402_PAY_OK" : "X402_PAY_MISMATCH"
+  occupant === payer.publicKey.toBase58() && deposited >= BigInt(amount) && sigBack === paySig
+    ? "X402_PAY_OK"
+    : "X402_PAY_MISMATCH"
 );

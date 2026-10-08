@@ -190,7 +190,7 @@ impl Engine {
         ante: u64,
     ) -> Result<Self, EngineError> {
         let players = popcount(hand_mask);
-        if players < 2 || players > MAX_SEATS {
+        if !(2..=MAX_SEATS).contains(&players) {
             return Err(EngineError::InvalidConfig);
         }
         if hand_mask & !occupied_mask != 0 {

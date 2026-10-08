@@ -1,14 +1,16 @@
 // 管理员清座：回收弃置座位（密钥丢失等）。筹码全额转入该座位自己的 owed，
 // 只有其 payout 地址能通过 cash_out 领取——管理员碰不到任何资金。
 // 用法: node scripts/force-stand-up.mjs <tableId> <seatIdx>
+import { L1_RPC } from "./env.mjs";
+import { ER_BASE_URL } from "./env.mjs";
 import fs from "node:fs";
 import { Connection, Keypair, PublicKey, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 
-const ER_BASE = "http://127.0.0.1:7799";
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
+const ER_BASE = ER_BASE_URL;
+const L1_URL = L1_RPC;
 const ER_CU = 1_400_000;
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const TABLE_ID = Number(process.argv[2] ?? 5);

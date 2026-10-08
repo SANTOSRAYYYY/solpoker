@@ -1,11 +1,13 @@
 //! audit_table — §5.4 I-X（L1；permissionless；只读）。
 //!
-//! 校验跨层守恒：TableVault 余额 ≥
-//! Σ(deposited − credited_快照) + Σ stack_快照
-//! + (rake_快照 − rake_swept) + Σ(owed_快照 − paid)，
+//! 校验跨层守恒（TableVault 余额 ≥ 右侧全部之和）：
+//!
+//! ```text
+//! Σ(deposited − credited_快照) + Σ stack_快照 + (rake_快照 − rake_swept) + Σ(owed_快照 − paid)
+//! ```
+//!
 //! 并报告盈余（≥ 0；盈余来自直接向 TableVault 转账，程序不动用它）。
-//! 任何计数器对倒挂（credited_快照 > deposited 等）或余额不足都报错。
-//! CI 与 keeper 定期调用。
+//! 任何计数器对倒挂（credited_快照 > deposited 等）或余额不足都报错。CI 与 keeper 定期调用。
 //!
 //! 栈帧纪律：Game 快照是零拷贝借用（fund::read_game_snapshot 返回
 //! Ref<Game>，不再把 1544 字节的 Game 拷上栈）；9 份 SeatLedger 在

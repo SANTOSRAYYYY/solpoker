@@ -1,12 +1,13 @@
 // replay-status — 读 HandReplay 账户（§8.7 整手复算输入）+ 统计「僵尸座位」
 // （已离座但账本里还有钱：座位被占着不能用，钱也没回到主人手里）。
 //
+import { L1_RPC } from "./env.mjs";
 // 用法: node scripts/replay-status.mjs 13          # 只看某桌
 //       node scripts/replay-status.mjs 5,9,11,13   # 多桌
 import fs from "node:fs";
 import { Connection, PublicKey } from "@solana/web3.js";
 
-const L1_URL = process.env.L1_URL ?? "https://rpc.magicblock.app/devnet";
+const L1_URL = L1_RPC;
 const ids = (process.argv[2] ?? "13").split(",").map((s) => Number(s.trim())).filter(Number.isInteger);
 
 const idl = JSON.parse(fs.readFileSync("target/idl/solpoker.json", "utf8"));

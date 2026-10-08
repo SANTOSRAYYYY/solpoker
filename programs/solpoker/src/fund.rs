@@ -334,9 +334,7 @@ pub fn required_vault_backing(
     require!(ledgers.len() == MAX_SEATS, SolpokerError::SeatMismatch);
     require!(snap.rake_total >= rake_swept, SolpokerError::Conservation);
     let mut req: u128 = (snap.rake_total - rake_swept) as u128;
-    for i in 0..MAX_SEATS {
-        let l = ledgers[i];
-        let s = &snap.seats[i];
+    for (l, s) in ledgers.iter().zip(snap.seats.iter()) {
         require!(l.deposited_total >= s.credited_total, SolpokerError::Conservation);
         require!(s.owed_total >= l.paid_total, SolpokerError::Conservation);
         req += (l.deposited_total - s.credited_total) as u128;

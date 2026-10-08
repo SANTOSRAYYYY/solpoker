@@ -1,6 +1,7 @@
 // 行动流验证的端到端测试（Node）：
 //   1) 读 #14 的 HandReplay（ER）→ 找一手 v2（有 street_end）
 //   2) 读该桌的 HandProof（ER/L1）+ HandSecrets（ER）→ 取 delta/rake/盐/VRF
+import { L1_RPC } from "./env.mjs";
 //   3) 从 ER 交易日志抓该手的规范行动事件（act-log.mjs）
 //   4) verifyActionStream：逐街对到 street_end，最后对到 transcript_final
 //
@@ -12,7 +13,7 @@ import { verifyActionStream, unhex, hex } from "../web/lib/deal-verify.mjs";
 import { fetchHandEvents } from "../web/lib/act-log.mjs";
 
 const ER_URL = process.env.L1_URL ?? "https://devnet-tee.magicblock.app";
-const L1_URL = "https://rpc.magicblock.app/devnet";
+const L1_URL = L1_RPC;
 const TABLE_ID = Number(process.argv[2] ?? 14);
 const WANT_HAND = process.argv[3] ? BigInt(process.argv[3]) : null;
 

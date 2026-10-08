@@ -253,13 +253,33 @@ export interface TableLive {
   live: boolean;
 }
 
+/** 受限并发 map（默认 6 路）：大厅一次读 7 桌，串行会把 ER 的单次延迟（~1-3s）
+ *  放大成十几秒；并发后整体 ≈ 一次延迟。保持输出顺序与输入一致。 */
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, idx: number) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 export async function readTablesLive(
   er: Connection,
   l1: Connection
 ): Promise<TableLive[]> {
   const infos = await scanTables(l1);
-  const out: TableLive[] = [];
-  for (const info of infos) {
+  // 并发读（6 路）：串行会被 ER 延迟放大（实测冷导航 >15s → 并发后 ≈ 一次延迟）。
+  const out = await mapLimit(infos, 6, async (info): Promise<TableLive> => {
     const [seats, live] = await Promise.all([
       readSeatLedgers(l1, info.id).catch(() => [] as (SeatLedgerView | null)[]),
       readGameLive(er, l1, info.id).catch(() => null),
@@ -279,7 +299,7 @@ export async function readTablesLive(
         pendingPayout++;
       }
     }
-    out.push({
+    return {
       info,
       game,
       source: live?.source ?? null,
@@ -289,8 +309,8 @@ export async function readTablesLive(
       agentSeated,
       live:
         game !== null && game.handId > 0n && game.phase !== 0 && game.phase !== 8,
-    });
-  }
+    };
+  });
   return out;
 }
 

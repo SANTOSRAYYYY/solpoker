@@ -52,7 +52,50 @@
 
 ### 遗留问题
 
-- **（2026-10-08）x402 标准模式落地：`credit_x402_deposit` + 本地网关/客户端模拟（devnet 实测通过）**。
+- **（2026-10-08）全面测试 + 优化：clippy 清零、加载并发化（大厅冷加载 15s→2s）、x402 网关加固、派发烟测常驻化**。
+  **测什么**：`cargo test --workspace`（32+90+7+1+1+1 全绿）、`cargo clippy --workspace --all-targets`
+  （我们三个 crate 的警告 **27 → 0**）、`npx tsc --noEmit`（web 全量类型检查）、脚本自检
+  （`deal-verify-selftest` 6/6、`x402-gateway --selftest`、`replay-status 14`、`verify-actions 14`
+  `ACTION_STREAM_OK`、`deploy-tables --check`）、浏览器五路由巡检（`?debug=1` 诊断面板 0 错误）
+  + 引擎自检 6/6 + 审计视图渲染。
+  **改了什么（每条都有实测）**：
+  - **clippy 27 → 0**：core 的 `VrfSlot::fulfill` 去掉永不可达的 `Result<_, ()>`（改为直接返回
+    `FulfillOutcome`，与 `retry -> RetryOutcome` 同风格，`vrf_callback` 少一个 unreachable 分支）；
+    程序侧 7 处 `needless_range_loop`/7 处 `too_many_arguments` 以**模块级 allow + 理由**处理
+    （座位号就是数组下标、手牌 helper 参数多是域特性），修掉 4 处 doc 缩进、1 个未用变量、1 处
+    复杂类型（加 `type FullRun`）。改完 `cargo test` 全绿 → `anchor build --ignore-keys` 重建 →
+    `solana program extend` + 部署 → **链上 1,212,880B 与本地逐字节一致**（slot 508,713,620）。
+  - **新脚本 `scripts/program-smoke.mjs`（常驻）**：部署后派发烟测 —— 对 `top_up`（非法金额）、
+    `credit_x402_deposit`（非法金额）发故意失败的调用，从交易日志里确认
+    `Program log: Instruction: <Name>` 真的出现（今天 101 事故的教训固化）；再跑 `audit_table`
+    （permissionless 只读）验证 I-X 守恒。实测 **PROGRAM_SMOKE_OK 3/3**。
+  - **加载并发化**：`readTablesLive` 原来逐桌串行 `await`（每桌 L1+ER 一跳，ER 单跳 1–3s），
+    7 桌冷加载要十几秒；改为 `mapLimit(…, 6)` 受限并发。**实测浏览器五路由渲染 1.9–3.5s**
+    （大厅 15s+ → **2.0s**）。顺带记录一个测量陷阱：对局页根节点是 fragment **没有 `<main>`**，
+    巡检必须用 `body.innerText`（否则误判为「页面空白」）。
+  - **实时推送合并窗口**：`useLiveUpdates` 加 250ms 合并（L1 事件成批到达时只重拉一次）。
+  - **审计视图**：补 `credit_x402_deposit → 「x402 入账」` 标签（CLI + 服务端两处）；`/api/l1-audit`
+    加 `Cache-Control: private, max-age=10`。
+  - **x402 网关加固**：报价从链上 Table 账户读买入区间（去掉硬编码 100/1000BB，避免报价与程序
+    校验不一致）、新增 `GET /health`、**报价前座位预检**（座位被占/被本人占用 → 409，从源头避免
+    「付了钱入不了账」）、重复入账 409、入账失败时响应里写明「付款已在 TableVault、退款需人工」。
+    bs58 抽成 `scripts/lib/bs58.mjs`（与 bs58 4.0.1 逐字节一致，已对照）；`x402-pay.mjs` 现在
+    **自验证审计闭环**：读回 `DepositRecord.sig` 并 base58 编码，必须等于付款交易签名
+    （实测桌 21 座 0：`X402_PAY_OK`，`sigBack === paySig`）。
+  - **修掉的真 bug**：`KIND_ZH` 类型注解漏 `en` 字段（`tsc` 报 4 错）；对局页页脚「数据：」标签
+    重复成「ER live (authorized): ER live (authorized)」；**已全额兑现的空座仍标「待兑现」**
+    （改为 `deposited > paid` 才显示 —— 实测桌 14 有余额的 8wM8 显示、清零的 Gj2p 不显示）；
+    `install-idl.mjs` 只认 `\n{`（Windows `\r\n` 下报 "JSON start not found"）。
+  - **端点统一**：11 个活跃脚本（replay-status / verify-actions / scan-table-ids / table-status /
+    init-replay / quick-sit / cash-out-seat / check-seat-ledger / force-stand-up / sit-test-opponent /
+    stage6-check-delegpayer）的 L1/ER 端点改走 `scripts/env.mjs`（`L1_URL > HELIUS_RPC >
+    NEXT_PUBLIC_L1_RPC`），本地栈用户仍可用环境变量覆盖。`create-table.mjs` 的白名单提示改成
+    读取 `.env.local` 并合并（不再硬编码老桌号）。
+  - **新发现（如实记录）**：同一钱包占同桌第二座被链上 `credit_x402_deposit` 以
+    `SameOwner`（6030）拒绝 —— 顺带证明新指令里的 §2.2/§2.3 身份规则真的在跑。这次「付款成功、
+    入账被拒」在桌 20 的 TableVault 里留下 **10 tUSDC 未归属盈余**（`audit_table` 会如实报成盈余
+    ≥ 0），正是设计文档 §4.3 里 `refund_x402_deposit` 待实现的场景：网关已在 400 响应里写明
+    「请勿重复付款、退款需人工」，报价前预检则避免再次发生。
   **程序**：新指令 `credit_x402_deposit(idx, payer, amount, sig_lo, sig_hi)` ——
   `config.gateway` 门禁；`DepositRecord`（PDA `["x402", sig_lo, sig_hi]`，~154B，`init`
   语义防重复入账）记下付款人/桌/座/金额/时间/付款签名；座位为空按入座处理（金额与

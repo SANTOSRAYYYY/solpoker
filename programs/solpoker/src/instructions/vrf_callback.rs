@@ -56,16 +56,15 @@ pub fn handler(
         randomness,
         game.hand_id,
     ) {
-        Ok(FulfillOutcome::Stored) => {
+        FulfillOutcome::Stored => {
             let idx = VrfTarget::from_core(core_slot.target()).deck_index();
             deck.vrf_out[idx] = randomness;
             deck.vrf_attempt_used[idx] = core_slot.attempt();
             game.vrf.sync_from_core(&core_slot);
         }
-        Ok(FulfillOutcome::Ignored) => {
+        FulfillOutcome::Ignored => {
             // §9: correct identity, stale or mismatched request — ignore.
         }
-        Err(()) => unreachable!("core fulfill is infallible"),
     }
 
     // §15: randomness is never logged.

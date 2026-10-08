@@ -1,10 +1,11 @@
 // 全桌体检：读取每张桌的 Game 快照，打印座位占用/筹码/超时计数/阶段。
 // 用于诊断「人为什么不离开」：auto-leave 只在有人打牌（有超时/手牌开始）时触发。
 import fs from "node:fs";
+import { ER_BASE_URL } from "./env.mjs";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 
-const ER_BASE = process.env.ER_BASE ?? "http://127.0.0.1:7799";
+const ER_BASE = ER_BASE_URL;
 const TABLE_IDS = (process.argv[2] ?? "2,5,6,7,8,9").split(",").map(Number);
 const STRIKE_LIMIT = 3;
 

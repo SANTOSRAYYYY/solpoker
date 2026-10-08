@@ -39,7 +39,7 @@ const LABEL: Record<string, string> = {
   advance: "推进阶段", act: "玩家行动", claim_timeout: "超时裁决",
   apply_deposits: "入账", sweep_rake: "抽水", audit_table: "审计",
   admin_force_stand_up: "管理强离", admin_set_members: "管理成员",
-  set_session: "会话授权", revoke_session: "会话吊销",
+  set_session: "会话授权", revoke_session: "会话吊销", credit_x402_deposit: "x402 入账",
 };
 
 const pascalToSnake = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
@@ -80,8 +80,9 @@ export async function GET(req: Request) {
   if (!Number.isInteger(tableId) || tableId < 0) {
     return Response.json({ error: "table must be a non-negative integer" }, { status: 400 });
   }
+  const headers = { "Cache-Control": "private, max-age=10" };
   const hit = cache.get(tableId);
-  if (hit && Date.now() - hit.at < TTL_MS) return Response.json(hit.body);
+  if (hit && Date.now() - hit.at < TTL_MS) return Response.json(hit.body, { headers });
 
   const conn = new Connection(l1Url, { commitment: "confirmed" });
   const table = pda([Buffer.from("table"), u32le(tableId)]);
@@ -213,5 +214,5 @@ export async function GET(req: Request) {
     items,
   };
   cache.set(tableId, { at: Date.now(), body });
-  return Response.json(body);
+  return Response.json(body, { headers });
 }

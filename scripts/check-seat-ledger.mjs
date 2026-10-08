@@ -1,11 +1,12 @@
 // 读取某桌某座位的 SeatLedger 关键字段（验证 agent 身份写入）。
 // 用法: node scripts/check-seat-ledger.mjs <tableId> <seatIdx>
 import fs from "node:fs";
+import { L1_RPC } from "./env.mjs";
 import { Connection, PublicKey } from "@solana/web3.js";
 
 const TABLE_ID = Number(process.argv[2] ?? 11);
 const SEAT = Number(process.argv[3] ?? 0);
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
+const L1_URL = L1_RPC;
 const idl = JSON.parse(fs.readFileSync("target/idl/solpoker.json", "utf8"));
 const pid = new PublicKey(idl.address);
 const l1 = new Connection(L1_URL, "confirmed");

@@ -1,6 +1,7 @@
 // quick-sit — 以「真人」身份入座（不带 AgentProfile），用于在混合桌上凑一手牌。
 //
 // 与 agent.mjs sit 的区别：那个会带上 AgentProfile（= 以 agent 身份入座），
+import { L1_RPC } from "./env.mjs";
 // 而混合桌 §2.3 禁止同主人的两个 agent 同桌。把其中一个按真人入座即可开局
 // （真人座位不受同主人规则约束）。
 //
@@ -24,7 +25,7 @@ const TABLE_ID = Number(tableIdArg);
 const SEAT = Number(seatArg);
 const BUY_IN = BigInt(Math.round(Number(buyArg ?? 20) * 1e6));
 
-const L1_URL = process.env.L1_URL ?? "https://rpc.magicblock.app/devnet";
+const L1_URL = L1_RPC;
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const SESSION_KEY_LAMPORTS = 1_000_000;
 const SESSION_TTL_S = 7 * 24 * 3600;

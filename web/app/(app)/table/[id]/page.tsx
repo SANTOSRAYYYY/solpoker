@@ -47,7 +47,7 @@ import { scanTables, type TableInfo } from "@/lib/tables";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
 
-const KIND_ZH: Record<number, { zh: string; tone: "plain" | "grad" | "cyan" }> = {
+const KIND_ZH: Record<number, { zh: string; en: string; tone: "plain" | "grad" | "cyan" }> = {
   0: { zh: "真人桌", en: "Human", tone: "plain" },
   1: { zh: "AI 桌", en: "AI", tone: "cyan" },
   2: { zh: "混合桌", en: "Mixed", tone: "grad" },
@@ -221,7 +221,9 @@ function SeatView({
         )}
       </div>
       <div className="mt-1 text-center font-mono text-[10.5px]">
-        {left && <span className="text-warn">{tr("table.pendingCashout")}</span>}
+        {left && ledger && ledger.depositedTotal > ledger.paidTotal && (
+          <span className="text-warn">{tr("table.pendingCashout")}</span>
+        )}
         {!left && s.folded && <span className="text-mist-faint">{tr("table.folded")}</span>}
         {!left && !s.folded && s.leaveRequested && <span className="text-warn">{tr("table.leaveRequested")}</span>}
       </div>
@@ -1202,7 +1204,7 @@ export default function TablePage() {
           <span className="font-mono">
             {pdas.table.toBase58().slice(0, 6)}…
           </span>{" "}
-          · {tr("table.dataErAuth")}: {tee.phase === "ok" ? tr("table.dataErAuth") : source === "er" ? tr("table.dataErPublic") : tr("table.dataL1")}
+          · {tr("table.dataLabel")} {tee.phase === "ok" ? tr("table.dataErAuth") : source === "er" ? tr("table.dataErPublic") : tr("table.dataL1")}
         </span>
         <span className="flex items-center gap-4">
           <Link href="/trust" className="hover:text-mist-dim">

@@ -24,6 +24,9 @@ export function useLiveUpdates(): LiveUpdate {
   const [state, setState] = useState<LiveUpdate["state"]>("off");
   const [lastSignature, setLastSignature] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  // 合并窗口：L1 事件常成批到达（如批量委托），250ms 内的多条只触发一次重拉。
+  const timerRef = useRef<number | null>(null);
+  const pendingRef = useRef(false);
 
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_SSE_URL;
@@ -35,6 +38,17 @@ export function useLiveUpdates(): LiveUpdate {
     const es = new EventSource(url);
     esRef.current = es;
     es.onopen = () => setState("live");
+    const scheduleTick = () => {
+      pendingRef.current = true;
+      if (timerRef.current !== null) return;
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        if (pendingRef.current) {
+          pendingRef.current = false;
+          setTick((t) => t + 1); // 触发重拉（合并窗口内只一次）
+        }
+      }, 250);
+    };
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data) as {
@@ -43,15 +57,19 @@ export function useLiveUpdates(): LiveUpdate {
         };
         if (data.type === "hello") return; // 握手不算活动
         setLastSignature(data.txs?.[0]?.signature ?? null);
-        setTick((t) => t + 1); // 立即触发重拉
+        scheduleTick();
       } catch {
-        setTick((t) => t + 1);
+        scheduleTick();
       }
     };
     es.onerror = () => setState("error"); // EventSource 会自动重连
     return () => {
       es.close();
       esRef.current = null;
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, []);
 

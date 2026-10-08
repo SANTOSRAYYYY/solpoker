@@ -457,22 +457,22 @@ fn run_vector(path: &Path) -> Result<(), String> {
         )
     };
 
-    let inputs_j = root.req("inputs").map_err(&ctx)?;
-    let expected = root.req("expected").map_err(&ctx)?;
-    let inputs = parse_inputs(inputs_j).map_err(&ctx)?;
-    let attempts = parse_attempts(inputs_j).map_err(&ctx)?;
-    let forced = parse_forced(inputs_j).map_err(&ctx)?;
-    let force_retry = parse_force_retry(inputs_j).map_err(&ctx)?;
+    let inputs_j = root.req("inputs").map_err(ctx)?;
+    let expected = root.req("expected").map_err(ctx)?;
+    let inputs = parse_inputs(inputs_j).map_err(ctx)?;
+    let attempts = parse_attempts(inputs_j).map_err(ctx)?;
+    let forced = parse_forced(inputs_j).map_err(ctx)?;
+    let force_retry = parse_force_retry(inputs_j).map_err(ctx)?;
 
     // 庄位：首手用 seed_0 抽取；否则由 prev_button 顺时针轮转。
     let button_initialized = inputs_j
         .req("button_initialized")
         .and_then(J::as_bool)
-        .map_err(&ctx)?;
+        .map_err(ctx)?;
     let button = if button_initialized {
-        let prev = match inputs_j.req("prev_button").map_err(&ctx)? {
+        let prev = match inputs_j.req("prev_button").map_err(ctx)? {
             J::Null => return Err(ctx("button_initialized=true 时必须给出 prev_button".into())),
-            j => j.as_u64().map_err(&ctx)? as u8,
+            j => j.as_u64().map_err(ctx)? as u8,
         };
         next_clockwise(prev, inputs.hand_mask)
             .ok_or_else(|| ctx("prev_button 轮转失败（空 mask）".into()))?
@@ -481,7 +481,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
     };
     assert_eq!(
         button,
-        expected.req("button").and_then(J::as_u64).map_err(&ctx)? as u8,
+        expected.req("button").and_then(J::as_u64).map_err(ctx)? as u8,
         "{}",
         ctx("button 不一致".into())
     );
@@ -492,7 +492,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
 
     // 盐承诺（每座位 C_i）。
     if let Some(cm) = expected.get("salt_commitments") {
-        for (seat_s, hex_j) in cm.as_obj().map_err(&ctx)? {
+        for (seat_s, hex_j) in cm.as_obj().map_err(ctx)? {
             let seat: usize = seat_s
                 .parse()
                 .map_err(|_| ctx(format!("salt_commitments 座位键非法：{seat_s}")))?;
@@ -504,7 +504,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
             );
             assert_eq!(
                 to_hex(&c),
-                hex_j.as_str().map_err(&ctx)?,
+                hex_j.as_str().map_err(ctx)?,
                 "{}",
                 ctx(format!("座位 {seat} 盐承诺不一致"))
             );
@@ -517,7 +517,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
         expected
             .req("salt_digest")
             .and_then(J::as_str)
-            .map_err(&ctx)?,
+            .map_err(ctx)?,
         "{}",
         ctx("salt_digest 不一致".into())
     );
@@ -531,7 +531,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
         if let Some(exp) = expected.get(key) {
             assert_eq!(
                 to_hex(&sess.seed(target)),
-                exp.as_str().map_err(&ctx)?,
+                exp.as_str().map_err(ctx)?,
                 "{}",
                 ctx(format!("{key} 不一致"))
             );
@@ -545,10 +545,10 @@ fn run_vector(path: &Path) -> Result<(), String> {
     let hole = sess.deal_hole(attempts[VrfTarget::Preflop.to_u8() as usize], &forced);
     draws.extend(hole.iter().copied());
 
-    for step in inputs_j.req("script").and_then(J::as_arr).map_err(&ctx)? {
-        match step.req("type").and_then(J::as_str).map_err(&ctx)? {
+    for step in inputs_j.req("script").and_then(J::as_arr).map_err(ctx)? {
+        match step.req("type").and_then(J::as_str).map_err(ctx)? {
             "street" => {
-                let s = step.req("street").and_then(J::as_u64).map_err(&ctx)? as u8;
+                let s = step.req("street").and_then(J::as_u64).map_err(ctx)? as u8;
                 let street = BoardStreet::from_street_u8(s)
                     .ok_or_else(|| ctx(format!("script street 越界：{s}")))?;
                 let recs = sess.deal_street(street, attempts[s as usize]);
@@ -565,17 +565,17 @@ fn run_vector(path: &Path) -> Result<(), String> {
     }
 
     // 底牌：按座位比对（每座两张，按到手顺序）。
-    for (seat_s, cards_j) in expected.req("hole").and_then(J::as_obj).map_err(&ctx)? {
+    for (seat_s, cards_j) in expected.req("hole").and_then(J::as_obj).map_err(ctx)? {
         let seat: u8 = seat_s
             .parse()
             .map_err(|_| ctx(format!("hole 座位键非法：{seat_s}")))?;
         let exp_cards: Vec<u8> = cards_j
             .as_arr()
-            .map_err(&ctx)?
+            .map_err(ctx)?
             .iter()
             .map(|c| c.as_u64().map(|v| v as u8))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(&ctx)?;
+            .map_err(ctx)?;
         let got: Vec<u8> = hole
             .iter()
             .filter(|r| r.seat == Some(seat))
@@ -588,21 +588,21 @@ fn run_vector(path: &Path) -> Result<(), String> {
     let exp_board: Vec<u8> = expected
         .req("board")
         .and_then(J::as_arr)
-        .map_err(&ctx)?
+        .map_err(ctx)?
         .iter()
         .map(|c| c.as_u64().map(|v| v as u8))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(&ctx)?;
+        .map_err(ctx)?;
     let got_board: Vec<u8> = board.iter().map(|r| r.card).collect();
     assert_eq!(got_board, exp_board, "{}", ctx("board 不一致".into()));
     let board_src: Vec<u8> = expected
         .req("board_src")
         .and_then(J::as_arr)
-        .map_err(&ctx)?
+        .map_err(ctx)?
         .iter()
         .map(|x| x.as_u64().map(|v| v as u8))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(&ctx)?;
+        .map_err(ctx)?;
     for (i, rec) in board.iter().enumerate() {
         assert_eq!(
             rec.vrf_src.map(|t| t.to_u8()),
@@ -613,7 +613,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
     }
 
     // 抽牌日志（draw_no / retry / card 全量比对）。
-    let exp_draws = expected.req("draws").and_then(J::as_arr).map_err(&ctx)?;
+    let exp_draws = expected.req("draws").and_then(J::as_arr).map_err(ctx)?;
     assert_eq!(
         draws.len(),
         exp_draws.len(),
@@ -623,19 +623,19 @@ fn run_vector(path: &Path) -> Result<(), String> {
     for (i, (got, exp)) in draws.iter().zip(exp_draws.iter()).enumerate() {
         assert_eq!(
             got.draw_no,
-            exp.req("draw_no")?.as_u64().map_err(&ctx)? as u16,
+            exp.req("draw_no")?.as_u64().map_err(ctx)? as u16,
             "{}",
             ctx(format!("draws[{i}].draw_no"))
         );
         assert_eq!(
             got.retry,
-            exp.req("retry")?.as_u64().map_err(&ctx)? as u16,
+            exp.req("retry")?.as_u64().map_err(ctx)? as u16,
             "{}",
             ctx(format!("draws[{i}].retry"))
         );
         assert_eq!(
             got.card,
-            exp.req("card")?.as_u64().map_err(&ctx)? as u8,
+            exp.req("card")?.as_u64().map_err(ctx)? as u8,
             "{}",
             ctx(format!("draws[{i}].card"))
         );
@@ -647,7 +647,7 @@ fn run_vector(path: &Path) -> Result<(), String> {
         expected
             .req("transcript_final")
             .and_then(J::as_str)
-            .map_err(&ctx)?,
+            .map_err(ctx)?,
         "{}",
         ctx("transcript_final 不一致".into())
     );
@@ -674,7 +674,7 @@ fn vectors_v1_byte_parity() {
     let mut files: Vec<PathBuf> = fs::read_dir(&dir)
         .expect("读取 vectors/v1 失败")
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().map_or(false, |e| e == "json"))
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .collect();
     files.sort();
     assert!(

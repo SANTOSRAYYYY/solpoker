@@ -68,7 +68,13 @@ const { created } = await deployTable({
 console.log(
   `\n✅ 桌 #${TABLE_ID} 就绪（盲注 ${SB}/${BB}，ante ${ANTE}，kind ${KIND}${created ? "" : "，补齐全流程"}）`
 );
+// 白名单提示：把现有 NEXT_PUBLIC_TABLE_IDS 与本桌合并（而不是硬编码老桌号）
+const envPath = "web/.env.local";
+const envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf8") : "";
+const cur = (/^NEXT_PUBLIC_TABLE_IDS=(.*)$/m.exec(envText)?.[1] ?? "")
+  .split(",").map((x) => x.trim()).filter(Boolean).map(Number);
+const merged = [...new Set([...cur, TABLE_ID])].sort((a, b) => a - b);
 console.log(`提示：把 #${TABLE_ID} 加进 crank 与大厅白名单：`);
-console.log(`  1) 重启 crank: node scripts/crank.mjs 5,6,7,8,9,${TABLE_ID}`);
-console.log(`  2) web/.env.local: NEXT_PUBLIC_TABLE_IDS=5,6,7,8,9,${TABLE_ID}`);
-console.log(`批量部署 15 桌: node scripts/deploy-tables.mjs --check`);
+console.log(`  1) 重启 crank: node scripts/crank.mjs ${merged.join(",")}`);
+console.log(`  2) ${envPath}: NEXT_PUBLIC_TABLE_IDS=${merged.join(",")}`);
+console.log(`批量部署: node scripts/deploy-tables.mjs --check`);

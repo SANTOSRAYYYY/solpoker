@@ -1,8 +1,9 @@
 // 扫描 0..64 所有可能桌号：是否存在、kind、mint、blind、delegated。
 import fs from "node:fs";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { L1_RPC } from "./env.mjs";
 
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
+const L1_URL = L1_RPC;
 const idl = JSON.parse(fs.readFileSync("target/idl/solpoker.json", "utf8"));
 const programId = new PublicKey(idl.address);
 const TUSDC = "9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH";

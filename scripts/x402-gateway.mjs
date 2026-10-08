@@ -31,6 +31,7 @@ import {
 import * as anchor from "@anchor-lang/core";
 import BN from "bn.js";
 import { L1_RPC } from "./env.mjs";
+import { decode as bs58Decode } from "./lib/bs58.mjs";
 
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const { getAssociatedTokenAddressSync } = await import("@solana/spl-token");
@@ -47,7 +48,6 @@ const arg = (f, d) => {
 };
 const PORT = Number(arg("--port", 8790));
 const FACILITATOR_URL = process.env.FACILITATOR_URL ?? "";
-const PRICE_TIERS = { minBuyInBb: 100, maxBuyInBb: 1000 };
 
 const l1 = new Connection(L1_RPC, {
   commitment: "confirmed",
@@ -60,7 +60,7 @@ const program = new anchor.Program(
   new anchor.AnchorProvider(l1, new anchor.Wallet(gateway), { commitment: "confirmed" })
 );
 
-/** 一桌的网关视图：PDA + 报价 + 8 个“其余座位”账本地址。 */
+/** 一桌的网关视图：PDA + 8 个“其余座位”账本地址。 */
 function tableView(tableId, seatIdx) {
   const table = pda([Buffer.from("table"), u32le(tableId)]);
   const seat = (i) => pda([Buffer.from("seat"), table.toBuffer(), Buffer.from([i])]);
@@ -76,9 +76,22 @@ function tableView(tableId, seatIdx) {
   };
 }
 
+/** 从 Table 账户读报价所需的全部参数（布局见 state.rs；账户 145B）。 */
+function tableTerms(data) {
+  return {
+    sb: data.readBigUInt64LE(79),
+    bb: data.readBigUInt64LE(87),
+    ante: data.readBigUInt64LE(95),
+    // 买入区间由链上参数决定（不能hardcode：程序会以 BadBuyIn 拒绝区间外的金额）
+    minBuyIn: BigInt(data.readUInt16LE(103)) * BigInt(data.readBigUInt64LE(87)),
+    maxBuyIn: BigInt(data.readUInt16LE(105)) * BigInt(data.readBigUInt64LE(87)),
+    status: data[46], // 0=Active 1=Maintenance 2/3=Escaping/Escaped
+  };
+}
+
 /** 402 报价（字段名对齐 @x402/core 2.28 的 exact-SVM 方案；extra.solpoker 为标准忽略字段）。 */
-function quote(tableId, tv, payer, sb, bb, ante) {
-  const min = BigInt(PRICE_TIERS.minBuyInBb) * BigInt(bb);
+function quote(tableId, tv, payer, terms) {
+  const min = terms.minBuyIn;
   return {
     x402Version: 2,
     error: "payment required",
@@ -100,8 +113,8 @@ function quote(tableId, tv, payer, sb, bb, ante) {
             seat: tv.seatIdx,
             payer,
             minBuyIn: min.toString(),
-            maxBuyIn: (BigInt(PRICE_TIERS.maxBuyInBb) * BigInt(bb)).toString(),
-            blinds: { sb: sb.toString(), bb: bb.toString(), ante: ante.toString() },
+            maxBuyIn: terms.maxBuyIn.toString(),
+            blinds: { sb: terms.sb.toString(), bb: terms.bb.toString(), ante: terms.ante.toString() },
             note: "付款交易只能含 ComputeBudget + TransferChecked(vault) + Memo；付完把签名放进 X-PAYMENT 头 POST 本资源入账。",
           },
         },
@@ -146,7 +159,7 @@ async function verifyPayment(sig, payer, vault, vaultAuth, amount) {
 
 /** 入账：调 credit_x402_deposit（网关签名）。 */
 async function credit({ tableId, tv, payer, amount, sig }) {
-  const sigBytes = Buffer.from(bs58.decode(sig));
+  const sigBytes = Buffer.from(bs58Decode(sig));
   const sigLo = Array.from(sigBytes.slice(0, 32));
   const sigHi = Array.from(sigBytes.slice(32, 64));
   const [depositRecord] = PublicKey.findProgramAddressSync(
@@ -177,49 +190,71 @@ async function credit({ tableId, tv, payer, amount, sig }) {
   return { creditSig: txSig, depositRecord: depositRecord.toBase58() };
 }
 
-// bs58（只用于把 base58 签名转字节；避免额外依赖，内联实现）
-const bs58 = (() => {
-  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  const map = new Map([...ALPHABET].map((c, i) => [c, i]));
-  return {
-    decode(s) {
-      let n = 0n;
-      for (const c of s) {
-        const v = map.get(c);
-        if (v === undefined) throw new Error(`bad base58 char ${c}`);
-        n = n * 58n + BigInt(v);
-      }
-      const bytes = [];
-      while (n > 0n) { bytes.unshift(Number(n & 0xffn)); n >>= 8n; }
-      let lead = 0;
-      for (const c of s) { if (c === "1") lead++; else break; }
-      return new Uint8Array([...Array(lead).fill(0), ...bytes]);
-    },
-  };
-})();
+
 
 // ---------------- 自检（--selftest，不需要网络） ----------------
 if (process.argv.includes("--selftest")) {
-  const sigB58 = Buffer.alloc(64, 7).toString("base64");
-  // bs58 编解码往返
-  const sig = "5".repeat(88);
+  // bs58 编解码往返：N 个 '1' 解码为 N 个 0x00 字节（前导零规则）
   let ok = true;
   try {
-    const b = bs58.decode("1111111111111111111111111111111111111111111111111111111111111111");
-    ok = b.length === 32 && b.every((x) => x === 0);
+    const b = bs58Decode("1".repeat(64));
+    ok = b.length === 64 && b.every((x) => x === 0);
+    const real = "3GbCEXrkqai3DYoGxuK7L2aUgn8vcgzwcvbG41YCvk2fRwZNupbTAXYVCyCCm77cspdQePRmK1duPTL2hHJ5oUmw";
+    const rb = bs58Decode(real);
+    ok = ok && rb.length === 64;
+    // 与参考实现不可比（无依赖），所以用「长度 + 前导零 + 自洽性」验证
   } catch { ok = false; }
-  const tv = { seatIdx: 3, otherPdas: Array.from({ length: 8 }, (_, i) => new PublicKey(programId)) };
-  const q = quote(20, { ...tv, table: programId, vaultAuth: programId, seat: programId }, "11111111111111111111111111111111", 100000n, 200000n, 20000n);
+  const tv = { seatIdx: 3, table: programId, vaultAuth: programId, seat: programId };
+  const terms = { sb: 100000n, bb: 200000n, ante: 20000n, minBuyIn: 20_000_000n, maxBuyIn: 200_000_000n, status: 0 };
+  const q = quote(20, tv, "11111111111111111111111111111111", terms);
   const acc = q.accepts[0];
-  console.log("bs58 往返:", ok ? "OK" : "FAIL");
-  console.log("报价:", JSON.stringify({ scheme: acc.scheme, network: acc.network, payTo: acc.payTo.slice(0, 8) + "…", maxAmountRequired: acc.maxAmountRequired, seat: acc.extra.solpoker.seat }));
-  console.log("SELFTEST", ok && acc.scheme === "exact" && acc.maxAmountRequired === "20000000" ? "OK" : "FAIL");
-  process.exit(0);
+  console.log("bs58 解码:", ok ? "OK" : "FAIL");
+  console.log(
+    "报价:",
+    JSON.stringify({
+      scheme: acc.scheme,
+      network: acc.network,
+      payTo: acc.payTo.slice(0, 8) + "…",
+      maxAmountRequired: acc.maxAmountRequired,
+      minBuyIn: acc.extra.solpoker.minBuyIn,
+      maxBuyIn: acc.extra.solpoker.maxBuyIn,
+      seat: acc.extra.solpoker.seat,
+    })
+  );
+  const okAll =
+    ok &&
+    acc.scheme === "exact" &&
+    acc.maxAmountRequired === "20000000" &&
+    acc.extra.solpoker.maxBuyIn === "200000000" &&
+    acc.payTo === programId.toBase58();
+  console.log("SELFTEST", okAll ? "OK" : "FAIL");
+  process.exit(okAll ? 0 : 1);
+}
+
+/** 报价前预检座位状态（避免「付了钱却入不了账」）。
+ *  注意：这只是**预检**——完整的身份规则（三类桌 / 同主人）由链上
+ *  `credit_x402_deposit` 在入账时强制执行（实测 2026-10-08：同一钱包占同桌
+ *  第二座会被链上以 SameOwner 拒绝）。 */
+async function seatPrecheck(tv, payer) {
+  const info = await l1.getAccountInfo(tv.seat);
+  if (!info) return { ok: false, reason: `seat ${tv.seatIdx} 账本不存在` };
+  const occupant = new PublicKey(info.data.slice(41, 73)).toBase58();
+  const zero = "11111111111111111111111111111111";
+  if (occupant === zero) return { ok: true, mode: "sit" };
+  if (payer && occupant === payer) {
+    return { ok: false, reason: `座 ${tv.seatIdx} 已被本付款人占用 —— 标准模式暂不接补码（用 top_up/原生路径）` };
+  }
+  return { ok: false, reason: `座 ${tv.seatIdx} 已被 ${occupant.slice(0, 8)}… 占用（换座位或换桌后再付款）` };
 }
 
 // ---------------- HTTP 服务 ----------------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  if (url.pathname === "/health") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, gateway: gateway.publicKey.toBase58(), facilitator: FACILITATOR_URL || null }));
+    return;
+  }
   const m = /^\/v1\/tables\/(\d+)\/seats(?:\/(\d+))?$/.exec(url.pathname);
   try {
     if (!m) {
@@ -236,22 +271,35 @@ const server = http.createServer(async (req, res) => {
     const paymentSig = req.headers["x-payment"];
     const payer = url.searchParams.get("payer") ?? "";
     const amount = url.searchParams.get("amount") ?? "";
-    const sb = tableInfo.data.readBigUInt64LE(79);
-    const bb = tableInfo.data.readBigUInt64LE(87);
-    const ante = tableInfo.data.readBigUInt64LE(95);
+    const terms = tableTerms(tableInfo.data);
     const tv = tableView(tableId, Number(m[2] ?? 0));
+    if (terms.status !== 0) {
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: `table #${tableId} status=${terms.status}（非 Active，暂不接单）` }));
+      return;
+    }
 
     if (!paymentSig) {
+      // 预检：座位必须可入座（否则不报价 —— 从源头避免「付了钱入不了账」）
+      if (payer) {
+        const pre = await seatPrecheck(tv, payer);
+        if (!pre.ok) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: pre.reason }));
+          console.log(`[409] 预检拒绝：${pre.reason}`);
+          return;
+        }
+      }
       res.writeHead(402, { "content-type": "application/json" });
-      res.end(JSON.stringify(quote(tableId, tv, payer, sb, bb, ante), null, 1));
-      console.log(`[402] 桌 #${tableId} 座 ${tv.seatIdx} 报价给 ${payer.slice(0, 8)}…（payTo=vault_auth）`);
+      res.end(JSON.stringify(quote(tableId, tv, payer, terms), null, 1));
+      console.log(`[402] 桌 #${tableId} 座 ${tv.seatIdx} 报价给 ${payer.slice(0, 8)}…（payTo=vault_auth，min=${terms.minBuyIn}）`);
       return;
     }
     if (!payer || !amount) throw new Error("入账需要 ?payer= 与 ?amount=（base units）");
     const v = await verifyPayment(String(paymentSig), payer, tv.vault, tv.vaultAuth, amount);
     if (!v.ok) {
       res.writeHead(402, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid payment", detail: v.detail, accepts: quote(tableId, tv, payer, sb, bb, ante).accepts }, null, 1));
+      res.end(JSON.stringify({ error: "invalid payment", detail: v.detail, accepts: quote(tableId, tv, payer, terms).accepts }, null, 1));
       console.log(`[402] 校验失败：${JSON.stringify(v.detail).slice(0, 120)}`);
       return;
     }
@@ -266,8 +314,16 @@ const server = http.createServer(async (req, res) => {
       res.end(
         JSON.stringify(
           {
-            error: replay ? "payment already credited（同一笔付款不可重复入账）" : "credit failed",
+            error: replay
+              ? "payment already credited（同一笔付款不可重复入账）"
+              : "credit failed",
             detail: msg.slice(0, 400),
+            // 重要：付款已在 TableVault 里；入账失败时这笔钱是「未归属盈余」
+            // （audit_table 会把差额报成盈余）。`refund_x402_deposit` 尚未实现，
+            // 目前需运营方人工退款 —— 见设计文档 §4.3「仍延后」。
+            notice: replay
+              ? undefined
+              : "付款已入 TableVault 但未入账（例：链上身份规则拒绝）。请勿重复付款；退款需人工（refund_x402_deposit 未实现）。",
           },
           null,
           1

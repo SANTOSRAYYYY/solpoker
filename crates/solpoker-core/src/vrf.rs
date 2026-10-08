@@ -209,8 +209,11 @@ impl VrfSlot {
     /// 校验回调携带的请求身份 `(hand_id, target, attempt)` 与当前挂起请求一致：
     /// - 一致：存 randomness，进入 `Fulfilled`；
     /// - 不一致（旧 attempt 迟到、目标不符、槽位已不在 Pending）：返回
-    ///   `Ok(FulfillOutcome::Ignored)` 并忽略，**不报错**（§9：
-    ///   「身份正确但请求已过期或不匹配时返回 Ok 并忽略」）。
+    ///   `FulfillOutcome::Ignored` 并忽略，**不报错**（§9：
+    ///   「身份正确但请求已过期或不匹配时忽略」）。
+    ///
+    /// 恒不失败，所以直接返回 `FulfillOutcome`（与 `retry -> RetryOutcome`
+    /// 同风格，调用方不必处理永不可达的错误分支）。
     pub fn fulfill(
         &mut self,
         hand_id: u64,
@@ -218,7 +221,7 @@ impl VrfSlot {
         attempt: u8,
         randomness: [u8; 32],
         current_hand_id: u64,
-    ) -> Result<FulfillOutcome, ()> {
+    ) -> FulfillOutcome {
         if self.state == VrfState::Pending
             && self.target == target
             && self.attempt == attempt
@@ -226,9 +229,9 @@ impl VrfSlot {
         {
             self.randomness = randomness;
             self.state = VrfState::Fulfilled;
-            Ok(FulfillOutcome::Stored)
+            FulfillOutcome::Stored
         } else {
-            Ok(FulfillOutcome::Ignored)
+            FulfillOutcome::Ignored
         }
     }
 
@@ -312,7 +315,7 @@ mod tests {
         assert_eq!(slot.requested_at(), T0);
 
         let rnd = [0xABu8; 32];
-        let out = slot.fulfill(7, VrfTarget::Flop, 1, rnd, 7).unwrap();
+        let out = slot.fulfill(7, VrfTarget::Flop, 1, rnd, 7);
         assert_eq!(out, FulfillOutcome::Stored);
         assert_eq!(slot.state(), VrfState::Fulfilled);
         assert_eq!(slot.randomness(), rnd);
@@ -351,15 +354,15 @@ mod tests {
         arm_request(&mut slot, VrfTarget::River, T0);
 
         // 目标不符。
-        let out = slot.fulfill(7, VrfTarget::Turn, 1, [1u8; 32], 7).unwrap();
+        let out = slot.fulfill(7, VrfTarget::Turn, 1, [1u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Ignored);
         // hand_id 不符。
-        let out = slot.fulfill(6, VrfTarget::River, 1, [1u8; 32], 7).unwrap();
+        let out = slot.fulfill(6, VrfTarget::River, 1, [1u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Ignored);
         assert_eq!(slot.state(), VrfState::Pending);
 
         // 正确身份仍然可以 fulfill。
-        let out = slot.fulfill(7, VrfTarget::River, 1, [2u8; 32], 7).unwrap();
+        let out = slot.fulfill(7, VrfTarget::River, 1, [2u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Stored);
     }
 
@@ -376,13 +379,13 @@ mod tests {
         assert_eq!(slot.attempt(), 2);
 
         // 迟到的旧 attempt=1 回调：Ok 并忽略，不能报错、不能覆盖。
-        let out = slot.fulfill(7, VrfTarget::Flop, 1, [9u8; 32], 7).unwrap();
+        let out = slot.fulfill(7, VrfTarget::Flop, 1, [9u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Ignored);
         assert_eq!(slot.state(), VrfState::Pending);
         assert_eq!(slot.attempt(), 2);
 
         // 新 attempt 的回调正常接收。
-        let out = slot.fulfill(7, VrfTarget::Flop, 2, [3u8; 32], 7).unwrap();
+        let out = slot.fulfill(7, VrfTarget::Flop, 2, [3u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Stored);
     }
 
@@ -426,8 +429,7 @@ mod tests {
         // Void 后一切推进都被拒绝/忽略。
         assert_eq!(slot.retry(T0 + 40, 10, 3), RetryOutcome::NotPending);
         let out = slot
-            .fulfill(7, VrfTarget::Preflop, 3, [0u8; 32], 7)
-            .unwrap();
+            .fulfill(7, VrfTarget::Preflop, 3, [0u8; 32], 7);
         assert_eq!(out, FulfillOutcome::Ignored);
         assert_eq!(slot.arm(VrfTarget::Preflop), Err(ArmError::InvalidState));
     }

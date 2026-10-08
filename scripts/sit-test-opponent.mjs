@@ -1,6 +1,7 @@
 // 让测试玩家（keys/test-players.json 的 idx）在指定桌的指定座位重新买入入座，
 // 这样真人玩家坐下后立刻有对手可以开局。crank 会完成 take_seat。
 // 用法: node scripts/sit-test-opponent.mjs <tableId> <seatIdx> [playerIdx=1] [buyIn=20]
+import { L1_RPC } from "./env.mjs";
 import fs from "node:fs";
 import {
   Connection, Keypair, PublicKey, Transaction, ComputeBudgetProgram,
@@ -9,7 +10,7 @@ import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import * as anchor from "@anchor-lang/core";
 import BN from "bn.js";
 
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
+const L1_URL = L1_RPC;
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const TABLE_ID = Number(process.argv[2] ?? 9);
 const SEAT_IDX = Number(process.argv[3] ?? 1);
