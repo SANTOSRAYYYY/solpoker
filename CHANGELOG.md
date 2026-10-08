@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## 实验（已回滚）：发牌搬进 VRF 回调 —— oracle 回调交易放不下发牌（2026-10-09，devnet-tee）
+
+**动机**：让发牌不再依赖运营方 keeper 在发牌时刻发起交易（解耦 + 平台行为变化的备胎），
+顺带评估流畅度收益（预期：每街省 1 个 crank 轮询周期）。
+
+**实现**（WIP 保存在 git stash：`deal-in-callback WIP`）：`hand::preflop_deal` 抽成
+await_seed 与回调共用的函数；`vrf_callback` 在 fulfill 后尝试就地发牌；`request_vrf` 的
+callback `accounts_metas` 增加 table / replay / hand0..8（共 13 个账户，顺序与
+VrfCallbackState 字段对齐）。单元测试 41 绿（含回调路径发牌/幂等/缺盐无副作用三例）。
+
+**真机结果（table 22，暴露约 15 分钟）**：
+- **"只写随机数"的回调（同一套 13 账户，盐未齐时走该分支）成功** → 账户列表与账户解析没问题；
+- **真正执行发牌的回调全部失败** → 槽停在 Pending → crank `retry_vrf` ×2 → Void → 手牌作废
+  （VrfExhausted 路径 offenders=0，**不记 strike**；资金全额退回，账目无损）；
+- 证据强烈指向**回调交易的 CU 预算 < 发牌所需**（2 人桌发牌在 advance 路径实测 ~42 万 CU）；
+  oracle 回调交易的实际 CU 上限未能直接读到（ER 不返回该交易详情）。
+- 结论：**方案 B 按现设计不可行**。若仍需，须重新设计（把发牌拆到多次回调/极端降 CU），
+  或先做 CU 定标探针。
+
+**善后**：程序回滚到上一个正常版本（parity ✓）；t22 日志确认恢复（VRF 一次履行、发牌回到
+advance 路径、手间 commit_game 成功）；期间复现的 t22 commitPayer `InsufficientFundsForRent`
+用 `scripts/topup-delegated.mjs` 补足（lamports-topup 流程第二次复验有效）。新桌 #41 已按标准
+流程创建（留作后续实验）。
+
+**教训**：全局程序升级无法按桌灰度 —— 实验性改动上链会波及全部桌（本次 t22 空转约 15 分钟）。
+此类实验前应做「按 table_id 门控的影子部署」，或接受窗口期风险并预备一键回滚（本次回滚
+本身遇到一次 RPC 确认超时，重试即成功）。
+
+
 ## 实验：PER 成员名单就是隐私开关 —— 运营方可以被完全移出（2026-10-09，devnet-tee）
 
 > 背景：运营方的 keeper 身份（table.admin = deployer）是全部 10 个私有 PER 账户（deck +
