@@ -120,6 +120,7 @@ function decodeGame(data) {
     seats.push({
       occupant: new PublicKey(data.subarray(o, o + 32)).toBase58(),
       saltCommit: data.subarray(o + 32, o + 64),
+      nextSaltCommit: data.subarray(o + 64, o + 96),
       stack: u64(o + 104),
       inHand: u64(o + 128),
       streetBet: u64(o + 136),
@@ -354,8 +355,42 @@ async function cmdRun(name, opts) {
             .instruction();
           await sendAndConfirm(er, [ix], [agent.keypair], `reveal_salt`, ER_CU);
           console.log(`[${name}] hand#${g.handId} 盐已揭示`);
+          await sleep(600);
+          continue;
         }
-        await sleep(800);
+        // 已揭示：不 continue —— 落到下面走 §6.4 预提交分支（手牌进行中为下一手承诺盐）。
+      }
+
+      // ---- §6.4 预提交：手牌进行中，为下一手提交盐承诺 ----
+      // 程序侧（commit_salt.rs）phase ≥ 2 时 hand_id == current+1 会写入
+      // next_salt_commit，advance 冻结下一手时提升为 salt_commit —— 下一手的
+      // Commit 阶段在冻结瞬间就「全员已承诺」，crank 可立即推进（省掉最长
+      // commit_timeout_s 的干等）。盐先落盘再发交易，崩溃重启也能在下一手揭示。
+      // 不在手牌中的座位同样适用（just sat / 本轮出局，下轮就轮到它）。
+      if (g.phase >= 2 && me.stack > 0n && me.nextSaltCommit.every((b) => b === 0)) {
+        const nextHandId = g.handId + 1n;
+        const nextKey = nextHandId.toString();
+        const fromMemNext = opts._salts[nextKey] ?? loadSalts(name)[nextKey] ?? null;
+        const nextSalt = fromMemNext ? Buffer.from(fromMemNext, "hex") : cryptoRandom32();
+        if (!fromMemNext) {
+          saveSalt(name, nextHandId, nextSalt);
+          opts._salts[nextKey] = Buffer.from(nextSalt).toString("hex");
+        }
+        const nextHandIdBe = Buffer.alloc(8);
+        nextHandIdBe.writeBigUInt64BE(nextHandId);
+        const nextCommitment = (await import("node:crypto")).createHash("sha256")
+          .update(Buffer.from("solpoker/salt/v1"))
+          .update(table.toBuffer())
+          .update(nextHandIdBe)
+          .update(agent.keypair.publicKey.toBuffer())
+          .update(nextSalt)
+          .digest();
+        const ixNext = await program.methods
+          .commitSalt(seat, new BN(nextKey), Array.from(nextCommitment))
+          .accounts({ table, game, seatLedger: seatPda(table, seat), signer: agent.keypair.publicKey })
+          .instruction();
+        await sendAndConfirm(er, [ixNext], [agent.keypair], `commit_salt(next)`, ER_CU);
+        console.log(`[${name}] hand#${nextKey} 盐预承诺已提交`);
         continue;
       }
 

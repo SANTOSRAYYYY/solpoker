@@ -52,6 +52,25 @@
 
 ### 遗留问题
 
+- **（2026-10-08）每手节奏大修：「打完一手再等下一手很久」的实测根因与三处修复**（用户提问）。用逐秒相位观测器（新工具 `scripts/watch-table.mjs <tableId>`）实测桌 #22：
+  1. **根因一：commit_timeout_s=60 的死等**。程序侧 `commit_to_await_seed`（hand.rs）在
+     hand_mask 全员已承诺时本可立即 arm Preflop VRF + 进 AwaitSeed，但 crank 按
+     `phase_deadline(@112)` 门控，而建桌脚本给桌 20–34 配的是 `commitTimeoutS: 60`
+     （9/11 旧桌 10s）→ 每手白等最长 60s ✗。修：Commit 阶段先扫 Game 座位
+     `salt_commit`（座位基址 152、步长 152、座位内 +32），**全员非零即跳过门控直接
+     advance**（程序侧 missing==0 一次完成 arm+转段）。实测冻结→AwaitSeed 60s+ → ~2.4s。
+  2. **根因二：crank 串行轮询 24 张桌的轮次延迟 ~17s**（每桌一轮 1 次 game 读 + 2 批
+     座位读，串行 24 桌 ≈ 25 次 RTT）。此前把「请求→看到履行」的 17–25s 误判成 VRF 慢 ——
+     实测 **VRF 本身只要 ~1.1s** ✗。修：桌间 **mapLimit(6) 并发** + 阶段性动作**连锁**
+     （advance/commit_game 成功后同一轮用新鲜状态继续跑
+     close→commit_game→freeze→arm→request，≤6 次）。实测轮次延迟 17s → 2.4–3.6s。
+  3. **runner 用上 §6.4 预提交**：手牌进行中（phase≥2）为 hand_id+1 写
+     `next_salt_commit`（程序早已支持，advance 冻结下一手时提升）→ 下一手 Commit
+     阶段在冻结瞬间就「全员已承诺」。盐先落盘再发交易；顺带修掉 AwaitSeed 分支无条件
+     `continue` 导致预提交分支不可达的问题。实测整局 `pre0=pre1=1` 稳定成立。
+  **实测效果**：手与手之间（Settle → 下一手 Preflop）**~80s → ~11s**；单手全程
+  ~2.5–3 分钟 → ~40s。已知小瑕疵：一次进程重启边界上手 #5 漏揭示（MissingSalt
+  设计内作废、无资金变化，后续手正常）；runner 把 void 手也计入「第 N 手结束」（文案层面）。
 - **（2026-10-08）观战可读性：对局页给「没入座的人」显示当前在等什么（用户反馈"是不是卡了"）**。
   用户观战桌 #22 时看到长时间无动作，怀疑 agent 或合约卡死。实测**都没卡**：手 #2 在
   `AwaitSeed`（等 VRF 履行，devnet 偶尔几十秒）→ 25 秒后自己推进到 `AwaitStreet`，

@@ -141,16 +141,39 @@ async function main() {
 
   const vrfWaitUntil = new Map(); // table -> ts，等待 VRF 履行期间不重复 request
   const vrfRetryUntil = new Map(); // table -> ts，Pending 超时后 retry 的冷却
+
+  // 桌与桌彼此独立：串行跑 24 桌时，一轮里每桌要花 1 次 game 读 + 两批座位读
+  // （每批 9 个并行 RPC），24 桌串起来就是 25-30 次 RTT —— 实测轮次延迟 ~17s，
+  // 而这个延迟就是「每个阶段动作之间的等待」（VRF 本身履行只要 ~1s）。
+  // 6 路并发（与 web 端 readTablesLive 同策略）把一轮压到 ~4s；同一桌内部仍串行
+  // （advance/commit_game 的连锁语义不变）。
+  const mapLimit = async (items, limit, fn) => {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        await fn(items[i]);
+      }
+    });
+    await Promise.all(workers);
+  };
+
   for (;;) {
-    for (const tableId of tableIds) {
+    await mapLimit(tableIds, 6, async (tableId) => {
       const table = tablePda(tableId);
       const game = gamePda(table);
       try {
-        await crankTable(tableId, table, game);
+        // 阶段性动作（advance / commit_game）成功后立刻用新鲜状态再跑一轮：
+        // 一手收尾往往是 close→commit_game→freeze→arm→request 这样一串，
+        // 每步都等下一轮会把「下一手开始」白拖几十秒。其他动作
+        // （sweep/入座/入账/超时）不连锁 —— 它们不会立刻解锁下一个阶段。
+        for (let i = 0; i < 6; i++) {
+          if (!(await crankTable(tableId, table, game))) break;
+        }
       } catch (e) {
         console.log(`[t${tableId}] ${String(e.message ?? e).slice(0, 160)}`);
       }
-    }
+    });
     await new Promise((r) => setTimeout(r, 1200));
   }
 
@@ -362,7 +385,7 @@ async function main() {
         for (const k of [...sweepTried]) {
           if (k.startsWith(`${tableId}:`)) sweepTried.delete(k);
         }
-        return;
+        return true; // 连锁：下一轮直接尝试 freeze
       }
     }
 
@@ -383,12 +406,29 @@ async function main() {
         }
         if (eligible < 2) return;
       }
-      // Commit 阶段：只在承诺超时后才推进。advance 每次会敲 1 记 strike 并重新计时
-      // （max_strikes 次后自动释放缺盐座位）；而每秒空转会白烧手续费（2026-10-08 实测
-      // 无揭示的手牌白烧 ~180 笔），所以按 Game.phase_deadline(@112) 门控。
+      // Commit 阶段：缺承诺时才守 Game.phase_deadline(@112)（到期敲 strike、缺盐
+      // 座位按 max_strikes 释放 —— §6.3）；每秒空转会白烧手续费（2026-10-08 实测
+      // 无揭示的手牌白烧 ~180 笔）。
+      //
+      // 但 hand_mask 全体都已承诺时不能等：程序侧 commit_to_await_seed 对
+      // missing==0 会立刻 arm Preflop VRF 并进入 AwaitSeed（hand.rs），
+      // commit_timeout_s（建桌 60s！）只是给缺承诺座位留的窗口。§6.4 预提交让
+      // 「全体已承诺」在冻结瞬间成立 —— 一到齐就推进，这是每手最大的一笔死时间。
       if (phase === 1) {
-        const phaseDeadline = g.readBigInt64LE(112);
-        if (phaseDeadline > 0n && BigInt(now) < phaseDeadline) return;
+        // SeatState 在 Game 里的布局：座位基址 152，步长 152，salt_commit @+32
+        // （state.rs；与 runner decodeGame / 程序 verify_seat_salt 同源）。
+        let allCommitted = true;
+        for (let i = 0; i < 9; i++) {
+          if ((handMask & (1 << i)) === 0) continue;
+          const off = 152 + i * 152 + 32;
+          let nz = false;
+          for (let b = 0; b < 32; b++) if (g[off + b] !== 0) { nz = true; break; }
+          if (!nz) { allCommitted = false; break; }
+        }
+        if (!allCommitted) {
+          const phaseDeadline = g.readBigInt64LE(112);
+          if (phaseDeadline > 0n && BigInt(now) < phaseDeadline) return;
+        }
       }
 
       // Commit 阶段需要所有座位提交盐承诺（未齐时 advance 会报错——吞掉）
@@ -406,6 +446,7 @@ async function main() {
           .instruction();
         const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} advance`, ER_CU);
         console.log(`[t${tableId}] advance (phase ${phase}): ${sig.slice(0, 12)}…`);
+        return true; // 连锁：推进可能立刻解锁下一阶段（arm→request、close→freeze…）
       } catch (e) {
         const msg = String(e.message ?? e);
         // 6019/6022/6023 等「还不可推进」是常态，静默；其他错误外抛
