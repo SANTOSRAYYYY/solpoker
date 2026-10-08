@@ -392,23 +392,31 @@ export async function dealFromReplay(crypto, v) {
   const seats = setBits(v.handMask);
   const n = seats.length;
   const diffs = [];
+  const notes = [];
 
-  // 1) salt_digest 独立复算（occupants 来自 replay，盐来自 HandSecrets）
-  const occupants = v.occupants.map((x) => (x ? unhex(x) : null));
-  const salts = v.salts.map((x) => unhex(x));
-  const recomputedDigest = await saltDigest(
-    crypto,
-    table,
-    handId,
-    v.handMask,
-    occupants,
-    v.occupancyIds.map((x) => BigInt(x)),
-    salts
-  );
-  if (hex(recomputedDigest) !== hex(unhex(v.saltDigest))) {
-    diffs.push(
-      `salt_digest 不一致：复算 ${hex(recomputedDigest).slice(0, 12)}… 链上 ${v.saltDigest.slice(0, 12)}…`
+  // 1) salt_digest 独立复算（occupants 来自 replay，盐来自 HandSecrets）。
+  //    v2 条目不再存 occupants（链上 hand_mask/occupancy_ids 对不上人），此时调用方
+  //    传 skipSaltDigestCheck: true —— 链上摘要直接作为「逐街重放」的输入使用，
+  //    这一项如实标注为「无法独立复算」，而不是误报失败。
+  if (v.skipSaltDigestCheck) {
+    notes.push("salt_digest：v2 条目不含 occupants，无法独立复算（链上摘要作为输入）");
+  } else {
+    const occupants = v.occupants.map((x) => (x ? unhex(x) : null));
+    const salts = v.salts.map((x) => unhex(x));
+    const recomputedDigest = await saltDigest(
+      crypto,
+      table,
+      handId,
+      v.handMask,
+      occupants,
+      v.occupancyIds.map((x) => BigInt(x)),
+      salts
     );
+    if (hex(recomputedDigest) !== hex(unhex(v.saltDigest))) {
+      diffs.push(
+        `salt_digest 不一致：复算 ${hex(recomputedDigest).slice(0, 12)}… 链上 ${v.saltDigest.slice(0, 12)}…`
+      );
+    }
   }
 
   // 2) 逐街重放
@@ -514,7 +522,7 @@ export async function dealFromReplay(crypto, v) {
     boardPos += count;
   }
 
-  return { ok: diffs.length === 0, draws, diffs };
+  return { ok: diffs.length === 0, draws, diffs, notes };
 }
 
 /** 底牌发放顺序：button 左侧第一位起，顺时针（与程序 deal::hole_order 同义）。 */

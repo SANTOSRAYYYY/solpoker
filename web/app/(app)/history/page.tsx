@@ -575,6 +575,8 @@ export default function HistoryPage() {
                           ),
                           board: entry.board,
                           hole: entry.hole,
+                          // v2 条目不含 occupants：salt_digest 无法独立复算（引擎会记 note）
+                          skipSaltDigestCheck: !(replayEntry.occupants ?? []).some(Boolean),
                         } as never);
                         const matched = r.draws.filter(
                           (d) => d.expected === undefined || d.expected === d.card

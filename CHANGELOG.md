@@ -52,6 +52,23 @@
 
 ### 遗留问题
 
+- **（2026-10-08）新桌端到端实测：15 张新桌不只会「能入座」，完整一手从发牌到复算全通**。
+  `node scripts/stage7-player-sim.mjs 20`（两名测试玩家、除玩家签名外全由 crank 驱动）
+  实测输出 **`STAGE7_PLAYER_SIM_OK`**：`sit_down ×2 → crank take_seat ×2（同时更新 PER
+  成员）→ 手 #1 开始（Commit）→ 双方 commit_salt → AwaitSeed + VRF_0 fulfilled →
+  双方 reveal_salt → 发牌（pot=0.17）→ 四条街的 act（check/call）→ 结算完成（p0=20 p1=20）
+  → stand_up ×2 → crank commit_game → cash_out ×2`，两位玩家余额各自回到 59.86 / 80.1 tUSDC ✓。
+  **链上验证三连（同一手 #1）**：① 新 CLI `scripts/verify-hand.mjs`（= /history 页
+  「整手复算」的同一套引擎，命令行版）**`HAND_RECOMPUTE_OK`：逐张 9/9 与链上一致**、
+  `salt_digest=dd9893…`、`draw_digest k0..k3` 与 `street_end k0..k3` 全部非零、`attempts=[1,1,1,1,0]`；
+  ② `verify-actions` **`ACTION_STREAM_OK`**（扫 50 笔交易解出 8 条规范事件，四街各 2 条全闭合、
+  `transcript_final` 匹配）；③ `replay-status` 显示 `layout=v2 / streets=0b1111 / ended=0b1111`。
+  **过程里顺手修的两处**：① **引擎对 v2 条目的假失败** —— `dealFromReplay` 总是复算
+  salt_digest，而 v2 条目不再存 occupants（链上只存摘要），于是逐张全对也会报 FAIL；
+  现在加显式 `skipSaltDigestCheck`（CLI 与 `/history` 页在 occupants 不可得时设置），
+  并把「v2 无法独立复算摘要、以链上摘要为输入」作为 note 如实展示；② `stage7-player-sim.mjs`
+  端点统一走 `env.mjs`（此前默认本机 8898/7799，要靠环境变量才对得上 devnet-tee）。
+  另：`verify-hand.mjs` 用 `process.exitCode` 代替 `process.exit`（少一处 Windows libuv 退出噪音）。
 - **（2026-10-08）更正 + 全桌可玩：`init_permissions` 的 6010 是本仓库脚本 bug（不是 ER 故障）；15 桌权限补齐，23 张桌全部可入座**。
   **更正**：前一条「devnet ER 权限创建被阻塞」的判断**是错的**。真因在
   `scripts/lib/deploy-table.mjs`：局部 helper `const pda = (seeds) => …programId…` 只接受一个

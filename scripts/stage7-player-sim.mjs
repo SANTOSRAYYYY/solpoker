@@ -17,8 +17,9 @@ import * as anchor from "@anchor-lang/core";
 import BN from "bn.js";
 import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
-const ER_BASE = process.env.ER_BASE ?? "http://127.0.0.1:7799";
+import { L1_RPC, ER_BASE_URL } from "./env.mjs"; // 端点统一（本地栈用 L1_URL/ER_BASE 覆盖）
+const L1_URL = L1_RPC;
+const ER_BASE = ER_BASE_URL;
 const ER_CU = 1_400_000;
 const TUSDC_MINT = new PublicKey("9WUwFXpRsFbZa8yxMXciKaiXGXw4TxWekS7JJGtqG6uH");
 const EPHEMERAL_VAULT = new PublicKey("MagicVau1t999999999999999999999999999999999");
