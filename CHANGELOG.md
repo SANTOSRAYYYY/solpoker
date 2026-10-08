@@ -52,6 +52,20 @@
 
 ### 遗留问题
 
+- **（2026-10-08）22 号桌停摆的排查与修复**（用户："现在22号桌怎么没在打了"）：
+  1. **根因**：`commit_game` 从 ~20:01 起持续失败（`InsufficientFundsForRent{account_index:3}` = HandProof 账户），
+     而 crank 的 commit 步骤**没有隔离失败** → 整个 pass 在那里抛出 → **永远走不到 advance** → 桌子冻死 3 小时。
+     深挖（ER 原始 JSON-RPC 模拟拿日志 + 逐账户余额对照）：**所有被提交账户的余额恰好等于租金线（零余量 ✗）**，
+     commit 一扣费就跌穿；今天中午起 DLP 侧行为变化（此前同一流程连跑几小时都正常）。
+  2. **修复（crank）**：commit 失败只**降级** —— 记 60 秒冷却 + 打一行日志，然后继续往下走（牌局优先、快照稍后补）。
+     修复后 22 号桌立刻恢复：hand#150 → #153 连续开打；bob/carol **从未卡死**（只是无手可打，空闲静默），
+     开局后自动接上并继续预提交盐 ✓。
+  3. **遗留（待处理）**：commit 仍会失败 → 该桌的 **L1 快照不再刷新**（审计视图/清座流程依赖它，牌局本身不受影响）。
+     已知修法：**重新委托时为被提交账户留出手续费余量**（维护操作，勿在跑着的桌上做），或向 MagicBlock 确认新的
+     费用扣法。注：**ER 不允许向 DLP 持有的账户直接转账**（verification error），"给它打钱"这条路不通；
+     commitPayer 的 **ER 副本**才是提交用的那份（L1 副本不是）。
+  4. 顺带更正：已给各桌 commitPayer 的 **L1 副本**各补 0.2–0.25 SOL（约 5.6 SOL），会在下次成功 commit/undelegate
+     时并回，不是损失。
 - **（2026-10-08）部署上线（Vercel serverless，已实盘验收）**：生产别名 **https://solpoker-coinsatoshi666-5257.vercel.app**
   （项目 `coinsatoshi666-5257/solpoker`，根目录 `web/`，5 个生产环境变量；`HELIUS_RPC` 与 `SOLPOKER_DEPLOYER_KEYPAIR`
   在 Vercel 侧自动存为 Secret）。验收：`/`、`/lobby`、`/docs`、`/docs/quickstart`、`/trust`、`/faucet`、`/table/22`、`/agents`

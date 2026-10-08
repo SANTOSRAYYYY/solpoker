@@ -89,6 +89,8 @@ node scripts/deploy-tables.mjs --check            # 只预检：桌号占用 / D
 | 快照陈旧（`cash_out` 报 6019 BadSnapshot） | 正常：等 crank `commit_game`（手牌边界或 `hands_since_commit` 到阈值）；crank 会自动重试 |
 | 手牌卡在 Commit（无人揭示盐） | 程序按 `commit_timeout_s` 逐次 strike（上限 `max_strikes`，默认 3）后自动释放座位；crank 只在超时后推进（避免空转烧手续费） |
 | ER 报 401 InvalidToken | `getAuthToken` 的 token 会过期；用 `mkEr()` 重新认证（`scripts/deploy-tables.mjs` 已内置重试） |
+| **某桌"不打牌"了（座位都还在）** | 先看 crank 日志有没有 `commit_game 失败`（2026-10-08 起 commit 失败会自动降级 60s 并继续推进，牌局不受影响）；若整桌真的冻住，检查 `advance` 是否被前面的步骤拦住。历史上曾因 commit 步骤未隔离失败而冻桌 3 小时（已修） |
+| **`InsufficientFundsForRent` on commit** | 被提交账户（game/handProof/…）余额恰等于租金线、没有手续费余量（DLP 侧扣费即跌穿）。ER **不允许**向这些 DLP 持有的账户直接转账 ✗ —— 修法：重新委托时留出余量（维护操作），或找 MagicBlock 确认扣费方式 |
 | 交易"成功"但什么都没发生 | 先用 `getSignatureStatuses` 查 `err`（本环境 `confirmTransaction` 不抛错）；再 `getTransaction` 看日志 |
 | 程序"部署成功"但新指令报 `Custom:101` | **老坑**：`anchor build` 会因 ID 校验中止而留下旧 `.so`。用 `anchor build --ignore-keys -p solpoker`，并跑 `node scripts/program-smoke.mjs` 复验派发 |
 | 指令失败但 ER 不给日志 | **在 L1 上模拟**：原始 JSON-RPC `simulateTransaction`（`sigVerify:false, replaceRecentBlockhash:true`，注意 web3.js 封装会拒绝这个组合）→ 日志会给出 `AnchorError` 的 file:line 与 Left/Right 值 |

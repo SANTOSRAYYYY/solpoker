@@ -63,6 +63,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
 const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
+const commitFailUntil = new Map(); // table -> ts：commit_game 失败后的冷却（避免刷屏，且不阻塞阶段机）
 const zombieTables = new Set(); // tables whose sweep hit a stuck seat -> force a commit_game to refresh the L1 snapshot
 const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
@@ -365,27 +366,40 @@ async function main() {
       // Table 布局：commit_every_n_hands @123（state.rs 字段序；145B 账户）。
       const tableAcc = await l1.getAccountInfo(table);
       const commitEvery = tableAcc ? tableAcc.data[123] : 255;
-      if (handsSinceCommit >= commitEvery || zombieTables.has(tableId)) {
-        const [magicFeeVault] = PublicKey.findProgramAddressSync(
-          [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()], DLP
-        );
-        const ix = await program.methods
-          .commitGame()
-          .accounts({
-            table, game, handProof: proofPda(table), handSecrets: secretsPda(table),
-            handReplay: replayPda(table),
-            commitPayer: commitPayerPda(table), magicContext: MAGIC_CONTEXT,
-            magicProgram: MAGIC_PROGRAM, magicFeeVault,
-          })
-          .instruction();
-        const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} commit_game`, ER_CU);
-        console.log(`[t${tableId}] commit_game: ${sig.slice(0, 12)}…`);
-        // 快照刷新完成：清掉该桌的 zombie 标记与 sweepTried 键，让下一轮真正去释放座位
-        zombieTables.delete(tableId);
-        for (const k of [...sweepTried]) {
-          if (k.startsWith(`${tableId}:`)) sweepTried.delete(k);
+      if (
+        (handsSinceCommit >= commitEvery || zombieTables.has(tableId)) &&
+        Date.now() > (commitFailUntil.get(tableId) ?? 0)
+      ) {
+        try {
+          const [magicFeeVault] = PublicKey.findProgramAddressSync(
+            [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()], DLP
+          );
+          const ix = await program.methods
+            .commitGame()
+            .accounts({
+              table, game, handProof: proofPda(table), handSecrets: secretsPda(table),
+              handReplay: replayPda(table),
+              commitPayer: commitPayerPda(table), magicContext: MAGIC_CONTEXT,
+              magicProgram: MAGIC_PROGRAM, magicFeeVault,
+            })
+            .instruction();
+          const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} commit_game`, ER_CU);
+          console.log(`[t${tableId}] commit_game: ${sig.slice(0, 12)}…`);
+          // 快照刷新完成：清掉该桌的 zombie 标记与 sweepTried 键，让下一轮真正去释放座位
+          zombieTables.delete(tableId);
+          for (const k of [...sweepTried]) {
+            if (k.startsWith(`${tableId}:`)) sweepTried.delete(k);
+          }
+          return true; // 连锁：下一轮直接尝试 freeze
+        } catch (e) {
+          // 2026-10-08 教训：commit_game 失败（如提交费账户 InsufficientFundsForRent）曾经
+          // 让整个 pass 在这里抛出 → 永远走不到 advance → 整桌冻死几个小时。
+          // 现在只降级：冷却 60 秒不重试，然后继续往下走（牌局优先，快照稍后补）。
+          commitFailUntil.set(tableId, Date.now() + 60_000);
+          console.log(
+            `[t${tableId}] commit_game 失败（60s 内不重试，牌局继续）：${String(e.message ?? e).slice(0, 120)}`
+          );
         }
-        return true; // 连锁：下一轮直接尝试 freeze
       }
     }
 
