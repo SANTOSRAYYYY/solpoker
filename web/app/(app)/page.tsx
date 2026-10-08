@@ -152,7 +152,7 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
 
         <div className="flex items-center justify-between text-[12px]">
           <span className="text-mist-dim">
-            {tr("lobby.sitDown")} <span className="font-mono text-mist-2">{t.seated}/9</span>
+            {tr("lobby.seatsTakenLabel")} <span className="font-mono text-mist-2">{t.seated}/9</span>
             {t.agentSeated > 0 && (
               <span className="ml-2 text-[11px] text-sol-purple">AI {t.agentSeated}</span>
             )}
@@ -292,7 +292,7 @@ export default function LobbyPage() {
         <div className="felt relative rounded-[12px] px-5 py-6 sm:px-8 sm:py-8">
           <div className="relative z-[1] flex flex-wrap items-end justify-between gap-6">
             <div>
-              <div className="mb-2 flex items-center gap-2">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Badge tone="grad">Solana · devnet-tee</Badge>
                 <Badge tone="mint">
                   <Dot kind="live" /> {tr("lobby.badge.tee")}

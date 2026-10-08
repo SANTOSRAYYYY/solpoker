@@ -202,7 +202,7 @@ function SeatView({
             )}
           </div>
           <div className="flex items-center gap-1 font-mono text-[11px] leading-tight">
-            <Chip color={s.allIn ? "purple" : "white"} size={13} />
+            {(s.allIn || s.stack > 0n) && <Chip color={s.allIn ? "purple" : "white"} size={13} />}
             <span className={s.allIn ? "text-loss" : "text-accent-200"}>
               {s.allIn ? tr("table.allIn") : fmtUsdc(s.stack)}
             </span>

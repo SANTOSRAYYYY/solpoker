@@ -341,7 +341,10 @@ export function decodeHandProof(d: Uint8Array): HandProofView {
   for (let i = 0; i < HAND_PROOF_ENTRIES; i++) {
     const b = 8 + i * HAND_PROOF_ENTRY;
     const handId = readU64(d, b);
-    if (handId === 0n && readU64(d, b + 8) === 0n) {
+    // 空槽判据：hand_id / rake / hand_mask / status 全零。
+    // 注意 **hand_id 0 是合法的一手**（且 rake 可能为 0，例如没见翻牌的收池），
+    // 所以不能只看前两项 —— 桌 #6 的 head=1 曾被判成「没有手牌」。
+    if (handId === 0n && readU64(d, b + 8) === 0n && (d[b + 218] | (d[b + 219] << 8)) === 0 && d[b + 225] === 0) {
       entries.push(null);
       continue;
     }

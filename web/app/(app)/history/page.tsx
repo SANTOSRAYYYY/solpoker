@@ -229,7 +229,8 @@ export default function HistoryPage() {
   const live = useLiveUpdates();
   const audit = useL1Audit(tableId, live.tick);
 
-  // 桌列表
+  // 桌列表（附每桌已结算手牌数：读 HandProof 的 head 字段）
+  const [handCounts, setHandCounts] = useState<Record<number, number>>({});
   useEffect(() => {
     let stop = false;
     (async () => {
@@ -237,7 +238,44 @@ export default function HistoryPage() {
         const all = await scanTables(ctx.l1);
         if (stop) return;
         setTables(all);
-        setTableId((cur) => cur ?? all[0]?.id ?? null);
+        // 6 路并发读 head（每桌一次账户读；白名单 23 桌 ≈ 一次延迟）
+        const counts: Record<number, number> = {};
+        const limit = 6;
+        let next = 0;
+        await Promise.all(
+          Array.from({ length: Math.min(limit, all.length) }, async () => {
+            for (;;) {
+              const i = next++;
+              if (i >= all.length) return;
+              const t = all[i];
+              try {
+                const acc = await ctx.l1.getAccountInfo(pdasFor(t.id).handProof);
+                if (acc && acc.data.length >= 3728) counts[t.id] = acc.data[3720];
+              } catch {
+                /* 单桌失败不影响其它 */
+              }
+            }
+          })
+        );
+        if (stop) return;
+        setHandCounts(counts);
+        // 默认选「有手牌里 id 最小」的桌；全都没有手牌才退回第一张
+        setTableId((cur) => {
+          if (cur !== null) return cur;
+          // 默认选「手牌最多」的桌（并列取 id 最小）——最能说明问题的桌优先
+          let best: number | null = null;
+          let bestCount = 0;
+          for (const t of all) {
+            const c = counts[t.id] ?? 0;
+            if (c > bestCount || (c === bestCount && c > 0 && best !== null && t.id < best)) {
+              if (c > 0) {
+                best = t.id;
+                bestCount = c;
+              }
+            }
+          }
+          return best ?? all[0]?.id ?? null;
+        });
       } catch {
         /* ignore */
       }
@@ -398,6 +436,7 @@ export default function HistoryPage() {
               <option key={t.id} value={t.id}>
                 #{t.id} · {t.kind === 2 ? "混合" : t.kind === 1 ? "AI" : "真人"} ·{" "}
                 {t.blindsText}
+                {(handCounts[t.id] ?? 0) > 0 ? " · " + handCounts[t.id] + " 手" : " · 无手牌"}
               </option>
             ))}
           </select>
@@ -406,7 +445,7 @@ export default function HistoryPage() {
 
       <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         {/* ---------------------------------------------------- 手牌列表 */}
-        <section className="panel max-h-[720px] overflow-hidden p-3">
+        <section className={`panel overflow-hidden p-3 ${liveEntries.length > 0 ? "max-h-[720px]" : ""}`}>
           <div className="scroll-thin max-h-[700px] space-y-1 overflow-y-auto pr-1">
             {liveEntries.map(({ e, i }) => (
               <HandRow
@@ -814,7 +853,7 @@ export default function HistoryPage() {
             </>
           ) : (
             <div className="panel p-6 text-[12.5px] text-mist-faint">
-              左侧选一手牌查看证明。
+              <span className="text-[12.5px] text-mist-faint">左侧选一手牌查看证明。</span>
             </div>
           )}
 
