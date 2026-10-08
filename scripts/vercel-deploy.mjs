@@ -29,6 +29,15 @@ const runCapture = (cmd, cwd = web) => {
 };
 const runCaptureIn = runCapture;
 
+/** 本地提交号（部署不带 git 集成，Vercel 拿不到 SHA，由我们显式传给它做版本标识）。 */
+const localSha = () => {
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: process.cwd() }).toString().trim();
+  } catch {
+    return "dev";
+  }
+};
+
 const who = runCapture(`${VERCEL} whoami 2>&1`);
 if (/Logged out/i.test(who)) {
   console.error("✗ 还没登录 Vercel。先运行：  npx vercel login");
@@ -96,7 +105,10 @@ console.log(`… 已复制干净副本：${tmp}`);
 const dl = spawnSync(`${VERCEL} link --project solpoker --yes`, { shell: true, cwd: tmp, stdio: "inherit" });
 if (dl.status !== 0) process.exit(dl.status ?? 1);
 
-const out = runCaptureIn(`${VERCEL} --prod --yes 2>&1`, tmp);
+const out = runCaptureIn(
+  `${VERCEL} --prod --yes --build-env NEXT_PUBLIC_BUILD=${localSha()} 2>&1`,
+  tmp
+);
 const lines = out.trim().split(/\r?\n/);
 const url = lines.find((l) => /^https?:\/\//.test(l.trim()))?.trim() ?? "(未解析到 URL，见上方输出)";
 console.log("\n=== 部署结果 ===");
