@@ -1,3 +1,4 @@
+import { L1_RPC as ENV_L1, ER_BASE_URL as ENV_ER } from "../env.mjs";
 // SolPoker Agent Runner — 把「机器人上桌打牌」做成一条命令。
 //
 // 一个 agent = 一个密钥对 + 这个 runner：
@@ -28,8 +29,8 @@ import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { loadStrategy } from "./strategy.mjs";
 import { cardsStr, rankText, evaluateBest } from "./eval.mjs";
 
-const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
-const ER_BASE = process.env.ER_BASE ?? "http://127.0.0.1:7799";
+const L1_URL = process.env.L1_URL ?? ENV_L1;
+const ER_BASE = process.env.ER_BASE ?? ENV_ER;
 const ER_CU = 1_400_000;
 const EPHEMERAL_VAULT = new PublicKey("MagicVau1t999999999999999999999999999999999");
 const PERMISSION_PROGRAM = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
@@ -476,9 +477,23 @@ async function cmdStand(name) {
 }
 
 async function cmdStatus(name) {
-  const agents = name ? [name] : fs.existsSync(AGENTS_DIR)
-    ? fs.readdirSync(AGENTS_DIR).filter((f) => f.endsWith(".json") && !f.includes("salts")).map((f) => f.replace(".json", ""))
-    : [];
+  const agents = name
+    ? [name]
+    : fs.existsSync(AGENTS_DIR)
+      ? fs
+          .readdirSync(AGENTS_DIR)
+          .filter((f) => f.endsWith(".json") && !f.includes("salts"))
+          .map((f) => f.replace(".json", ""))
+          // 目录里可能混着裸密钥文件（如 bob-owner.json：64 字节数组，不是 agent 档案）
+          .filter((n) => {
+            try {
+              const j = JSON.parse(fs.readFileSync(path.join(AGENTS_DIR, n + ".json"), "utf8"));
+              return !Array.isArray(j) && typeof j.secretKey !== "undefined";
+            } catch {
+              return false;
+            }
+          })
+      : [];
   for (const n of agents) {
     const agent = loadAgent(n);
     const line = [`${n} (${agent.keypair.publicKey.toBase58().slice(0, 8)}…)`];

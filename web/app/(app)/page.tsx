@@ -253,6 +253,10 @@ export default function LobbyPage() {
     };
   }, [ctx.l1, ctx.me]);
 
+  /** 牌桌列表默认折叠（只显示前 N 张），避免 20+ 张把页面撑得很长 */
+  const COLLAPSED = 6;
+  const [showAll, setShowAll] = useState(false);
+
   const shown = useMemo(
     () =>
       tables
@@ -262,6 +266,8 @@ export default function LobbyPage() {
         ),
     [tables, filter]
   );
+  const visible = showAll ? shown : shown.slice(0, COLLAPSED);
+  const hiddenCount = shown.length - visible.length;
 
   const stats = useMemo(() => {
     const liveCount = tables.filter((t) => t.live).length;
@@ -359,17 +365,30 @@ export default function LobbyPage() {
         {loading && tables.length === 0 && (
           <p className="text-[12.5px] text-mist-faint">{tr("lobby.scanning")}</p>
         )}
-        {!loading && tables.length === 0 && (
+        {!loading && shown.length === 0 && (
           <p className="text-[12.5px] text-mist-faint">
             {tr("lobby.noTables")}
           </p>
         )}
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {shown.map((t) => (
+          {visible.map((t) => (
             <TableCard key={t.info.id} t={t} me={ctx.address} />
           ))}
         </div>
       </section>
+
+      {shown.length > COLLAPSED && (
+        <div className="mb-12 -mt-8 flex justify-center">
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="btn-casino btn-glass px-5 py-2.5 text-[12.5px]"
+          >
+            {showAll
+              ? tr("lobby.collapse", { n: shown.length })
+              : tr("lobby.showAll", { n: hiddenCount })}
+          </button>
+        </div>
+      )}
 
       {/* ------------------------------------------------------- 我的区域 */}
       <section className="mb-12 grid gap-6 lg:grid-cols-[1.35fr_1fr]">

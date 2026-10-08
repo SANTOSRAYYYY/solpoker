@@ -58,8 +58,9 @@ const KIND_ZH: Record<number, { zh: string; en: string; tone: "plain" | "grad" |
 // ---------------------------------------------------------------------------
 /** 毡桌按宽缩放：设计宽度 1020px，窄屏时整体等比缩小（移动端不再需要横向拖动）。
  *  用 ResizeObserver 观察容器宽度并写 CSS 变量，高度按缩放后尺寸留白。 */
-function useFeltFit(): { ref: React.RefObject<HTMLDivElement | null> } {
+function useFeltFit(): { ref: React.RefObject<HTMLDivElement | null>; compact: boolean } {
   const ref = useRef<HTMLDivElement | null>(null);
+  const [compact, setCompact] = useState(false);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -69,13 +70,15 @@ function useFeltFit(): { ref: React.RefObject<HTMLDivElement | null> } {
       el.style.setProperty("--felt-scale", String(scale));
       // 视觉高度 = 设计高 536.8 × 缩放；等价于 w × (1/1.9)（缩放后宽度就是容器宽）
       el.style.height = `${Math.round(w * 0.5263)}px`; // aspect 1.9/1
+      // 缩放太小时座位牌的文字不可读 → 切紧凑版（小牌 + 反向缩放回 1×）
+      setCompact(scale < 0.62);
     };
     apply();
     const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  return { ref };
+  return { ref, compact };
 }
 
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
@@ -155,12 +158,14 @@ function SeatView({
   ledger,
   mySeat,
   actionTimeoutS,
+  compact = false,
 }: {
   idx: number;
   game: GameView;
   ledger: SeatLedgerView | null;
   mySeat: number | null;
   actionTimeoutS: number;
+  compact?: boolean;
 }) {
   const { t: tr } = useI18n();
   const s = game.seats[idx];
@@ -171,10 +176,14 @@ function SeatView({
   if (s.status === 0 && !ledger?.occupant) {
     return (
       <div
-        className="absolute z-[5] w-[132px] -translate-x-1/2 -translate-y-1/2"
+        className={`absolute z-[5] -translate-x-1/2 -translate-y-1/2 ${compact ? "w-[84px]" : "w-[132px]"}`}
         style={{ left: `${p.x}%`, top: `${p.y}%` }}
       >
-        <div className="rounded-xl border border-dashed border-mist/15 px-3 py-2 text-center text-[11px] text-mist-faint">
+        <div
+          className={`rounded-xl border border-dashed border-mist/15 text-center text-mist-faint ${
+            compact ? "px-2 py-1 text-[10px]" : "px-3 py-2 text-[11px]"
+          }`}
+        >
           {tr("table.emptySeat", { i: idx })}
         </div>
       </div>
@@ -194,21 +203,23 @@ function SeatView({
       : null;
   return (
     <div
-      className="absolute z-10 w-[148px] -translate-x-1/2 -translate-y-1/2"
+      className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 ${compact ? "w-[92px]" : "w-[148px]"}`}
       style={{ left: `${p.x}%`, top: `${p.y}%` }}
     >
       <div
-        className={`seat-plate flex items-center gap-2 px-2.5 py-2 ${acting ? "seat-acting" : ""} ${
-          isMe ? "seat-me" : ""
-        } ${s.folded || left ? "seat-folded" : ""}`}
+        className={`seat-plate flex items-center gap-2 ${compact ? "counter-scale px-1.5 py-1" : "px-2.5 py-2"} ${
+          acting ? "seat-acting" : ""
+        } ${isMe ? "seat-me" : ""} ${s.folded || left ? "seat-folded" : ""}`}
       >
         <span
-          className={`avatar h-9 w-9 shrink-0 text-[12px] ${ledger?.kind === 1 ? "avatar-agent" : ""}`}
+          className={`avatar shrink-0 ${compact ? "h-7 w-7 text-[10px]" : "h-9 w-9 text-[12px]"} ${
+            ledger?.kind === 1 ? "avatar-agent" : ""
+          }`}
         >
           {ledger?.kind === 1 ? "AI" : who.slice(0, 1)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
+          <div className={`flex items-center gap-1.5 ${compact && !isMe && !left ? "sr-only" : ""}`}>
             <span className="truncate text-[12px] font-bold tracking-wide text-mist">
               {who}
             </span>
@@ -413,25 +424,25 @@ export default function TablePage() {
     const push = (who: string, what: string, tone?: FeedItem["tone"]) =>
       setFeed((f) => [...f.slice(-60), { t, who, what, tone }]);
     if (prev) {
-      if (game.handId !== prev.handId) push("系统", tr("table.feed.handStart", { n: game.handId.toString() }), "brand");
+      if (game.handId !== prev.handId) push(tr("table.feed.system"), tr("table.feed.handStart", { n: game.handId.toString() }), "brand");
       if (game.boardLen > prev.boardLen) {
         const street = [tr("table.street.flop"), tr("table.street.turn"), tr("table.street.river")][game.boardLen === 3 ? 0 : game.boardLen === 4 ? 1 : 2] ?? tr("table.street.board");
-        push("系统", tr("table.feed.streetRevealed", { s: street, n: game.boardLen }), "brand");
+        push(tr("table.feed.system"), tr("table.feed.streetRevealed", { s: street, n: game.boardLen }), "brand");
       }
       if (game.phase !== prev.phase) {
-        if (game.phase === 0) push("系统", tr("table.feed.handEnd"), "plain");
-        else if (game.phase === 1) push("系统", tr("table.feed.commit"), "brand");
-        else if (game.phase === 2) push("系统", tr("table.feed.reveal"), "brand");
-        else if (game.phase === 7) push("系统", tr("table.feed.settling"), "plain");
+        if (game.phase === 0) push(tr("table.feed.system"), tr("table.feed.handEnd"), "plain");
+        else if (game.phase === 1) push(tr("table.feed.system"), tr("table.feed.commit"), "brand");
+        else if (game.phase === 2) push(tr("table.feed.system"), tr("table.feed.reveal"), "brand");
+        else if (game.phase === 7) push(tr("table.feed.system"), tr("table.feed.settling"), "plain");
       }
       if (game.pot !== prev.pot) {
-        push("桌面", tr("table.feed.pot", { n: fmtUsdc(game.pot) }), "mint");
+        push(tr("table.feed.table"), tr("table.feed.pot", { n: fmtUsdc(game.pot) }), "mint");
       }
       if (game.toAct !== prev.toAct && (game.phase === 3 || game.phase === 5)) {
-        push("系统", tr("table.feed.toAct", { n: game.toAct }), "gold");
+        push(tr("table.feed.system"), tr("table.feed.toAct", { n: game.toAct }), "gold");
       }
     } else {
-      push("系统", tr("table.feed.loaded", { n: game.handId.toString() }), "brand");
+      push(tr("table.feed.system"), tr("table.feed.loaded", { n: game.handId.toString() }), "brand");
     }
     prevRef.current = game;
   }, [game]);
@@ -680,7 +691,7 @@ export default function TablePage() {
 
       <div className="mx-auto grid max-w-[1400px] gap-5 px-3 py-4 sm:px-5 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="no-bar overflow-hidden">
-          <div className="felt-fit" ref={feltFit.ref}>
+          <div className="felt-fit" ref={feltFit.ref} data-compact={feltFit.compact ? "true" : "false"}>
             {/* --------------------------------------------------- 毡桌 */}
             <div className="relative mx-auto aspect-[1.9/1] w-full max-w-[1020px] select-none">
               <div className="rail absolute inset-0 rounded-[50%] p-[3.1%]">
@@ -773,6 +784,7 @@ export default function TablePage() {
                         ledger={ledgers[i] ?? null}
                         mySeat={mySeat}
                         actionTimeoutS={actionTimeoutS}
+                        compact={feltFit.compact}
                       />
                     ))}
 

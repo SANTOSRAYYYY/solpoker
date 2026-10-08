@@ -208,3 +208,9 @@ body {
   transform: scale(var(--felt-scale, 1));
   transform-origin: top left;
 }
+
+/* 移动端紧凑座位牌：毡桌整体缩放后，座位牌用反向缩放保持 1× 可读（位置仍由毡桌缩放决定）。 */
+.felt-fit[data-compact="true"] .counter-scale {
+  transform: scale(calc(1 / var(--felt-scale, 1)));
+  transform-origin: center;
+}
