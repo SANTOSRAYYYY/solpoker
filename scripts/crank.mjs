@@ -4,7 +4,8 @@
 // Loop per table (default: NEXT_PUBLIC-style env TABLE_IDS or argv):
 //   1. take_seat for any SeatLedger whose occupancy_id moved past the game seat
 //   2. advance whenever the phase machine can move (Idle/Commit/AwaitSeed/
-//      AwaitStreet/AwaitRunout/Settle) — the handler no-ops when nothing is due
+//      AwaitStreet/AwaitRunout/Settle; 下注街 3/5 仅在「pending==0 的死状态」
+//      时推进做自愈)
 //   3. request_vrf / retry_vrf when the slot is armed or timed out
 //   4. claim_timeout when action_deadline passed
 //   5. commit_game when hands_since_commit >= commit_every_n_hands
@@ -63,6 +64,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
 const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
+const sweepWaitLog = new Set(); // sweep: dedupe "等快照" 日志（key 含快照值，刷新后会重新评估）
 const commitFailUntil = new Map(); // table -> ts：commit_game 失败后的冷却（避免刷屏，且不阻塞阶段机）
 const zombieTables = new Set(); // tables whose sweep hit a stuck seat -> force a commit_game to refresh the L1 snapshot
 const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
@@ -188,6 +190,7 @@ async function main() {
     const actionDeadline = g.readBigInt64LE(104);
     const vrfState = g[144];
     const handsSinceCommit = g[1550];
+    const pendingToAct = g.readUInt16LE(1532); // 死状态检测（stand_up 折断脚本，2026-10-08）
     const now = Math.floor(Date.now() / 1000);
 
     // 0) sweep: clear "left but not cashed out" zombie seats. cash_out is
@@ -225,6 +228,28 @@ async function main() {
       const sweepKey = `${tableId}:${i}:${deposited}:${paid}`;
       if (sweepTried.has(sweepKey)) continue;
       const payout = new PublicKey(ledAcc.data.subarray(154, 186));
+      // 快照门（2026-10-08）：cash_out 的付款/释放全部以 **L1 快照**（最后一次
+      // commit 的 Game）为准。快照陈旧时发出去只会是 no-op 成功交易，而
+      // 「成功就 return」会永久挤掉同一轮里的 commit_game，快照永远刷不新
+      // （table #22 实测：连发 7 笔 no-op cash_out，21.6 tUSDC 兑付被卡住，
+      // 座 6/7 的释放也永远到不了）。所以先读快照：确实有付款可付
+      // （owed > paid）或确实能释放（Left）才发交易；否则跳过并催一次 commit。
+      // 注意不要把这种「等快照」写进 sweepTried —— 那个 key 不含快照值，
+      // 会把快照刷新后的重试一起挡掉。
+      const snapInfo = await l1.getAccountInfo(game);
+      if (!snapInfo) continue;
+      const snapOff = 152 + i * 152;
+      const snapStatus = snapInfo.data[snapOff + 145];
+      const snapOwed = snapInfo.data.readBigUInt64LE(snapOff + 120);
+      if (snapStatus !== 2 && snapOwed <= paid) {
+        const waitKey = `${tableId}:${i}:${snapStatus}:${snapOwed}:${paid}`;
+        if (!sweepWaitLog.has(waitKey)) {
+          sweepWaitLog.add(waitKey);
+          console.log(`[t${tableId}] sweep wait[${i}]: L1 快照未反映释放（status=${snapStatus} owed=${Number(snapOwed) / 1e6}）→ 催 commit`);
+        }
+        zombieTables.add(tableId);
+        continue;
+      }
       const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
       const ixs = [];
       if (!(await l1.getAccountInfo(payoutAta))) {
@@ -347,8 +372,8 @@ async function main() {
       }
     }
 
-    // 3) 行动超时 → claim_timeout
-    if ((phase === 3 || phase === 5) && actionDeadline > 0n && BigInt(now) > actionDeadline) {
+    // 3) 行动超时 → claim_timeout（只有真的有人欠行动时才发；死状态由第 5 步自愈）
+    if ((phase === 3 || phase === 5) && pendingToAct !== 0 && actionDeadline > 0n && BigInt(now) > actionDeadline) {
       const toAct = g[1549];
       const ix = await program.methods
         .claimTimeout(new BN(handId.toString()))
@@ -404,7 +429,14 @@ async function main() {
     }
 
     // 5) advance：可推进的阶段（handler 内部对不可推进情形 no-op/报错，报错即跳过）
-    if ([0, 1, 2, 4, 6, 7].includes(phase)) {
+    //    3/5（下注街）正常等玩家行动，不空转；唯一例外是「下注轮已结束但阶段未
+    //    推进」的死状态（pending==0 —— 2026-10-08 stand_up 旧路径把行动者折叠后
+    //    pending 归零却没人关街，table #22 因此卡死）：交给 advance 自愈关街。
+    if ([0, 1, 2, 3, 4, 5, 6, 7].includes(phase)) {
+      if (phase === 3 || phase === 5) {
+        if (pendingToAct !== 0) return;
+        console.log(`[t${tableId}] 检测到死状态：下注轮已结束但阶段未推进（pending=0, phase=${phase}）→ advance 自愈`);
+      }
       // VRF 街阶段：vrfState 1=Ready（先由上面的 request 步骤发出）或
       // 2=Pending（等 oracle 履行）时不要无谓推进；0=Idle 时 advance 负责
       // arm（AwaitStreet/AwaitRunout 的 VRF 就是这样启动的），3=Fulfilled
