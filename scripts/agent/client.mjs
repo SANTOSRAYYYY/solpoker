@@ -12,8 +12,11 @@ import * as anchor from "@anchor-lang/core";
 import BN from "bn.js";
 import { getAuthToken } from "@magicblock-labs/ephemeral-rollups-sdk";
 
-export const L1_URL = process.env.L1_URL ?? "http://127.0.0.1:8898/devnet";
-export const ER_BASE = process.env.ER_BASE ?? "http://127.0.0.1:7799";
+// L1/ER 端点统一从 scripts/env.mjs 取：L1_URL > web/.env.local 的 Helius > MagicBlock 路由。
+// 本地栈请显式 set L1_URL/ER_BASE（见 scripts/env.mjs 顶部说明）。
+import { L1_RPC, ER_BASE_URL } from "../env.mjs";
+export const L1_URL = L1_RPC;
+export const ER_BASE = ER_BASE_URL;
 export const ER_CU = 1_400_000;
 export const TEE_VALIDATOR = new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
 export const EPHEMERAL_VAULT = new PublicKey("MagicVau1t999999999999999999999999999999999");
