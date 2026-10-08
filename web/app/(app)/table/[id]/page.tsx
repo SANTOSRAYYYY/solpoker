@@ -159,6 +159,7 @@ function SeatView({
   mySeat,
   actionTimeoutS,
   compact = false,
+  onPick,
 }: {
   idx: number;
   game: GameView;
@@ -166,6 +167,8 @@ function SeatView({
   mySeat: number | null;
   actionTimeoutS: number;
   compact?: boolean;
+  /** 空座位可点：未登录 → 登录；已登录 → 选中座位并滚到入座面板。 */
+  onPick?: () => void;
 }) {
   const { t: tr } = useI18n();
   const s = game.seats[idx];
@@ -179,13 +182,20 @@ function SeatView({
         className={`absolute z-[5] -translate-x-1/2 -translate-y-1/2 ${compact ? "w-[84px]" : "w-[132px]"}`}
         style={{ left: `${p.x}%`, top: `${p.y}%` }}
       >
-        <div
-          className={`rounded-xl border border-dashed border-mist/15 text-center text-mist-faint ${
+        <button
+          onClick={onPick}
+          disabled={!onPick}
+          title={onPick ? tr("table.emptySeatPick") : undefined}
+          className={`w-full rounded-xl border border-dashed text-center transition-colors ${
             compact ? "px-2 py-1 text-[10px]" : "px-3 py-2 text-[11px]"
+          } ${
+            onPick
+              ? "cursor-pointer border-mist/25 text-mist-dim hover:border-accent-400/70 hover:bg-accent-500/10 hover:text-accent-200"
+              : "border-mist/15 text-mist-faint"
           }`}
         >
           {tr("table.emptySeat", { i: idx })}
-        </div>
+        </button>
       </div>
     );
   }
@@ -449,6 +459,20 @@ export default function TablePage() {
 
   // ---- 入座（L1，钱包签名：ATA + session key 预充 + sit_down） ----
   const buyInAmount = parseUsdcInput(buyIn);
+
+  /** 点空座位：未登录先走登录（并给出可见提示）；已登录则选中座位并滚到入座面板。 */
+  const pickSeat = (i: number) => {
+    if (!ctx.me) {
+      setNotice(tr("table.loginHint"));
+      ctx.login();
+      return;
+    }
+    setSeatPick(i);
+    window.setTimeout(() => {
+      document.getElementById("sit-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  };
+
   const sitDown = useCallback(async () => {
     if (!ctx.address || !ctx.wallet || seatPick === null || buyInAmount === null) return;
     setSitBusy(true);
@@ -668,11 +692,23 @@ export default function TablePage() {
                 <Badge tone="mint" className="hidden lg:inline-flex">
                   <Dot kind="live" /> {tr("table.teeOk")}
                 </Badge>
+              ) : !ctx.me ? (
+                /* 未登录访客：这里先给「连接钱包」——以前是 disabled，看起来像按钮坏了 */
+                <button
+                  className="btn-casino btn-brand px-2.5 py-1.5 text-[12px] whitespace-nowrap"
+                  onClick={() => {
+                    setNotice(tr("table.loginHint"));
+                    ctx.login();
+                  }}
+                  disabled={!ctx.privyConfigured}
+                >
+                  {tr("nav.connect")}
+                </button>
               ) : (
                 <button
                   className="btn-casino btn-glass px-2.5 py-1.5 text-[12px] whitespace-nowrap"
                   onClick={connectTee}
-                  disabled={tee.phase === "working" || !ctx.me}
+                  disabled={tee.phase === "working"}
                 >
                   {tee.phase === "working" ? tr("table.teeChecking") : tr("table.teeConnect")}
                 </button>
@@ -801,6 +837,7 @@ export default function TablePage() {
                         mySeat={mySeat}
                         actionTimeoutS={actionTimeoutS}
                         compact={feltFit.compact}
+                        onPick={mySeat === null && !demo ? () => pickSeat(i) : undefined}
                       />
                     ))}
 
@@ -1101,11 +1138,29 @@ export default function TablePage() {
             </section>
           )}
 
-          {/* 入座面板 */}
-          {ctx.me && mySeat === null && game && !demo && (
-            <section className="panel p-4">
+          {/* 入座面板（未登录的访客也给入口：一次点击先登录，而不是一块死界面） */}
+          {mySeat === null && game && !demo && (
+            <section id="sit-panel" className="panel p-4">
               <SectionTitle zh={tr("table.section.sit")} en="TAKE A SEAT" />
-              <div className="mb-2 flex flex-wrap gap-1.5">
+              {!ctx.me ? (
+                <>
+                  <p className="text-[12.5px] leading-relaxed text-mist-dim">
+                    {tr("table.sitConnectHint")}
+                  </p>
+                  <button
+                    className="btn-casino btn-brand mt-3 w-full py-2.5 text-[13px]"
+                    onClick={() => {
+                      setNotice(tr("table.loginHint"));
+                      ctx.login();
+                    }}
+                    disabled={!ctx.privyConfigured}
+                  >
+                    {tr("nav.connect")}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="mb-2 flex flex-wrap gap-1.5">
                 {emptySeats.map((i) => (
                   <button
                     key={i}
@@ -1159,9 +1214,11 @@ export default function TablePage() {
               >
                 {sitBusy ? tr("table.signing") : seatPick === null ? tr("table.pickSeat") : tr("table.sitBtn", { n: seatPick })}
               </button>
-              <p className="mt-2 text-[11px] leading-relaxed text-mist-faint">
-                {tr("table.sitHint")}
-              </p>
+                  <p className="mt-2 text-[11px] leading-relaxed text-mist-faint">
+                    {tr("table.sitHint")}
+                  </p>
+                </>
+              )}
             </section>
           )}
 
