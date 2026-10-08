@@ -168,6 +168,89 @@ const ITEMS: Item[] = [
   },
 ];
 
+/** 一手牌的旅程：方框流程（sealed = 只存在于 TDX 硬件内，其余公开可查）。 */
+const FLOW: { zh: string; en: string; dZh: string; dEn: string; sealed?: boolean }[] = [
+  {
+    zh: "你与对手 · 座位（浏览器）",
+    en: "You & opponents · seats (browser)",
+    dZh: "钱包在浏览器里签名；入座把 tUSDC 转进这张桌自己的链上金库，座位账本永远在 L1 上。",
+    dEn: "The wallet signs in the browser; sitting down moves tUSDC into that table's own on-chain vault, and seat ledgers live on L1 forever.",
+  },
+  {
+    zh: "Solana VRF 队列",
+    en: "Solana VRF queue",
+    dZh: "洗牌种子的来源：公开随机数，谁都能事后核对它的输出与请求次序。",
+    dEn: "The source of the shuffle seed: public randomness whose output and request order anyone can check afterwards.",
+  },
+  {
+    zh: "TDX 内的私有牌桌 · PER 权限层",
+    en: "Private table inside TDX · PER permission layer",
+    dZh: "整手牌在这里运行，底牌只在这里解密；权限层把可读成员限定为「本座玩家」—— 连运营方也读不到。",
+    dEn: "The hand runs here and hole cards decrypt only here; the permission layer limits readers to the seat's own player — even the operator can't read them.",
+    sealed: true,
+  },
+  {
+    zh: "Solana L1 · 每桌金库与结算凭据",
+    en: "Solana L1 · per-table vault & settlement anchors",
+    dZh: "每手结束把 HandProof / HandSecrets / HandReplay 写回；入账、退款、兑现在链上逐笔可见。",
+    dEn: "Each hand commits HandProof / HandSecrets / HandReplay back to L1; deposits, refunds and cash-outs are visible per transaction.",
+  },
+  {
+    zh: "你的浏览器 · 开源验证器",
+    en: "Your browser · open-source verifier",
+    dZh: "用链上数据把整手牌从 VRF + 双方盐逐张复算，与链上字节对照 —— 不信的话，自己算。",
+    dEn: "Recompute the whole hand from the VRF and both salts, card by card, against on-chain bytes — if you don't trust it, run it.",
+  },
+];
+
+/** 方框之间的编号说明（比 FLOW 少一条）。 */
+const FLOW_STEPS: { zh: string; en: string }[] = [
+  {
+    zh: "盐承诺 → 揭示：双方先交哈希，最后才亮盐，谁都挑不了牌",
+    en: "Salt commit → reveal: hashes first, salts last — nobody picks their cards",
+  },
+  {
+    zh: "洗牌种子：VRF 产出公开随机数，先锁后发，牌序在此定格",
+    en: "Shuffle seed: the VRF emits public randomness; locked before dealt",
+  },
+  {
+    zh: "结算凭据：HandProof / HandSecrets / HandReplay 写回 L1",
+    en: "Settlement anchors: HandProof / HandSecrets / HandReplay to L1",
+  },
+  {
+    zh: "复算：52 张逐张重抽，与链上字节比对",
+    en: "Recompute: 52 cards re-drawn one by one, matched byte-for-byte",
+  },
+];
+
+/** 试着作弊：每条攻击 + 程序/硬件层面的拦截（全部有实测或代码依据）。 */
+const ATTACKS: { zh: string; en: string; dZh: string; dEn: string }[] = [
+  {
+    zh: "偷看底牌",
+    en: "Peek at hole cards",
+    dZh: "底牌只在 TEE 内解密；PER 权限层把可读成员限定为本座玩家。无 token 读私有账户的实测结果是 null。",
+    dEn: "Hole cards decrypt only inside the TEE; the PER permission layer limits readers to the seat's player. Reading a private account without a token returns null (measured).",
+  },
+  {
+    zh: "操纵发牌",
+    en: "Rig the deal",
+    dZh: "你先交盐的哈希承诺，VRF 才产出洗牌种子，最后才揭示。先锁后发 —— 任何人的盐晚到一步都无效。",
+    dEn: "Your salt's hash commitment goes in first, the VRF produces the seed second, reveals come last. Locked before dealt — a late salt is simply void.",
+  },
+  {
+    zh: "改派付款",
+    en: "Redirect a payout",
+    dZh: "兑现地址在你入座那一刻钉死（payout ATA）；cash_out 谁都能触发，但钱只会打到这个地址。",
+    dEn: "The payout ATA is pinned at sit-down; anyone can trigger cash_out, but it can only pay that address.",
+  },
+  {
+    zh: "偷 session key / 断线卡桌",
+    en: "Steal a session key / stall by disconnecting",
+    dZh: "session key 只能替你的座位行动、7 天过期，且钱仍然只付给你；掉线后行动与揭示超时会自动推进，没人能靠挂机拖住整桌。",
+    dEn: "A session key can only act for your seat, expires in 7 days, and money still only goes to you; on disconnect, action/reveal timeouts advance the table — nobody can stall it by idling.",
+  },
+];
+
 const LIMITS: { zh: string; en: string; dZh: string; dEn: string }[] = [
   {
     zh: "仍是 devnet",
@@ -202,12 +285,106 @@ export default function TrustPage() {
     <main className="mx-auto max-w-[1180px] px-4 py-6 sm:px-5 sm:py-8">
       <div className="mb-7">
         <h1 className="title-cn text-[24px] text-mist">{zh ? "信任模型" : "Trust model"}</h1>
-        <p className="mt-1 max-w-[760px] text-[13px] leading-relaxed text-mist-dim">
+        <p className="mt-1 max-w-[820px] text-[13px] leading-relaxed text-mist-dim">
           {zh
-            ? "这一页不写口号，只写「由什么保证 / 你怎么自己验证 / 仍然需要信任什么」。每一项都可以点开链上或代码证据。"
-            : "No slogans here: for every claim we say what guarantees it, how you verify it yourself, and what you still have to trust. Each item links to on-chain or code evidence."}
+            ? "「别信我们」不是修辞：这一页把每一条主张拆成「由什么保证 / 你怎么自己验证 / 仍然需要信任什么」，每一项都能点开链上或代码证据。"
+            : "\"Don't trust us\" is not a slogan here: every claim is broken into what guarantees it, how you verify it yourself, and what you still have to trust — each with a link to on-chain or code evidence."}
         </p>
       </div>
+
+      {/* 一手牌的旅程：方框流程 + 公开/保密图例 */}
+      <section className="panel mb-8 p-5">
+        <SectionTitle
+          zh={zh ? "一手牌的旅程" : "The life of one hand"}
+          en="THE LIFE OF ONE HAND"
+          right={
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-mist-faint">
+              <span className="inline-flex items-center gap-1.5">
+                <Dot kind="live" /> {zh ? "公开可查" : "Checkable from public data"}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Dot kind="warn" /> {zh ? "只存在于硬件内" : "Sealed in hardware"}
+              </span>
+            </div>
+          }
+        />
+        <p className="mb-5 max-w-[820px] text-[12.5px] leading-relaxed text-mist-dim">
+          {zh
+            ? "顺着箭头走一遍：一手牌经过谁的手、哪些环节全程公开、哪些只存在于 TDX 硬件里，以及你最后在哪一步能自己复算。"
+            : "Follow the arrows: whose hands a hand passes through, which steps are public end-to-end, which exist only inside TDX hardware, and where you can recompute it all yourself."}
+        </p>
+        <div className="mx-auto max-w-[760px]">
+          {FLOW.map((b, i) => (
+            <div key={b.zh}>
+              <div
+                className={`rail-quiet p-4 ${
+                  b.sealed ? "border-accent-500/40 bg-accent-500/6" : ""
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="title-cn text-[13.5px] text-mist">
+                    {zh ? b.zh : b.en}
+                  </div>
+                  {b.sealed ? (
+                    <Badge tone="brand">{zh ? "硬件内保密" : "SEALED IN HW"}</Badge>
+                  ) : (
+                    <Badge tone="cyan">{zh ? "公开可查" : "PUBLIC"}</Badge>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[12px] leading-relaxed text-mist-dim">
+                  {zh ? b.dZh : b.dEn}
+                </p>
+              </div>
+              {i < FLOW.length - 1 && (
+                <div className="flex items-start gap-2.5 py-2.5 pl-4">
+                  <span className="font-mono text-[13px] leading-none text-accent-300">
+                    ↓
+                  </span>
+                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11.5px] text-mist-dim">
+                    <span className="font-mono text-[10.5px] text-accent-300">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    {zh ? FLOW_STEPS[i].zh : FLOW_STEPS[i].en}
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* 试着作弊：攻击 → 拦截 */}
+      <section className="mb-8">
+        <SectionTitle
+          zh={zh ? "试着作弊" : "Try to cheat it"}
+          en="TRY TO CHEAT IT"
+          right={
+            <span className="text-[11px] text-mist-faint">
+              {zh ? "四条最诱人的路，全部被拦住" : "Four tempting paths — all blocked"}
+            </span>
+          }
+        />
+        <div className="grid gap-4 md:grid-cols-2">
+          {ATTACKS.map((a, i) => (
+            <div key={a.zh} className="panel flex flex-col p-4">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div className="flex items-baseline gap-2.5">
+                  <span className="font-mono text-[11px] text-loss/80">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <h3 className="title-cn text-[14px] text-mist">{zh ? a.zh : a.en}</h3>
+                </div>
+                <Badge tone="mint" className="shrink-0">
+                  {zh ? "拦住了" : "BLOCKED"}
+                </Badge>
+              </div>
+              <p className="text-[12.5px] leading-relaxed text-mist-dim">
+                {zh ? a.dZh : a.dEn}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* 硬件与运行环境 */}
       <section className="panel mb-8 p-5">
@@ -239,6 +416,15 @@ export default function TrustPage() {
       </section>
 
       {/* §16 八项 */}
+      <SectionTitle
+        zh={zh ? "逐项主张与证据" : "Claims, evidence, and what's still trusted"}
+        en="CLAIMS & EVIDENCE"
+        right={
+          <span className="text-[11px] text-mist-faint">
+            {zh ? "八项主张，逐项可点开证据" : "Eight claims, each linking to its evidence"}
+          </span>
+        }
+      />
       <div className="grid gap-5 md:grid-cols-2">
         {ITEMS.map((t) => (
           <article key={t.zh} className="panel flex flex-col p-5">
