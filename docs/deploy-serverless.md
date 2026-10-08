@@ -2,6 +2,30 @@
 
 目标平台：Vercel（Next.js 15 原生支持）。本文是 **当前代码状态** 下的检查结论与改动清单。
 
+## 🚀 三步上线（2026-10-08 增补，已实测走通登录 → 部署）
+
+```bash
+# 1) 登录（设备码流程：浏览器打开提示的链接点一次 Authorize 即可）
+cd web && npx vercel login
+
+# 2) 一键准备 + 部署（link 项目 → 写 Production 环境变量（值不回显）→ --prod 部署）
+cd .. && node scripts/vercel-deploy.mjs
+#   默认 NEXT_PUBLIC_L1_RPC=https://rpc.magicblock.app/devnet（无密钥端点，已压测：
+#   65 账户批量 1.4s / 9 座位批读 0.4s，够大厅用）。想换更稳的端点：
+#   DEPLOY_L1_RPC=https://<你的 Helius Secure URL> node scripts/vercel-deploy.mjs
+
+# 3) 部署完把域名加入 Privy 控制台的 allowed origins（否则登录弹窗会被拒）
+```
+
+约定与保障：
+
+- **项目根目录 = `web/`**（脚本在 `web/` 下执行 `vercel link --project solpoker`，monorepo 的正确姿势）。
+- `keys/` 在 `web/` 之外、`web/.env.local` 被 gitignore —— **都不会随部署上传**；私钥只经环境变量。
+- 环境变量一览见 `web/.env.example`；脚本写入的 5 个：`NEXT_PUBLIC_PRIVY_APP_ID`、`NEXT_PUBLIC_TABLE_IDS`、
+  `NEXT_PUBLIC_L1_RPC`、`HELIUS_RPC`、`SOLPOKER_DEPLOYER_KEYPAIR`（后两个服务端专用）。
+- `engines` 已声明 `node >= 20`；首次部署后可在 Vercel 项目设置里把 Node 固定为 22.x。
+- 三处代码侧改动已完成：水龙头环境变量持钥、两个 API 路由 `maxDuration = 60`、SSE 生产守卫（见下）。
+
 ## ✅ 已就绪（实测）
 
 | 检查项 | 结论 |
