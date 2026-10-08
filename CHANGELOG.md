@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 修复：已释放座位（Left）在牌桌上不可点选（2026-10-09，devnet-tee）
+
+玩家反馈「那桌上那几个位置还是卡住了」——座 2/6/7 一直渲染成「已离座」牌子、
+无法点选入座。链上其实早已结清：L1 账本 occupant 已清空、模拟 `sit_down` 三座
+均 err=null（`take_seat` 也明确接受 Left 状态再入座）。
+
+根因在 web：空座按钮的判定是 `s.status === 0 && !ledger.occupant`，只认 Empty
+状态；cash_out 释放（或手内离座结束时自动释放）后 ER 座位停在 `Left(2)`，被
+当成「占着」渲染。修复：判定放宽为 `(status === 0 || status === 2) &&
+!ledger.occupant`（账本 occupant 仍在的才是真「待兑现」僵尸态，继续显示牌子 +
+待兑现金额），`SeatView` 渲染与 `emptySeats` 列表两处同步。
+
+教训：座位「可入座」的权威来源是 **L1 账本 occupant 字段**（sit_down 的前置
+条件就是它为空）；ER 侧 `status` 只是显示辅助，Left ≠ 不可坐。
+
+
 ## 紧急修复：stand_up 死锁 + 三道资金/状态防线（2026-10-08 夜，devnet-tee）
 
 > 现象：table #22 卡死在 Preflop 40+ 分钟 —— `phase=3` 且 `pending_to_act_mask=0`，

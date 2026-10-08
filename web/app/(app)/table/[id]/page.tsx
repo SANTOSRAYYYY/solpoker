@@ -176,8 +176,12 @@ function SeatView({
   const p = seatPos(idx, mySeat);
   const isMe = mySeat === idx;
   const acting = game.toAct === idx && (game.phase === 3 || game.phase === 5);
-  const left = s.status === 2; // 2=Left：已离座，账本可能还没兑现（僵尸态）
-  if (s.status === 0 && !ledger?.occupant) {
+  const left = s.status === 2; // 2=Left：已离座；账本 occupant 清空后即可再入座
+  // 可入座 = 座位空（Empty）或已释放（Left 且 L1 账本 occupant 已清空——
+  // cash_out 释放后即是此形态；账本还留着 occupant 的是真"待兑现"僵尸态，
+  // 不能坐）。旧条件只看 status===0，Left 座位会一直渲染"已离座"牌子、
+  // 也不进可选座列表（2026-10-09 玩家反馈"那几个位置卡住了"的根因）。
+  if ((s.status === 0 || left) && !ledger?.occupant) {
     return (
       <div
         className={`absolute z-[5] -translate-x-1/2 -translate-y-1/2 ${compact ? "w-[84px]" : "w-[132px]"}`}
@@ -657,7 +661,7 @@ export default function TablePage() {
     if (!game) return [];
     return game.seats
       .map((s, i) => ({ s, i }))
-      .filter(({ s, i }) => s.status === 0 && !ledgers[i]?.occupant)
+      .filter(({ s, i }) => (s.status === 0 || s.status === 2) && !ledgers[i]?.occupant)
       .map(({ i }) => i);
   }, [game, ledgers]);
 
