@@ -616,6 +616,22 @@ export default function TablePage() {
   const myStack = game && mySeat !== null ? game.seats[mySeat].stack : null;
 
   // =========================================================================
+  // 观战/等待状态：让「没入座的人」也能看懂现在在等什么
+  const waitingVrf = !!game && [2, 4, 6].includes(game.phase) && game.vrfState <= 2;
+  const statusText = !game
+    ? tr("table.loadingTable")
+    : waitingVrf
+      ? tr("table.awaitingVrf")
+      : game.phase === 3 || game.phase === 5
+        ? mySeat === null
+          ? tr("table.spectating", { p: phaseName(game.phase) })
+          : tr("table.waitingSeat", { n: game.toAct })
+        : game.phase === 0
+          ? tr("table.handOver")
+          : mySeat === null
+            ? tr("table.spectating", { p: phaseName(game.phase) })
+            : tr("table.phaseAdvancing", { p: phaseName(game.phase) });
+
   return (
     <div className="min-h-screen">
       {/* ------------------------------------------------------------ 顶栏 */}
@@ -953,20 +969,18 @@ export default function TablePage() {
                   </>
                 ) : (
                   <span className="text-[12.5px] text-mist-dim">
-                    {mySeat === null || !game
-                      ? tr("table.notSeated")
-                      : game.phase === 3 || game.phase === 5
-                        ? tr("table.waitingSeat", { n: game.toAct })
-                        : game.phase === 0
-                          ? tr("table.handOver")
-                          : tr("table.phaseAdvancing", { p: phaseName(game.phase) })}
+                    {statusText}
+                    {mySeat === null && game && <span className="text-mist-faint">{tr("table.statusJoin")}</span>}
                   </span>
                 )
               ) : (
+                // 观众（未连接钱包 / 未连 TEE）：也要能看懂现在在等什么
                 <span className="text-[12.5px] text-mist-dim">
-                  {ctx.me
-                    ? tr("table.needTee")
-                    : tr("table.connectToSit")}
+                  {statusText}
+                  <span className="text-mist-faint">
+                    {" · "}
+                    {ctx.me ? tr("table.needTee") : tr("table.connectToSit")}
+                  </span>
                 </span>
               )}
             </div>
