@@ -1,5 +1,52 @@
 # CHANGELOG
 
+## 紧急修复：stand_up 死锁 + 三道资金/状态防线（2026-10-08 夜，devnet-tee）
+
+> 现象：table #22 卡死在 Preflop 40+ 分钟 —— `phase=3` 且 `pending_to_act_mask=0`，
+> `claim_timeout` 报 6023 BadPhase、`advance` 对下注阶段 no-op，**全链上没有一条
+> 指令能推动它**；桌上的 21.6 tUSDC 与座位释放全部冻结。
+
+### 根因（程序，指令侧）
+
+`stand_up` 在手内折叠时**绕过引擎**：直接 `folded=1` + `pending_to_act_mask &= !bit`。
+若折叠的正是当前行动者（#22 座 2：另一钱包入座、轮到自己时离座），pending 归零却
+没有任何关街逻辑 —— 正常路径里清 pending 的只有引擎 `close_streets`（必然顺带推进
+下一街或结算）。留下「下注轮已结束但阶段未推进」的死状态。
+
+### 修复
+
+- **程序①**（anchor 升级）：`stand_up` 手内折叠改走引擎规范路径
+  （`hand::apply_stand_up_fold`：当前行动者 = 完整 `apply_action(Fold)`，关街/结算/
+  runout 一步不缺；非行动者 = 标记 + 掩码同步 + 补规范 Fold 事件，验证器自此能复现
+  transcript）；all-in / AwaitRunout / Settle 的座位不再被折叠（牌已在池里或已定局，
+  旧行为等于没收底池权益）。核心新增 `Engine::resolve_stalled_street()`：`advance`
+  在「下注阶段且 pending==0」时自愈关街（permissionless，先按座位标志重建掩码再
+  关街）。回归测试：engine ×2 + hand ×3（含 #22 真实死状态的复刻）。
+- **程序②**（anchor 升级）：`cash_out` 资金防线 —— payout 为默认地址（全零）的损坏
+  账本，在有金额可付（amount > 0）时直接拒绝（新错误 `PayoutNotSet` 6032）。座 6/7
+  的历史账本正处此形态；若无此防线，sweep 会把钱打进 `ATA(1111…, mint)`
+  （System Program 名下、无人能取，等于烧币）。释放分支（amount 恒 0）不受影响。
+- **crank**：① `claim_timeout` 加 pending 门槛（死状态下不再刷失败交易）；
+  ② `advance` 纳入 3/5 阶段但仅限 pending==0（自愈），正常等玩家行动时不空转；
+  ③ sweep 加**快照门**：发 cash_out 前先读 L1 快照，只有确实有付款可付
+  （owed > paid）或能释放（Left）才发交易 —— 否则 no-op 成功交易会「成功即
+  return」挤掉同一轮的 commit_game，快照永远刷不新（实测连发 7 笔空交易卡住
+  21.6 兑付）；改为跳过并催 commit。
+- **web**：座位「待兑现」徽标改用 `ER owed_total > L1 paid_total` 判定 —— 旧判定
+  `deposited > paidTotal` 会把「输了筹码的离座者」误报成待兑现（座 6/7 的误报即
+  此因：实际 owed==paid 已全部结清）。`game-state.ts` 补解 `owed_total`（@seat+120）。
+
+### 现场验证（table #22）
+
+- 升级 + ER 程序缓存刷新后：crank 一发 `advance` 自愈关街 → 翻牌/转牌/河牌正常发完，
+  bob/carol 打完卡死的 hand#219 → hand#220 起连打恢复正常（含手间 commit）；
+- 座 2 于手牌结束时按 `leave_requested` **自动释放**（无需 admin 指令）：owed=21.6 →
+  commit 后 cash_out 全额付到其小号 ATA（余额 179.82 → 201.42），账本 occupant 清空，
+  座位可直接再入（主钱包也可）；
+- 座 6/7：owed==paid（19.88/19.82）、occupant 早已为空 —— **无欠款、无烧钱**
+  （零地址 ATA 余额 0）；此前的「已离座待兑现」为 UI 误报。
+
+
 ## Stage 7（第一段）：前端对局 + crank 服务 + PER 成员轮换正式化（2026-10-07，devnet-tee）
 
 > 浏览器只签玩家动作、crank 驱动阶段机的最终架构全部打通：
