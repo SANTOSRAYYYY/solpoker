@@ -52,6 +52,20 @@
 
 ### 遗留问题
 
+- **（2026-10-08）serverless 部署前的检查 + 代码侧整改**（用户："我要用 serverless 方案把产品部署上去。现在做部署前的检查"；"注意别改坏了"）：
+  1. **检查结论落档 `docs/deploy-serverless.md`**：生产构建 ✓；`next start` 生产模式实测页面/接口全通；
+     密钥文件不入库 ✓；区分"已就绪 / 阻塞项 / 平台手动步骤 / 可选优化"。
+  2. **水龙头私钥改为"环境变量优先、文件兜底"**（新增 `web/lib/faucet-key.ts`，零依赖 base58 解码，
+     与 scripts/lib/bs58.mjs 同源）：`SOLPOKER_DEPLOYER_KEYPAIR`（JSON 数组或 base58 材料）→ 否则读
+     `../keys/deployer.json`（`SOLPOKER_DEPLOYER_KEYPAIR_PATH` 可覆盖）。**已在生产模式下用 base58
+     环境变量真实发放验证** ✓（全新钱包拿到 0.1 SOL + 100 tUSDC；两种材料都还原出部署者公钥 `541kpQWN…`）。
+  3. **两个 API 路由加 `export const maxDuration = 60`**；水龙头确认等待 45s → **20s**，超时返回
+     `pending:true`（前端显示"已提交（等待链上确认）"），删掉 504 分支 —— serverless 超时友好。
+  4. **SSE 生产守卫**：SSE 地址指向本机（127.0.0.1/localhost）而页面并非本机打开时，直接回落轮询
+     （防止本地开发配置被带上线）；生产端只需**不设置** `NEXT_PUBLIC_SSE_URL`。
+  5. 检查中发现的**安全项（待控制台处理）**：`NEXT_PUBLIC_L1_RPC` 目前是 Helius 专用节点域名
+     （主机名即密钥，会随浏览器 bundle 公开）→ 需在 Helius 建受限/白名单 URL 并轮换 key。
+  6. 运维手册 §5 同步更新（私钥来源两种形态 + pending 语义）。
 - **（2026-10-08）测试币水龙头 `/faucet`**（用户需求：主页导航加持币按钮，点击跳转领水页面方便开玩）：
   1. **服务端路由 `POST /api/faucet`**：校验地址（拒 PDA / 非法）→ **余额式补足**（SOL < 0.01 或 tUSDC < 5
      才发，一次补到 **0.1 SOL + 100 tUSDC**；余额充足直接回 `already`）→ 同 IP **10 分钟冷却**（429 + retryAfterS）

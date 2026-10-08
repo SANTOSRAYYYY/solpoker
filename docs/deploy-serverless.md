@@ -16,18 +16,21 @@
 
 ## ⚠️ 上线前必须改（阻塞项）
 
+> **代码侧已全部完成（2026-10-08）**：第 3、4 项已改好并实测；第 2 项只剩"不设环境变量"这一件事；
+> 第 1、5 项是控制台操作或部署拓扑，无代码改动。
+
 1. **`NEXT_PUBLIC_L1_RPC` 带密钥**（当前值形如 `https://emylee-…-fast-devnet.helius-rpc.com`，
    **主机名本身就是 Helius 专用节点的密钥**）→ 会随浏览器 bundle 公开 ✗✗。
    - 修：Helius 控制台为该账号创建 **Secure / 域名白名单 URL**（只允许部署域名），用它当 `NEXT_PUBLIC_L1_RPC`；
      或临时换公共端点 `https://api.devnet.solana.com`（有速率限制，仅演示够用）。
    - **并轮换当前 key**（已可能外泄）。
-2. **`NEXT_PUBLIC_SSE_URL=http://127.0.0.1:8787/…`** → 生产必须**置空**（前端自动回退 8s 轮询 ✓），
-   或把 SSE 中继托管到有状态主机后再配公网地址。
-3. **水龙头读本地私钥文件**（`web/app/api/faucet/route.ts` 读 `../keys/deployer.json`）→ serverless 上没有这个文件 ✗。
-   - 修：改为从 `SOLPOKER_DEPLOYER_KEYPAIR` 环境变量读 key 材料（JSON 数组或 base58，需要小改代码——两种都支持最好）。
-4. **函数超时**：水龙头现在最长轮询 45s、l1-audit 多地址抓取也可能 >10s。
-   - 修：两个路由都加 `export const maxDuration = 60`（Hobby 上限）；更稳的是水龙头发送后**立即返回签名**，
-     由前端轮询确认（顺带改善体验）。
+2. **`NEXT_PUBLIC_SSE_URL=http://127.0.0.1:8787/…`** → 生产**不要设置**这个变量（前端自动回退 8s 轮询 ✓）；
+   **已加代码守卫**：SSE 地址指向本机而页面不是本机打开时，直接回落轮询（防止本地配置被带上线）。
+3. ✅ **水龙头私钥来源已支持环境变量**（`web/lib/faucet-key.ts` + 路由）：优先
+   `SOLPOKER_DEPLOYER_KEYPAIR`（JSON 数组或 base58 材料），否则读本地文件（`SOLPOKER_DEPLOYER_KEYPAIR_PATH` 可覆盖）。
+   已自证：两种材料都还原出同一把部署者公钥 `541kpQWN…` ✓。
+4. ✅ **函数超时**：两个路由都已加 `export const maxDuration = 60`；水龙头确认等待 45s → **20s**，
+   超时返回 `pending:true`（前端显示"已提交（等待链上确认）"），不再有 504 分支 ✓。
 5. **留在有状态主机上的组件**（不能上 serverless）：
    - **crank**（1.2s 长循环驱动 24 桌）✗、**agent runner** ✗、**x402 网关**（持 gateway 密钥）✗
    - （可选）**SSE 中继** ✗ —— 不做就靠轮询

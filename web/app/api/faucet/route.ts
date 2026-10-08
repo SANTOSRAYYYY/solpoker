@@ -1,7 +1,8 @@
 // 测试币水龙头（devnet）：补足 SOL（手续费）+ tUSDC（买入）。
 //
 // 安全边界：
-// - 部署者私钥只在服务端读取（默认 ../keys/deployer.json，可用 SOLPOKER_DEPLOYER_KEYPAIR 覆盖），
+// - 部署者私钥只在服务端读取：优先 SOLPOKER_DEPLOYER_KEYPAIR 环境变量（JSON 数组或 base58，
+//   serverless 用），否则读本地文件（默认 ../keys/deployer.json，可用 SOLPOKER_DEPLOYER_KEYPAIR_PATH 覆盖）。
 //   绝不进浏览器；
 // - 只在 devnet 生效（L1 RPC 不是 devnet 直接拒绝），避免误配主网被当提款机；
 // - 余额式补足：只有余额低于阈值才发（tUSDC < 5 或 SOL < 0.01），一次补到目标额；
@@ -14,9 +15,12 @@ import {
   createMintToInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
+import { parseKeypairMaterial } from "@/lib/faucet-key";
 import { L1_RPC, TUSDC_MINT } from "@/lib/config";
 
 export const runtime = "nodejs";
+/** serverless（Vercel）上给足时间；本机无影响 */
+export const maxDuration = 60;
 
 const SOL_TARGET = 0.1; // SOL
 const SOL_THRESHOLD = 0.01;
@@ -27,11 +31,14 @@ const IP_COOLDOWN_MS = 10 * 60 * 1000;
 const lastByIp = new Map<string, number>();
 
 function loadDeployer(): Keypair {
+  const env = process.env.SOLPOKER_DEPLOYER_KEYPAIR;
+  if (env && env.trim()) {
+    return Keypair.fromSecretKey(parseKeypairMaterial(env));
+  }
   const p =
-    process.env.SOLPOKER_DEPLOYER_KEYPAIR ??
+    process.env.SOLPOKER_DEPLOYER_KEYPAIR_PATH ??
     path.resolve(process.cwd(), "../keys/deployer.json");
-  const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-  return Keypair.fromSecretKey(Uint8Array.from(raw));
+  return Keypair.fromSecretKey(parseKeypairMaterial(fs.readFileSync(p, "utf8")));
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -136,8 +143,10 @@ export async function POST(req: Request) {
     tx.sign(deployer);
     const sig = await l1.sendRawTransaction(tx.serialize());
 
-    // 轮询到 confirmed（本环境 confirmTransaction 对失败交易不抛错，必须查 err）
+    // 轮询到 confirmed：本机 ~1-2s 就能确认；serverless 上传入时间可能不够，
+    // 到点就先把已提交的签名返回（pending=true），前端提示"已提交，等待确认"。
     const t0 = Date.now();
+    let confirmed = false;
     for (;;) {
       const st = await l1.getSignatureStatuses([sig]);
       const s = st.value[0];
@@ -147,10 +156,11 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
-      if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") break;
-      if (Date.now() - t0 > 45_000) {
-        return Response.json({ ok: false, error: "confirmation timeout", sig }, { status: 504 });
+      if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") {
+        confirmed = true;
+        break;
       }
+      if (Date.now() - t0 > 20_000) break;
       await sleep(700);
     }
 
@@ -158,6 +168,7 @@ export async function POST(req: Request) {
     return Response.json({
       ok: true,
       sig,
+      pending: !confirmed,
       sent: { sol: Math.max(0, solNeed), usdc: Math.max(0, usdcNeed) },
       targets: { sol: SOL_TARGET, usdc: USDC_TARGET },
     });

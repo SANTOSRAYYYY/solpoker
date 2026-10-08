@@ -18,6 +18,8 @@ import idl from "@/lib/idl/solpoker.json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** serverless（Vercel）：12 个地址的解析历史 + 最近 N 笔原始交易，给足时间 */
+export const maxDuration = 60;
 
 const PROGRAM_ID = new PublicKey(idl.address);
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");

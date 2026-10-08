@@ -97,8 +97,9 @@ node scripts/deploy-tables.mjs --check            # 只预检：桌号占用 / D
 ## 5. 测试币水龙头（/faucet）
 
 网页端一键发放测试币，玩家自助领，不用再找运营方。实现在 `web/app/api/faucet/route.ts`
-（**部署者私钥只在服务端读取**，默认 `../keys/deployer.json`，可用环境变量
-`SOLPOKER_DEPLOYER_KEYPAIR` 指到别处；密钥绝不进浏览器）。
+（**部署者私钥只在服务端读取**：优先 `SOLPOKER_DEPLOYER_KEYPAIR` 环境变量（装 key 材料：JSON 数组
+或 base58，serverless 用），否则读本地文件 `../keys/deployer.json`（可用 `SOLPOKER_DEPLOYER_KEYPAIR_PATH`
+覆盖）；密钥绝不进浏览器。确认等待 20 秒，超时返回 `pending=true`（serverless 友好）。）
 
 - 规则：**余额式补足** —— SOL < 0.01 或 tUSDC < 5 时才发，一次补到 **0.1 SOL + 100 tUSDC**；
   同一 IP **10 分钟冷却**（内存态，重启清零）。

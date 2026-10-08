@@ -34,6 +34,14 @@ export function useLiveUpdates(): LiveUpdate {
       setState("off");
       return;
     }
+    // 生产守卫：SSE 地址指向本机（127.0.0.1/localhost）而页面并非本机打开，
+    // 说明本地开发配置被带到了线上 —— 直接回落轮询，不做无谓重连。
+    const isLocalSse = /^https?:\/\/(127\.0\.0\.1|localhost)(?::|\/|$)/.test(url);
+    const onLocalPage = /^(127\.0\.0\.1|localhost)$/.test(window.location.hostname);
+    if (isLocalSse && !onLocalPage) {
+      setState("off");
+      return;
+    }
     setState("connecting");
     const es = new EventSource(url);
     esRef.current = es;

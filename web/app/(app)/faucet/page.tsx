@@ -17,7 +17,7 @@ const USDC_THRESHOLD = 5;
 type Phase =
   | { k: "idle" }
   | { k: "busy" }
-  | { k: "done"; sig: string; sent: { sol: number; usdc: number } }
+  | { k: "done"; sig: string; sent: { sol: number; usdc: number }; pending?: boolean }
   | { k: "already"; balances: { sol: number; usdc: number } }
   | { k: "error"; msg: string; retryAfterS?: number };
 
@@ -46,6 +46,7 @@ export default function FaucetPage() {
         ok: boolean;
         sig?: string;
         sent?: { sol: number; usdc: number };
+        pending?: boolean;
         already?: boolean;
         balances?: { sol: number; usdc: number };
         error?: string;
@@ -54,7 +55,7 @@ export default function FaucetPage() {
       if (j.ok && j.already) {
         setPhase({ k: "already", balances: j.balances ?? { sol: 0, usdc: 0 } });
       } else if (j.ok && j.sig) {
-        setPhase({ k: "done", sig: j.sig, sent: j.sent ?? { sol: 0, usdc: 0 } });
+        setPhase({ k: "done", sig: j.sig, sent: j.sent ?? { sol: 0, usdc: 0 }, pending: j.pending });
       } else {
         setPhase({ k: "error", msg: j.error ?? "unknown", retryAfterS: j.retryAfterS });
       }
@@ -151,7 +152,9 @@ export default function FaucetPage() {
 
             {phase.k === "done" && (
               <div className="mt-4 rounded-lg border border-mint-500/30 bg-mint-500/6 px-4 py-3 text-[12.5px] text-mist-2">
-                {L("已发放", "Sent")}{" "}
+                {phase.pending
+                  ? L("已提交（等待链上确认）", "Submitted (awaiting confirmation)")
+                  : L("已发放", "Sent")}{" "}
                 <span className="font-mono text-win">
                   {phase.sent.sol.toFixed(4)} SOL + {phase.sent.usdc.toFixed(2)} tUSDC
                 </span>
