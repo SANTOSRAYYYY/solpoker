@@ -324,6 +324,15 @@ export default function LobbyPage() {
                   {tr("lobby.connectStart")}
                 </button>
               )}
+              <div>
+                <Link
+                  href="/faucet"
+                  className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-mint-500 transition-colors hover:text-mint-100"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-mint-500" />
+                  {tr("lobby.faucetCta")}
+                </Link>
+              </div>
             </div>
             <div className="flex flex-wrap gap-3">
               <Stat en="LIVE" label={tr("lobby.stat.live")} value={String(stats.liveCount)} sub={tr("lobby.stat.liveSub", { n: tables.length })} />

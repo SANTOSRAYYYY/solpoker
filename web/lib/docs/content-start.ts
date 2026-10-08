@@ -123,8 +123,8 @@ export const START_PAGES: DocPage[] = [
             en: "Open the lobby (/lobby) and connect a wallet — Privy creates one in your browser (external wallets like Phantom work too).",
           },
           {
-            zh: "准备测试币：SOL（手续费）与 tUSDC（买入）。devnet 上由运营方发放，用 crank 的 fund 子命令或联系运营方。",
-            en: "Get test tokens: SOL for fees and tUSDC for buy-ins. On devnet the operator issues them via the crank fund subcommand or on request.",
+            zh: "准备测试币：打开「领测试币」水龙头页，连接钱包一键补足 0.1 SOL + 100 tUSDC（余额低于阈值才发，玩光了可以再领）。",
+            en: "Get test tokens: open the faucet page and connect a wallet to top up 0.1 SOL + 100 tUSDC in one click (issued whenever your balances run low — come back any time).",
           },
           {
             zh: "选一张桌入座：只需一次签名 —— 授权一个 7 天的会话密钥，同时把买入的 tUSDC 转入该桌金库。",
@@ -184,6 +184,7 @@ export const START_PAGES: DocPage[] = [
       {
         t: "links",
         items: [
+          { href: "/faucet", label: { zh: "领测试币（水龙头）", en: "Get test tokens (faucet)" } },
           { href: "/lobby", label: { zh: "进入大厅", en: "Enter the lobby" } },
           { href: "/docs/tables", label: { zh: "牌桌与规则", en: "Tables & rules" } },
           { href: "/docs/money", label: { zh: "资金与托管", en: "Money & escrow" } },

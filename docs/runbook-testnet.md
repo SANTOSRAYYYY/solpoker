@@ -94,7 +94,28 @@ node scripts/deploy-tables.mjs --check            # 只预检：桌号占用 / D
 | 指令失败但 ER 不给日志 | **在 L1 上模拟**：原始 JSON-RPC `simulateTransaction`（`sigVerify:false, replaceRecentBlockhash:true`，注意 web3.js 封装会拒绝这个组合）→ 日志会给出 `AnchorError` 的 file:line 与 Left/Right 值 |
 | 某桌无人也热闹（crank 反复发交易） | 检查是否 Commit 阶段空转（已按 `phase_deadline` 门控）或 `advance` 的静默 no-op 条件；正常空闲桌不应有交易 |
 
-## 5. x402（标准模式）
+## 5. 测试币水龙头（/faucet）
+
+网页端一键发放测试币，玩家自助领，不用再找运营方。实现在 `web/app/api/faucet/route.ts`
+（**部署者私钥只在服务端读取**，默认 `../keys/deployer.json`，可用环境变量
+`SOLPOKER_DEPLOYER_KEYPAIR` 指到别处；密钥绝不进浏览器）。
+
+- 规则：**余额式补足** —— SOL < 0.01 或 tUSDC < 5 时才发，一次补到 **0.1 SOL + 100 tUSDC**；
+  同一 IP **10 分钟冷却**（内存态，重启清零）。
+- 安全：只在 devnet 生效（L1 RPC 不含 devnet 直接 400 拒绝）；拒绝链上 PDA（非曲线点）地址。
+- 入口：官方页导航 / 应用内导航 / 大厅英雄区 / 文档「快速开始」。
+
+```bash
+# 直接测（把地址换成任意钱包）
+curl -s -X POST -H "content-type: application/json" \
+  -d '{"address":"<钱包地址>"}' http://127.0.0.1:3100/api/faucet
+# → {"ok":true,"sig":"…","sent":{"sol":0.1,"usdc":100}}
+# 立刻再打一次 → 429 cooldown（同一 IP）
+```
+
+运维注意：deployer 同时是 tUSDC 的 mint authority；每笔发放成本 ≈ 0.002 SOL（手续费 + 首次的 ATA 租金）。
+
+## 6. x402（标准模式）
 
 ```bash
 # 报价（402）
@@ -109,7 +130,7 @@ node scripts/x402-refund.mjs 20 <payerPubkey> 10 <paymentSig>
 - 信任边界（写进设计文档 §4.3）：程序读不到别人的交易，「谁付的钱」由网关认定；`DepositRecord`/`RefundRecord` 记下付款签名，任何人事后可用 §3 的审计视图逐笔核对。
 - facilitator 仍是待定项（`FACILITATOR_URL` 未设时用本地链上校验）。
 
-## 6. 已知边界（如实）
+## 7. 已知边界（如实）
 
 - **devnet 特性**：ER/VRF 偶发抖动（主网会稳定得多）；RPC 历史保留期约一周 —— 牌面与结果的链上锚点永久，但「行动流重放」依赖交易日志，过期后只能验锚点。
 - **v2 手牌**不再在链上存 occupants，所以 `salt_digest` 只能作为输入、无法独立复算（卡片复算不受影响）。
@@ -117,7 +138,7 @@ node scripts/x402-refund.mjs 20 <payerPubkey> 10 <paymentSig>
 - **逃生通道**未上线（依赖 MagicBlock 给委托程序加 `RequestUndelegation`）。
 - 反例留档：2026-10-08 修复前创建的 4 条 `RefundRecord`（桌 20/21/22/23）签名尾部损坏 —— 资金无误，审计请以 L1 审计视图 + 金库流水为准。
 
-## 7. 改程序后（发布清单）
+## 8. 改程序后（发布清单）
 
 ```bash
 cargo test --workspace                                   # 32+90+7+1+1 全绿

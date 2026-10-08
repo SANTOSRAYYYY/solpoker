@@ -10,12 +10,13 @@ import { Badge, Dot, SolMark } from "@/components/ui";
 import { useWalletCtx } from "@/components/wallet-context";
 import { useI18n, type MsgKey } from "@/lib/i18n";
 
-const NAV: { href: string; key: MsgKey; shortKey: MsgKey; en: string }[] = [
+const NAV: { href: string; key: MsgKey; shortKey: MsgKey; en: string; mint?: boolean }[] = [
   { href: "/lobby", key: "nav.lobby", shortKey: "nav.lobbyShort", en: "LOBBY" },
   { href: "/agents", key: "nav.agents", shortKey: "nav.agentsShort", en: "AGENTS" },
   { href: "/history", key: "nav.history", shortKey: "nav.historyShort", en: "HISTORY" },
   { href: "/trust", key: "nav.trust", shortKey: "nav.trustShort", en: "TRUST" },
   { href: "/docs", key: "nav.docs", shortKey: "nav.docsShort", en: "DOCS" },
+  { href: "/faucet", key: "nav.faucet", shortKey: "nav.faucetShort", en: "FAUCET", mint: true },
 ];
 
 export function AppNav() {
@@ -45,7 +46,13 @@ export function AppNav() {
                 key={n.href}
                 href={n.href}
                 className={`group relative shrink-0 rounded-md px-1.5 py-2 transition-colors sm:px-2 xl:px-2.5 ${
-                  active ? "text-accent-200" : "text-mist-dim hover:text-mist"
+                  active
+                    ? n.mint
+                      ? "text-mint-100"
+                      : "text-accent-200"
+                    : n.mint
+                      ? "text-mint-500 hover:text-mint-100"
+                      : "text-mist-dim hover:text-mist"
                 }`}
               >
                 {/* 窄屏用短标签（英文全称放不下，会被裁） */}

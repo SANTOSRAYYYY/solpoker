@@ -15,10 +15,11 @@ const ANCHORS: { href: string; zh: string; en: string }[] = [
   { href: "#faq", zh: "常见问题", en: "FAQ" },
 ];
 
-/** 站内页面链接（锚点之外）：信任模型 / 产品文档。 */
-const LINKS: { href: string; zh: string; en: string }[] = [
+/** 站内页面链接（锚点之外）：信任模型 / 产品文档 / 领测试币（水龙头）。 */
+const LINKS: { href: string; zh: string; en: string; mint?: boolean }[] = [
   { href: "/trust", zh: "信任", en: "Trust" },
   { href: "/docs", zh: "产品文档", en: "Docs" },
+  { href: "/faucet", zh: "领测试币", en: "Faucet", mint: true },
 ];
 
 export function SiteNav() {
@@ -52,7 +53,11 @@ export function SiteNav() {
             <Link
               key={l.href}
               href={l.href}
-              className="title-cn shrink-0 rounded-md px-1.5 py-2 text-[12px] text-accent-200 transition-colors hover:text-mist sm:px-2 sm:text-[12.5px]"
+              className={`title-cn shrink-0 rounded-md px-1.5 py-2 text-[12px] transition-colors sm:px-2 sm:text-[12.5px] ${
+                l.mint
+                  ? "text-mint-500 hover:text-mint-100"
+                  : "text-accent-200 hover:text-mist"
+              }`}
             >
               {L(l.zh, l.en)}
             </Link>
