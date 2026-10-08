@@ -122,6 +122,7 @@ const DEMO_GAME: GameView = {
         : PublicKey.default,
     saltCommit: new Uint8Array(32),
     occupancyId: 1n,
+    owedTotal: 0n,
     stack: [38_200_000n, 22_400_000n, 0n, 12_800_000n, 41_200_000n, 30_100_000n][i] ?? 0n,
     inHand: [0n, 2_000_000n, 22_400_000n, 0n, 6_400_000n, 2_000_000n][i] ?? 0n,
     streetBet: 0n,
@@ -264,9 +265,12 @@ function SeatView({
         )}
       </div>
       <div className="mt-1 text-center font-mono text-[10.5px]">
-        {left && ledger && ledger.depositedTotal > ledger.paidTotal && (
+        {/* 待兑现 = ER 已释放（owed_total）超过 L1 已付（paid_total）。旧判定
+            deposited>paid 会把「输了筹码的离座者」误报成待兑现（2026-10-08
+            座 6/7 的误报即此因）。 */}
+        {ledger && s.owedTotal > ledger.paidTotal && (
           <span className="text-warn">
-            {tr("table.pendingCashoutN", { n: fmtUsdc(ledger.depositedTotal - ledger.paidTotal) })}
+            {tr("table.pendingCashoutN", { n: fmtUsdc(s.owedTotal - ledger.paidTotal) })}
           </span>
         )}
         {!left && s.folded && <span className="text-mist-faint">{tr("table.folded")}</span>}

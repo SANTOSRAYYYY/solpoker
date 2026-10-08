@@ -19,6 +19,8 @@ export interface SeatView {
   saltCommit: Uint8Array;
   occupancyId: bigint;
   stack: bigint;
+  /** 已释放、等待 L1 兑付的累计（只增；与 L1 账本 paid_total 相减即待兑现额） */
+  owedTotal: bigint;
   inHand: bigint;
   streetBet: bigint;
   kind: number;
@@ -83,6 +85,7 @@ export function decodeGame(data: Uint8Array): GameView {
       saltCommit: data.slice(o + 32, o + 64),
       occupancyId: u64(o + 96),
       stack: u64(o + 104),
+      owedTotal: u64(o + 120),
       inHand: u64(o + 128),
       streetBet: u64(o + 136),
       kind: data[o + 144],
