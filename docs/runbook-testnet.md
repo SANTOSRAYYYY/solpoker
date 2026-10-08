@@ -88,6 +88,7 @@ node scripts/deploy-tables.mjs --check            # 只预检：桌号占用 / D
 | 某座位资产卡住 | crank 的 sweep 会自动 `cash_out`（无许可）；也可手动 `node scripts/stand-up-player.mjs <tableId> <seat> <playerIdx>` 后等 commit 再 `cash_out`。先 `node scripts/replay-status.mjs <tableId>` 看僵尸座位 |
 | 快照陈旧（`cash_out` 报 6019 BadSnapshot） | 正常：等 crank `commit_game`（手牌边界或 `hands_since_commit` 到阈值）；crank 会自动重试 |
 | 手牌卡在 Commit（无人揭示盐） | 程序按 `commit_timeout_s` 逐次 strike（上限 `max_strikes`，默认 3）后自动释放座位；crank 只在超时后推进（避免空转烧手续费） |
+| **玩家说"已入座但没有下注/加注按钮"** | 先看座位状态：`node scripts/table-status.mjs <id>`。若已 **Left（被 strike 请离）**：说明他的页面判定不到自己的座位（多数是**入座钱包 ≠ 页面当前选中的钱包**，Privy 多钱包常见）→ 页面新版本会提示并允许"一键切换到该钱包"；让他刷新、切回入座用的钱包、重新入座。退款会自动经 Sweep 回到他的地址 |
 | ER 报 401 InvalidToken | `getAuthToken` 的 token 会过期；用 `mkEr()` 重新认证（`scripts/deploy-tables.mjs` 已内置重试） |
 | **某桌"不打牌"了（座位都还在）** | 先看 crank 日志有没有 `commit_game 失败`（2026-10-08 起 commit 失败会自动降级 60s 并继续推进，牌局不受影响）；若整桌真的冻住，检查 `advance` 是否被前面的步骤拦住。历史上曾因 commit 步骤未隔离失败而冻桌 3 小时（已修） |
 | **`InsufficientFundsForRent` on commit** | 被提交账户（game/handProof/handSecrets/handReplay）余额恰等于租金线、没有手续费余量（DLP 扣费即跌穿）。**修法（2026-10-08 已验证）：在这些账户的 L1 副本上各补 ~0.02 SOL** —— DLP 的手续费从 **L1 侧**余额扣；补完 ER 模拟立刻 `err: null`。注意 ER **不允许**向这些 DLP 持有的账户直接转账（补币必须在 L1 做）。若模拟报 `Custom:6023`，那是"手牌进行中不能 commit"，属正常 |
