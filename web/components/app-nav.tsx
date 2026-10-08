@@ -28,7 +28,7 @@ export function AppNav() {
       <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-3 sm:gap-5 sm:px-5">
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
           <SolMark size={26} />
-          <span className="text-brand text-[18px] font-bold tracking-wide sm:text-[19px]">
+          <span className="hidden text-brand text-[18px] font-bold tracking-wide sm:inline sm:text-[19px]">
             SolPoker
           </span>
           <Badge tone="grad" className="ml-1 hidden lg:inline-flex">
@@ -43,11 +43,11 @@ export function AppNav() {
               <Link
                 key={n.href}
                 href={n.href}
-                className={`group relative shrink-0 rounded-md px-2 py-2 transition-colors xl:px-2.5 ${
+                className={`group relative shrink-0 rounded-md px-1.5 py-2 transition-colors sm:px-2 xl:px-2.5 ${
                   active ? "text-accent-200" : "text-mist-dim hover:text-mist"
                 }`}
               >
-                <span className="title-cn text-[12.5px] sm:text-[13px]">{t(n.key)}</span>
+                <span className="title-cn text-[12px] sm:text-[13px]">{t(n.key)}</span>
                 <span className="ml-1.5 hidden text-[9px] tracking-[0.16em] opacity-60 2xl:inline">
                   {n.en}
                 </span>

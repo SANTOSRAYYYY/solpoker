@@ -56,6 +56,28 @@ const KIND_ZH: Record<number, { zh: string; en: string; tone: "plain" | "grad" |
 // ---------------------------------------------------------------------------
 // 牌面映射（链上 card = rank*4 + suit；0..12 = 2..A；0xFF/≥52 = 无牌）
 // ---------------------------------------------------------------------------
+/** 毡桌按宽缩放：设计宽度 1020px，窄屏时整体等比缩小（移动端不再需要横向拖动）。
+ *  用 ResizeObserver 观察容器宽度并写 CSS 变量，高度按缩放后尺寸留白。 */
+function useFeltFit(): { ref: React.RefObject<HTMLDivElement | null> } {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = () => {
+      const w = el.clientWidth;
+      const scale = Math.min(1, w / 1020);
+      el.style.setProperty("--felt-scale", String(scale));
+      // 视觉高度 = 设计高 536.8 × 缩放；等价于 w × (1/1.9)（缩放后宽度就是容器宽）
+      el.style.height = `${Math.round(w * 0.5263)}px`; // aspect 1.9/1
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return { ref };
+}
+
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS: Suit[] = ["♠", "♥", "♦", "♣"];
 function cardParts(card: number): { rank: string; suit: Suit } | null {
@@ -277,6 +299,7 @@ interface FeedItem {
 
 export default function TablePage() {
   const { t: tr, lang } = useI18n();
+  const feltFit = useFeltFit();
   const params = useParams<{ id: string }>();
   const tableId = Number(params?.id ?? 0);
   const ctx = useWalletCtx();
@@ -656,8 +679,8 @@ export default function TablePage() {
       </div>
 
       <div className="mx-auto grid max-w-[1400px] gap-5 px-3 py-4 sm:px-5 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div className="no-bar overflow-x-auto">
-          <div className="min-w-[680px]">
+        <div className="no-bar overflow-hidden">
+          <div className="felt-fit" ref={feltFit.ref}>
             {/* --------------------------------------------------- 毡桌 */}
             <div className="relative mx-auto aspect-[1.9/1] w-full max-w-[1020px] select-none">
               <div className="rail absolute inset-0 rounded-[50%] p-[3.1%]">

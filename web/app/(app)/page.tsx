@@ -288,9 +288,9 @@ export default function LobbyPage() {
   return (
     <main className="mx-auto max-w-[1180px] px-4 py-6 sm:px-5 sm:py-8">
       {/* ------------------------------------------------------- 英雄条 */}
-      <section className="rail relative mb-10 overflow-hidden rounded-2xl p-[10px]">
-        <div className="felt relative rounded-[12px] px-5 py-6 sm:px-8 sm:py-8">
-          <div className="relative z-[1] flex flex-wrap items-end justify-between gap-6">
+      <section className="rail relative mb-7 overflow-hidden rounded-2xl p-[10px]">
+        <div className="felt relative rounded-[12px] px-5 py-5 sm:px-8 sm:py-6">
+          <div className="relative z-[1] flex flex-wrap items-end justify-between gap-4 sm:gap-6">
             <div>
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Badge tone="grad">Solana · devnet-tee</Badge>
@@ -303,15 +303,15 @@ export default function LobbyPage() {
                   {live.state === "live" ? tr("lobby.badge.sse.live") : live.state === "connecting" ? tr("lobby.badge.sse.connecting") : tr("lobby.badge.sse.off")}
                 </Badge>
               </div>
-              <h1 className="title-cn text-[24px] leading-snug text-white drop-shadow-[0_2px_6px_rgba(0,0,0,.6)] sm:text-[30px]">
+              <h1 className="title-cn text-[22px] leading-snug text-white drop-shadow-[0_2px_6px_rgba(0,0,0,.6)] sm:text-[27px]">
                 {tr("lobby.tagline")}
               </h1>
-              <p className="mt-2 max-w-[560px] text-[13px] leading-relaxed text-white/70">
+              <p className="mt-1.5 max-w-[560px] text-[12.5px] leading-relaxed text-white/70">
                 {tr("lobby.blurb")}
               </p>
               {!ctx.authenticated && ctx.ready && (
                 <button
-                  className="btn-casino btn-brand mt-4 px-5 py-2.5 text-[13px]"
+                  className="btn-casino btn-brand mt-3 px-5 py-2.5 text-[13px]"
                   onClick={ctx.login}
                   disabled={!ctx.privyConfigured}
                 >

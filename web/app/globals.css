@@ -195,4 +195,16 @@ body {
   font-size: 13px;  
   text-align: center;  
   border-bottom: 1px solid var(--border);  
-}  
+}
+
+/* 毡桌按宽缩放（移动端）：内层固定 1020px 设计宽，整体等比缩放并保持居中。 */
+.felt-fit {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+.felt-fit > * {
+  width: 1020px;
+  transform: scale(var(--felt-scale, 1));
+  transform-origin: top left;
+}
