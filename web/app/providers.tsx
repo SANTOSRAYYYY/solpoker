@@ -12,6 +12,7 @@
 import { PrivyProvider } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
+import { I18nProvider } from "@/lib/i18n";
 
 const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
 const DEVNET_RPC = "https://api.devnet.solana.com";
@@ -23,12 +24,12 @@ export const PRIVY_CONFIGURED = PRIVY_APP_ID.length > 0;
 export function Providers({ children }: { children: React.ReactNode }) {
   if (!PRIVY_CONFIGURED) {
     return (
-      <>
+      <I18nProvider>
         <div className="config-banner">
           未配置 NEXT_PUBLIC_PRIVY_APP_ID — 钱包功能不可用（见 web/README.md）
         </div>
         {children}
-      </>
+      </I18nProvider>
     );
   }
   return (
@@ -65,7 +66,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }}
     >
-      {children}
+      <I18nProvider>{children}</I18nProvider>
     </PrivyProvider>
   );
 }

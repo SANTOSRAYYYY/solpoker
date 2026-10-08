@@ -52,6 +52,24 @@
 
 ### 遗留问题
 
+- **（2026-10-08）i18n：字典 + Provider + 持久化，导航/大厅/对局全部接线（中英切换实测通过）**。
+  `web/lib/i18n.tsx`：zh/en 双语字典（~160 键）+ `I18nProvider`（挂在根 `Providers` 里）
+  + `useI18n()`。默认语言 = 浏览器语言（`zh*` → 中文，其余 → 英文）；用户点右上角
+  「EN / 中」切换后写 `localStorage("solpoker.lang")`，此后以存储值为准，并同步
+  `document.documentElement.lang`。SSR 首帧恒 zh、hydration 后再切（避免 hydration
+  mismatch —— 与项目既有的 `?demo=1` 处理同一套路）。`t(key, vars)` 支持 `{x}` 插值，
+  缺键回退中文并 `console.warn`（开发期暴露漏配，不静默显示 key）。
+  **接线范围**：导航（含切换钮）+ 大厅（英雄区徽章/统计卡/筛选/牌桌卡全部标签/我的区域/
+  信任速览标题）+ 对局页（顶栏/座位牌/行动坞全部按钮与状态文案/侧栏面板/E3 离座确认/
+  页脚/行动记录 feed/提交通知）。
+  **实测**（浏览器，devnet-tee）：点「EN」→ 导航 `Lobby / My Agents / Hand history / Trust`、
+  英雄区标题与说明、牌桌卡（`Table #5 · Waiting · Blinds · Ante · Buy-in · Seats taken 0/9`）、
+  对局页（`Table #14 · Mixed · Blinds 0.10/0.20 · Hand #5 · Connect TEE · VRF idle · POT ·
+  Seat 2…8 · Pending payout`）全英文；`localStorage="en"`、`<html lang="en">`，刷新保持。
+  **覆盖边界（如实）**：信任页/验证页的长解释段落与 mock 页仍是中文（字典已留扩展位）。
+  **顺带修复一个开发环境坑**：dev server 在跑时执行 `npm run build` 会覆盖 `.next` 的
+  vendor chunk，导致 `/table/[id]` 编译期 500（`Cannot find module './vendor-chunks/viem.js'`）
+  —— 处理：停 dev → 清 `.next` → 重启（CI/本地构建前先停 dev）。
 - **（2026-10-08）L1 审计视图：Helius 解析历史 + 我们自己的指令解码 → `/history` 表级时间线**。
   **实测发现（决定架构的关键）**：Helius 的地址解析历史对我们程序返回
   `type/source=UNKNOWN`、`description=""`、`events={}` —— 它没有我们的 IDL，**不做语义解析**；

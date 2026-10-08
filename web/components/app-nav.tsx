@@ -8,17 +8,19 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Badge, Dot, SolMark } from "@/components/ui";
 import { useWalletCtx } from "@/components/wallet-context";
+import { useI18n, type MsgKey } from "@/lib/i18n";
 
-const NAV = [
-  { href: "/", zh: "大厅", en: "LOBBY" },
-  { href: "/agents", zh: "我的 Agent", en: "AGENTS" },
-  { href: "/history", zh: "手牌验证", en: "HISTORY" },
-  { href: "/trust", zh: "信任", en: "TRUST" },
+const NAV: { href: string; key: MsgKey; en: string }[] = [
+  { href: "/", key: "nav.lobby", en: "LOBBY" },
+  { href: "/agents", key: "nav.agents", en: "AGENTS" },
+  { href: "/history", key: "nav.history", en: "HISTORY" },
+  { href: "/trust", key: "nav.trust", en: "TRUST" },
 ];
 
 export function AppNav() {
   const path = usePathname();
   const ctx = useWalletCtx();
+  const { lang, setLang, t } = useI18n();
   const [open, setOpen] = useState(false);
 
   return (
@@ -45,7 +47,7 @@ export function AppNav() {
                   active ? "text-accent-200" : "text-mist-dim hover:text-mist"
                 }`}
               >
-                <span className="title-cn text-[12.5px] sm:text-[13px]">{n.zh}</span>
+                <span className="title-cn text-[12.5px] sm:text-[13px]">{t(n.key)}</span>
                 <span className="ml-1.5 hidden text-[9px] tracking-[0.16em] opacity-60 2xl:inline">
                   {n.en}
                 </span>
@@ -58,9 +60,17 @@ export function AppNav() {
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+            title={t("lang.toggleTitle")}
+            aria-label={t("lang.toggleTitle")}
+            className="rounded-full border border-accent-500/30 bg-black/30 px-2.5 py-1.5 font-mono text-[11px] text-accent-200 hover:border-accent-500/60"
+          >
+            {t("lang.toggle")}
+          </button>
           {!ctx.ready && (
             <span className="rounded-full border border-accent-500/30 px-3 py-1.5 text-[11px] text-mist-faint">
-              加载中…
+              {t("nav.loading")}
             </span>
           )}
 
@@ -70,7 +80,7 @@ export function AppNav() {
               onClick={ctx.login}
               disabled={!ctx.privyConfigured}
             >
-              连接钱包
+              {t("nav.connect")}
             </button>
           )}
 
@@ -91,7 +101,7 @@ export function AppNav() {
               {open && (
                 <div className="panel absolute right-0 mt-2 w-[300px] p-3">
                   <div className="mb-2 text-[11px] tracking-widest text-mist-faint">
-                    钱包 / WALLETS
+                    {t("nav.wallets")}
                   </div>
                   <div className="space-y-1.5">
                     {ctx.options.map((o) => (
@@ -118,7 +128,7 @@ export function AppNav() {
                     ))}
                     {ctx.options.length === 0 && (
                       <p className="text-[11.5px] text-mist-faint">
-                        未检测到 Solana 钱包，刷新页面或重新登录。
+                        {t("nav.noWallet")}
                       </p>
                     )}
                   </div>
@@ -133,7 +143,7 @@ export function AppNav() {
                         ctx.logout();
                       }}
                     >
-                      退出登录
+                      {t("nav.logout")}
                     </button>
                   </div>
                 </div>

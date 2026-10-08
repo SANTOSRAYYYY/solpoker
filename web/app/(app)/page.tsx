@@ -20,6 +20,7 @@ import {
 } from "@/lib/chain-read";
 import { fmtUsdc } from "@/lib/game-state";
 import { useLiveUpdates } from "@/lib/live-updates";
+import { useI18n } from "@/lib/i18n";
 
 type Filter = "all" | 0 | 1 | 2;
 
@@ -29,11 +30,11 @@ const KIND_META: Record<number, { zh: string; en: string; tone: "plain" | "grad"
   2: { zh: "混合桌", en: "MIXED", tone: "grad" },
 };
 
-const FILTERS: { key: Filter; zh: string }[] = [
-  { key: "all", zh: "全部" },
-  { key: 0, zh: "真人桌" },
-  { key: 2, zh: "混合桌" },
-  { key: 1, zh: "AI 桌" },
+const FILTERS: { key: Filter; zh: string; en: string }[] = [
+  { key: "all", zh: "全部", en: "All" },
+  { key: 0, zh: "真人桌", en: "Human" },
+  { key: 2, zh: "混合桌", en: "Mixed" },
+  { key: 1, zh: "AI 桌", en: "AI" },
 ];
 
 /** 9 座椭圆座位点（与对局页一致） */
@@ -97,6 +98,7 @@ function MiniFelt({ t, me }: { t: TableLive; me: string | null }) {
 }
 
 function TableCard({ t, me }: { t: TableLive; me: string | null }) {
+  const { t: tr, lang } = useI18n();
   const km = KIND_META[t.info.kind] ?? KIND_META[0];
   const g = t.game;
   const live = t.live;
@@ -114,16 +116,16 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
       <div className="space-y-3 p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-baseline gap-2">
-            <h3 className="title-cn text-[15px] text-mist">桌 #{t.info.id}</h3>
+            <h3 className="title-cn text-[15px] text-mist">{tr("lobby.tableTitle", { id: t.info.id })}</h3>
           </div>
           <div className="flex items-center gap-2">
-            <Badge tone={km.tone}>{km.zh}</Badge>
+            <Badge tone={km.tone}>{lang === "zh" ? km.zh : km.en}</Badge>
             {maintain ? (
-              <Badge tone="danger">维护中</Badge>
+              <Badge tone="danger">{tr("lobby.maintenance")}</Badge>
             ) : (
               <span className="flex items-center gap-1.5 text-[11px] text-mist-dim">
                 <Dot kind={live ? "live" : "idle"} />
-                {live ? `进行中 · 手 #${g!.handId.toString()}` : "等待中"}
+                {live ? tr("lobby.running", { n: g!.handId.toString() }) : tr("lobby.status.waiting")}
               </span>
             )}
           </div>
@@ -131,17 +133,17 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
 
         <div className="grid grid-cols-3 gap-2 rounded-lg border border-accent-500/15 bg-black/25 px-3 py-2 text-center">
           <div>
-            <div className="text-[10px] tracking-wider text-mist-faint">盲注 SB/BB</div>
+            <div className="text-[10px] tracking-wider text-mist-faint">{tr("lobby.sbBb")}</div>
             <div className="font-mono text-[13px] text-accent-200">
               {fmtUsdc(t.info.sb)}/{fmtUsdc(t.info.bb)}
             </div>
           </div>
           <div className="border-x border-accent-500/15">
-            <div className="text-[10px] tracking-wider text-mist-faint">前注 ANTE</div>
+            <div className="text-[10px] tracking-wider text-mist-faint">{tr("lobby.ante")}</div>
             <div className="font-mono text-[13px] text-mist-2">{fmtUsdc(t.info.ante)}</div>
           </div>
           <div>
-            <div className="text-[10px] tracking-wider text-mist-faint">买入 BUY-IN</div>
+            <div className="text-[10px] tracking-wider text-mist-faint">{tr("lobby.buyIn")}</div>
             <div className="font-mono text-[13px] text-mist-2">
               {minBuy}–{maxBuy}
             </div>
@@ -150,23 +152,23 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
 
         <div className="flex items-center justify-between text-[12px]">
           <span className="text-mist-dim">
-            入座 <span className="font-mono text-mist-2">{t.seated}/9</span>
+            {tr("lobby.sitDown")} <span className="font-mono text-mist-2">{t.seated}/9</span>
             {t.agentSeated > 0 && (
               <span className="ml-2 text-[11px] text-sol-purple">AI {t.agentSeated}</span>
             )}
             {t.pendingPayout > 0 && (
-              <span className="ml-2 text-[11px] text-warn">待兑现 {t.pendingPayout}</span>
+              <span className="ml-2 text-[11px] text-warn">{tr("lobby.pendingPayout", { n: t.pendingPayout })}</span>
             )}
           </span>
           {g && live ? (
             <span className="flex items-center gap-1.5 text-mist-dim">
               <ChipStack count={2} color="cyan" size={16} />
               <span>
-                底池 <span className="font-mono text-accent-200">{fmtUsdc(g.pot)}</span>
+                {tr("lobby.pot")} <span className="font-mono text-accent-200">{fmtUsdc(g.pot)}</span>
               </span>
             </span>
           ) : (
-            <span className="text-mist-faint">无进行中对局</span>
+            <span className="text-mist-faint">{tr("lobby.noHand")}</span>
           )}
         </div>
 
@@ -177,15 +179,15 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
               maintain ? "btn-glass pointer-events-none opacity-50" : "btn-brand"
             }`}
           >
-            {mySeatIdx >= 0 ? `回到牌桌 · 座 ${mySeatIdx}` : "入座"}
+            {mySeatIdx >= 0 ? tr("lobby.backToTableSeat", { n: mySeatIdx }) : tr("lobby.sit")}
           </Link>
           <Link href={`/table/${t.info.id}`} className="btn-casino btn-glass px-3 py-2 text-[12px]">
-            观战
+            {tr("lobby.watch")}
           </Link>
         </div>
         {t.info.kind === 2 && (
           <p className="text-[11px] leading-relaxed text-sol-purple/80">
-            混合桌：入座前需确认与 AI 同桌的规则（一真人 vs 一 agent，座位不固定）
+            {tr("lobby.mixedNote")}
           </p>
         )}
       </div>
@@ -194,6 +196,7 @@ function TableCard({ t, me }: { t: TableLive; me: string | null }) {
 }
 
 export default function LobbyPage() {
+  const { t: tr, lang } = useI18n();
   const ctx = useWalletCtx();
   const er = useMemo(() => new Connection(ER_RPC, "confirmed"), []);
   const [tables, setTables] = useState<TableLive[]>([]);
@@ -292,20 +295,19 @@ export default function LobbyPage() {
               <div className="mb-2 flex items-center gap-2">
                 <Badge tone="grad">Solana · devnet-tee</Badge>
                 <Badge tone="mint">
-                  <Dot kind="live" /> 底牌 TEE 加密
+                  <Dot kind="live" /> {tr("lobby.badge.tee")}
                 </Badge>
-                <Badge tone="plain">状态实时 · 账本 L1</Badge>
+                <Badge tone="plain">{tr("lobby.badge.ledger")}</Badge>
                 <Badge tone={live.state === "live" ? "mint" : "plain"}>
                   <Dot kind={live.state === "live" ? "live" : "idle"} />
-                  {live.state === "live" ? "L1 事件推送" : live.state === "connecting" ? "连接推送…" : "轮询 8s"}
+                  {live.state === "live" ? tr("lobby.badge.sse.live") : live.state === "connecting" ? tr("lobby.badge.sse.connecting") : tr("lobby.badge.sse.off")}
                 </Badge>
               </div>
               <h1 className="title-cn text-[24px] leading-snug text-white drop-shadow-[0_2px_6px_rgba(0,0,0,.6)] sm:text-[30px]">
-                私密德州扑克 · 链上可验证
+                {tr("lobby.tagline")}
               </h1>
               <p className="mt-2 max-w-[560px] text-[13px] leading-relaxed text-white/70">
-                底牌只在 TEE 内解密，发牌由 VRF 与双方盐共同锁定；每一手都能用开源验证器复算。
-                坐下即托管，随时可离桌兑现。
+                {tr("lobby.blurb")}
               </p>
               {!ctx.authenticated && ctx.ready && (
                 <button
@@ -313,16 +315,16 @@ export default function LobbyPage() {
                   onClick={ctx.login}
                   disabled={!ctx.privyConfigured}
                 >
-                  连接钱包开始
+                  {tr("lobby.connectStart")}
                 </button>
               )}
             </div>
             <div className="flex flex-wrap gap-3">
-              <Stat en="LIVE" label="进行中" value={String(stats.liveCount)} sub={`共 ${tables.length} 张`} />
-              <Stat en="SEATED" label="在座" value={String(stats.seated)} sub={`AI ${stats.agents}`} />
+              <Stat en="LIVE" label={tr("lobby.stat.live")} value={String(stats.liveCount)} sub={tr("lobby.stat.liveSub", { n: tables.length })} />
+              <Stat en="SEATED" label={tr("lobby.stat.seated")} value={String(stats.seated)} sub={tr("lobby.stat.seatedSub", { ai: stats.agents })} />
               <Stat
                 en="ESCROW"
-                label="桌内托管"
+                label={tr("lobby.stat.escrow")}
                 value={fmtUsdc(stats.escrow)}
                 sub="tUSDC"
               />
@@ -334,8 +336,8 @@ export default function LobbyPage() {
       {/* ------------------------------------------------------- 牌桌列表 */}
       <section className="mb-12">
         <SectionTitle
-          zh="选择牌桌"
-          en="Choose a table"
+          zh={tr("lobby.chooseTable")}
+          en="CHOOSE A TABLE"
           right={
             <div className="flex flex-wrap gap-1.5">
               {FILTERS.map((f) => (
@@ -348,18 +350,18 @@ export default function LobbyPage() {
                       : "border-accent-500/20 text-mist-dim hover:border-accent-500/45 hover:text-mist"
                   }`}
                 >
-                  {f.zh}
+                  {lang === "zh" ? f.zh : f.en}
                 </button>
               ))}
             </div>
           }
         />
         {loading && tables.length === 0 && (
-          <p className="text-[12.5px] text-mist-faint">正在扫描链上牌桌…</p>
+          <p className="text-[12.5px] text-mist-faint">{tr("lobby.scanning")}</p>
         )}
         {!loading && tables.length === 0 && (
           <p className="text-[12.5px] text-mist-faint">
-            白名单内没有可用牌桌（检查 NEXT_PUBLIC_TABLE_IDS 或运营方是否已建桌）。
+            {tr("lobby.noTables")}
           </p>
         )}
         <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -372,17 +374,17 @@ export default function LobbyPage() {
       {/* ------------------------------------------------------- 我的区域 */}
       <section className="mb-12 grid gap-6 lg:grid-cols-[1.35fr_1fr]">
         <div>
-          <SectionTitle zh="我的牌局与 Agent" en="My seats & agents" />
+          <SectionTitle zh={tr("lobby.mySeats")} en="MY SEATS & AGENTS" />
           {!ctx.authenticated && (
             <div className="panel p-4 text-[12.5px] leading-relaxed text-mist-dim">
-              连接钱包后，这里会显示你在各桌的座位、筹码，以及你注册的 AI agent。
+              {tr("lobby.mySeatsBlurb")}
             </div>
           )}
           {ctx.authenticated && (
             <div className="space-y-3">
               {mySeatCards.length === 0 && (
                 <div className="panel p-4 text-[12.5px] text-mist-faint">
-                  你还没有入座。挑一张桌子点上「入座」，一笔签名即可开局。
+                  {tr("lobby.noSeat")}
                 </div>
               )}
               {mySeatCards.map((s) => (
@@ -390,13 +392,13 @@ export default function LobbyPage() {
                   <span className="avatar h-11 w-11 text-[15px]">我</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="title-cn text-[14px] text-mist">真人座位</span>
+                      <span className="title-cn text-[14px] text-mist">{tr("lobby.humanSeat")}</span>
                       <Badge tone="mint">
-                        <Dot kind="live" /> 在座
+                        <Dot kind="live" /> {tr("lobby.seatedNow")}
                       </Badge>
                     </div>
                     <div className="mt-0.5 text-[12px] text-mist-dim">
-                      桌 #{s.tableId} · 座位 {s.idx}
+                      {tr("lobby.tableSeat", { table: s.tableId, seat: s.idx })}
                       {s.stack !== null && (
                         <>
                           {" · "}
@@ -411,7 +413,7 @@ export default function LobbyPage() {
                     href={`/table/${s.tableId}`}
                     className="btn-casino btn-brand px-4 py-2 text-[12px]"
                   >
-                    回到牌桌
+                    {tr("lobby.backToTable")}
                   </Link>
                 </div>
               ))}
@@ -448,7 +450,7 @@ export default function LobbyPage() {
 
         {/* 接入自己的 AI */}
         <div className="panel flex flex-col p-5">
-          <SectionTitle zh="接入你自己的 AI" en="Bring your own agent" />
+          <SectionTitle zh={tr("lobby.byoAgent")} en="BRING YOUR OWN AGENT" />
           <p className="mb-4 text-[12.5px] leading-relaxed text-mist-dim">
             任何一个支持 <span className="font-mono text-accent-200">MCP</span> 的 AI
             都能上桌：你的机器上跑一个 runner，把决策权交给模型，密钥永不离开本机。
@@ -483,11 +485,11 @@ export default function LobbyPage() {
       {/* ------------------------------------------------------- 信任速览 */}
       <section className="mb-6">
         <SectionTitle
-          zh="为什么可以信任这张桌子"
-          en="Why you can trust the table"
+          zh={tr("lobby.trustTitle")}
+          en="WHY YOU CAN TRUST THE TABLE"
           right={
             <Link href="/trust" className="text-[12px] text-accent-300 hover:text-accent-200">
-              完整信任模型 →
+              {tr("lobby.trustMore")}
             </Link>
           }
         />

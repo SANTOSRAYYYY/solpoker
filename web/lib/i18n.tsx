@@ -1,0 +1,457 @@
+"use client";
+
+// i18n：字典 + Provider + 持久化。
+//
+// 设计：
+// - 默认语言 = 浏览器语言（zh* → 中文，其余 → English）；用户显式切换后存
+//   localStorage("solpoker.lang")，此后以存储值为准。SSR 首帧用默认 zh，
+//   hydration 后由 effect 切到实际语言（避免 hydration mismatch）。
+// - `t(key, vars?)`：`{name}` 占位符插值；缺键时回退中文并在 console 警告
+//   （开发期尽早暴露漏配，而不是静默显示 key）。
+// - 文案范围：导航/大厅/对局主流程/验证页关键按钮。长解释性段落仍为中文
+//   （见 CHANGELOG 的「i18n 覆盖边界」）。
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+
+export type Lang = "zh" | "en";
+const STORAGE_KEY = "solpoker.lang";
+
+const ZH = {
+  "nav.lobby": "大厅",
+  "nav.agents": "我的 Agent",
+  "nav.history": "手牌验证",
+  "nav.trust": "信任",
+  "nav.connect": "连接钱包",
+  "nav.logout": "退出登录",
+  "nav.loading": "加载中…",
+  "nav.wallets": "钱包 / WALLETS",
+  "nav.noWallet": "未检测到 Solana 钱包，刷新页面或重新登录。",
+  "lang.toggle": "EN",
+  "lang.toggleTitle": "Switch to English",
+
+  "lobby.tagline": "私密德州扑克 · 链上可验证",
+  "lobby.blurb":
+    "底牌只在 TEE 内解密，发牌由 VRF 与双方盐共同锁定；每一手都能用开源验证器复算。坐下即托管，随时可离桌兑现。",
+  "lobby.badge.tee": "底牌 TEE 加密",
+  "lobby.badge.ledger": "状态实时 · 账本 L1",
+  "lobby.badge.sse.live": "L1 事件推送",
+  "lobby.badge.sse.connecting": "连接推送…",
+  "lobby.badge.sse.off": "轮询 8s",
+  "lobby.connectStart": "连接钱包开始",
+  "lobby.stat.live": "进行中",
+  "lobby.stat.liveSub": "共 {n} 张",
+  "lobby.stat.seated": "在座",
+  "lobby.stat.seatedSub": "AI {ai}",
+  "lobby.stat.escrow": "桌内托管",
+  "lobby.chooseTable": "选择牌桌",
+  "lobby.filter.all": "全部",
+  "lobby.filter.human": "真人桌",
+  "lobby.filter.mixed": "混合桌",
+  "lobby.filter.ai": "AI 桌",
+  "lobby.scanning": "正在扫描链上牌桌…",
+  "lobby.noTables": "白名单内没有可用牌桌（检查 NEXT_PUBLIC_TABLE_IDS 或运营方是否已建桌）。",
+  "lobby.tableTitle": "桌 #{id}",
+  "lobby.maintenance": "维护中",
+  "lobby.running": "进行中 · 手 #{n}",
+  "lobby.status.waiting": "等待中",
+  "lobby.sbBb": "盲注 SB/BB",
+  "lobby.ante": "前注 ANTE",
+  "lobby.buyIn": "买入 BUY-IN",
+  "lobby.sitDown": "入座",
+  "lobby.pendingPayout": "待兑现 {n}",
+  "lobby.pot": "底池",
+  "lobby.noHand": "无进行中对局",
+  "lobby.backToTableSeat": "回到牌桌 · 座 {n}",
+  "lobby.sit": "入座",
+  "lobby.watch": "观战",
+  "lobby.mixedNote": "混合桌：入座前需确认与 AI 同桌的规则（一真人 vs 一 agent，座位不固定）",
+  "lobby.mySeats": "我的牌局与 Agent",
+  "lobby.mySeatsBlurb": "连接钱包后，这里会显示你在各桌的座位、筹码，以及你注册的 AI agent。",
+  "lobby.noSeat": "你还没有入座。挑一张桌子点上「入座」，一笔签名即可开局。",
+  "lobby.humanSeat": "真人座位",
+  "lobby.seatedNow": "在座",
+  "lobby.tableSeat": "桌 #{table} · 座位 {seat}",
+  "lobby.backToTable": "回到牌桌",
+  "lobby.byoAgent": "接入你自己的 AI",
+  "lobby.trustTitle": "为什么可以信任这张桌子",
+  "lobby.trustMore": "完整信任模型 →",
+
+  "table.seat": "入座",
+  "table.cashOut": "兑现",
+  "table.standUp": "离座",
+  "table.fold": "弃牌",
+  "table.check": "过牌",
+  "table.call": "跟注",
+  "table.bet": "下注",
+  "table.raise": "加注",
+  "table.allIn": "全下",
+  "table.waitingTurn": "等待轮到你…",
+  "table.yourTurn": "轮到你行动",
+  "table.community": "公共牌",
+  "table.pot": "底池",
+  "table.stack": "筹码",
+  "table.blinds": "盲注",
+  "table.attestation": "TEE 证明",
+  "table.connectFirst": "先连接钱包",
+  "table.balance": "余额",
+  "table.buyInRange": "买入范围 {min}–{max}",
+  "table.lobby": "大厅",
+  "table.blindsInline": "盲注 {x}",
+  "table.buyInInline": "买入 {range}",
+  "table.handNo": "手 #{n}",
+  "table.teeOk": "TEE 已验证",
+  "table.teeChecking": "校验 TEE…",
+  "table.teeConnect": "连接 TEE",
+  "table.myStack": "我的筹码",
+  "table.potPot": "底池 POT",
+  "table.turnMine": "轮到我了 · 剩 {s}s",
+  "table.seatedCount": "{n} 人在座",
+  "table.vrfRevealed": "VRF 已揭示",
+  "table.vrf": "VRF {state}",
+  "table.vrfState.idle": "待命",
+  "table.vrfState.requested": "已请求",
+  "table.vrfState.pending": "等待中",
+  "table.vrfState.ready": "已就绪",
+  "table.callN": "跟注 {n}",
+  "table.raiseTo": "加注到",
+  "table.betTo": "下注",
+  "table.min": "最小",
+  "table.halfPot": "½ 底池",
+  "table.threeQuarterPot": "¾ 底池",
+  "table.potFraction": "底池",
+  "table.confirmN": "确认 {n}",
+  "table.confirm": "确认",
+  "table.notSeated": "你还没入座 —— 在右侧选择空座并入座",
+  "table.waitingSeat": "等待座位 {n} 行动…",
+  "table.handOver": "本手结束，等待 crank 开下一手…",
+  "table.phaseAdvancing": "阶段「{p}」推进中（crank 自动）…",
+  "table.needTee": "点右上「连接 TEE」后即可行动（读 ER 私有状态需要 TEE token）",
+  "table.connectToSit": "连接钱包后即可入座",
+  "table.teeFail": "TEE 连接失败：{e}",
+  "table.myHand": "我的手牌",
+  "table.localOnly": "仅本机可见",
+  "table.watchOnly": "仅本机解密",
+  "table.encrypted": "已解密",
+  "table.waitingDeal": "等发牌…",
+  "table.notSeatedShort": "未入座",
+  "table.emptySeat": "空座 {i}",
+  "table.me": "我",
+  "table.left": "已离座",
+  "table.pendingCashout": "待兑现",
+  "table.folded": "弃牌",
+  "table.leaveRequested": "待离座",
+  "table.section.hand": "本手信息",
+  "table.section.fair": "发牌证明",
+  "table.section.sit": "入座",
+  "table.section.feed": "行动记录",
+  "table.section.ledger": "我的账本",
+  "table.sitBtn": "入座 · 座 {n}",
+  "table.pickSeat": "先选一个座位",
+  "table.signing": "签名并发送…",
+  "table.noSeat": "没有空座",
+  "table.buyInLabel": "买入",
+  "table.mixedConfirm": "混合桌确认：本桌可能有 AI 对手；同一主人的 agent 不会与我同桌（§2.3），座位不固定。",
+  "table.leaveTitle": "确认离座？",
+  "table.leaveWarn": "手牌进行中离座将",
+  "table.leaveWarnBold": "立即弃牌",
+  "table.leaveWarnAfter": "。本手结束后，你的全部筹码将自动兑现到钱包（也可随时点「兑现」直接取回）。",
+  "table.leaveNow": "弃牌并离座",
+  "table.stay": "继续打",
+  "table.feed.handStart": "手牌 #{n} 开始",
+  "table.feed.streetRevealed": "{s} 已揭示（{n} 张）",
+  "table.feed.handEnd": "本手结束",
+  "table.feed.commit": "提交盐阶段",
+  "table.feed.reveal": "揭示盐阶段",
+  "table.feed.settling": "结算中",
+  "table.feed.pot": "底池 {n}",
+  "table.feed.toAct": "轮到座位 {n} 行动",
+  "table.feed.loaded": "牌桌已加载 · 手 #{n}",
+  "table.street.flop": "翻牌",
+  "table.street.turn": "转牌",
+  "table.street.river": "河牌",
+  "table.street.board": "公共牌",
+  "table.notice.sitSubmitted": "入座已提交：{sig}…（crank 正在计入筹码，几秒后出现在桌上）",
+  "table.notice.sitFailed": "入座失败：{e}",
+  "table.notice.cashoutDone": "兑现完成：{sig}…",
+  "table.notice.cashoutFailed": "兑现失败：{e}",
+  "table.noSeatFound": "没有找到你的座位",
+  "table.dataErAuth": "ER 实时（已授权）",
+  "table.dataErPublic": "ER 实时（公开）",
+  "table.dataL1": "L1 快照",
+  "table.loadingTable": "等待牌桌数据…",
+  "table.verifyLink": "在验证器中打开 →",
+  "table.trustLink": "信任与验证",
+  "table.verifierLink": "手牌验证器",
+  "table.kv.handNo": "手牌编号",
+  "table.kv.phase": "阶段",
+  "table.kv.blinds": "盲注 / 前注",
+  "table.kv.myCommit": "我的投入",
+  "table.kv.myPos": "我的位置",
+  "table.kv.timeLeft": "行动剩余",
+  "table.kv.eventChain": "事件链",
+  "table.kv.salt": "盐 提交 / 揭示",
+  "table.saltCommitted": "✓ 已提交",
+  "table.saltNotCommitted": "— 未提交",
+  "table.saltRevealed": "✓ 已揭示",
+  "table.saltNotRevealed": "— 未揭示",
+  "table.kv.deposited": "累计入座",
+  "table.kv.paid": "累计兑现",
+  "table.kv.payout": "收益地址",
+  "table.sitHint": "一笔签名完成：建 ATA（如需）+ 预充 session key + 买入。此后对局动作由 session key 自动签名，不再弹窗。",
+  "table.qr": "一真人 vs 一 agent",
+} as const;
+
+export type MsgKey = keyof typeof ZH;
+
+const EN: Record<MsgKey, string> = {
+  "nav.lobby": "Lobby",
+  "nav.agents": "My Agents",
+  "nav.history": "Hand history",
+  "nav.trust": "Trust",
+  "nav.connect": "Connect wallet",
+  "nav.logout": "Log out",
+  "nav.loading": "Loading…",
+  "nav.wallets": "WALLETS",
+  "nav.noWallet": "No Solana wallet detected — refresh or sign in again.",
+  "lang.toggle": "中",
+  "lang.toggleTitle": "切换到中文",
+
+  "lobby.tagline": "Private Texas Hold'em · verifiable on-chain",
+  "lobby.blurb":
+    "Hole cards are decrypted only inside the TEE; the deal is locked by VRF and both sides' salts, and every hand can be recomputed with the open-source verifier. Sit down and your chips are in escrow — cash out anytime.",
+  "lobby.badge.tee": "Hole cards TEE-encrypted",
+  "lobby.badge.ledger": "Live state · ledger on L1",
+  "lobby.badge.sse.live": "L1 push",
+  "lobby.badge.sse.connecting": "Connecting…",
+  "lobby.badge.sse.off": "Polling 8s",
+  "lobby.connectStart": "Connect wallet to start",
+  "lobby.stat.live": "RUNNING",
+  "lobby.stat.liveSub": "{n} tables",
+  "lobby.stat.seated": "SEATED",
+  "lobby.stat.seatedSub": "AI {ai}",
+  "lobby.stat.escrow": "IN-TABLE ESCROW",
+  "lobby.chooseTable": "Choose a table",
+  "lobby.filter.all": "All",
+  "lobby.filter.human": "Human",
+  "lobby.filter.mixed": "Mixed",
+  "lobby.filter.ai": "AI",
+  "lobby.scanning": "Scanning on-chain tables…",
+  "lobby.noTables": "No usable tables in the lobby whitelist (check NEXT_PUBLIC_TABLE_IDS, or whether the operator has created tables).",
+  "lobby.tableTitle": "Table #{id}",
+  "lobby.maintenance": "Maintenance",
+  "lobby.running": "Running · hand #{n}",
+  "lobby.status.waiting": "Waiting",
+  "lobby.sbBb": "Blinds SB/BB",
+  "lobby.ante": "Ante",
+  "lobby.buyIn": "Buy-in",
+  "lobby.sitDown": "Seats taken",
+  "lobby.pendingPayout": "Pending payout {n}",
+  "lobby.pot": "Pot",
+  "lobby.noHand": "No hand in progress",
+  "lobby.backToTableSeat": "Back to table · seat {n}",
+  "lobby.sit": "Sit down",
+  "lobby.watch": "Watch",
+  "lobby.mixedNote": "Mixed table: confirm the AI-table rules before sitting (one human vs one agent; seats are not fixed)",
+  "lobby.mySeats": "My seats & agents",
+  "lobby.mySeatsBlurb": "Connect a wallet to see your seats, stacks and registered AI agents here.",
+  "lobby.noSeat": "You have no seats yet. Pick a table and hit “Sit down” — a single signature starts the game.",
+  "lobby.humanSeat": "Human seat",
+  "lobby.seatedNow": "Seated",
+  "lobby.tableSeat": "Table #{table} · seat {seat}",
+  "lobby.backToTable": "Back to table",
+  "lobby.byoAgent": "Bring your own AI",
+  "lobby.trustTitle": "Why you can trust this table",
+  "lobby.trustMore": "Full trust model →",
+
+  "table.seat": "Sit down",
+  "table.cashOut": "Cash out",
+  "table.standUp": "Stand up",
+  "table.fold": "Fold",
+  "table.check": "Check",
+  "table.call": "Call",
+  "table.bet": "Bet",
+  "table.raise": "Raise",
+  "table.allIn": "All in",
+  "table.waitingTurn": "Waiting for your turn…",
+  "table.yourTurn": "Your turn",
+  "table.community": "Board",
+  "table.pot": "Pot",
+  "table.stack": "Stack",
+  "table.blinds": "Blinds",
+  "table.attestation": "TEE attestation",
+  "table.connectFirst": "Connect a wallet first",
+  "table.balance": "Balance",
+  "table.buyInRange": "Buy-in {min}–{max}",
+  "table.lobby": "Lobby",
+  "table.blindsInline": "Blinds {x}",
+  "table.buyInInline": "Buy-in {range}",
+  "table.handNo": "Hand #{n}",
+  "table.teeOk": "TEE verified",
+  "table.teeChecking": "Checking TEE…",
+  "table.teeConnect": "Connect TEE",
+  "table.myStack": "My stack",
+  "table.potPot": "POT",
+  "table.turnMine": "Your turn · {s}s left",
+  "table.seatedCount": "{n} seated",
+  "table.vrfRevealed": "VRF revealed",
+  "table.vrf": "VRF {state}",
+  "table.vrfState.idle": "idle",
+  "table.vrfState.requested": "requested",
+  "table.vrfState.pending": "pending",
+  "table.vrfState.ready": "ready",
+  "table.callN": "Call {n}",
+  "table.raiseTo": "Raise to",
+  "table.betTo": "Bet",
+  "table.min": "Min",
+  "table.halfPot": "½ pot",
+  "table.threeQuarterPot": "¾ pot",
+  "table.potFraction": "Pot",
+  "table.confirmN": "Confirm {n}",
+  "table.confirm": "Confirm",
+  "table.notSeated": "You are not seated — pick an empty seat on the right and sit down",
+  "table.waitingSeat": "Waiting for seat {n} to act…",
+  "table.handOver": "Hand over — waiting for the crank to start the next one…",
+  "table.phaseAdvancing": "Phase “{p}” advancing (crank)…",
+  "table.needTee": "Click “Connect TEE” (top right) to act — reading ER private state needs a TEE token",
+  "table.connectToSit": "Connect a wallet to sit down",
+  "table.teeFail": "TEE connection failed: {e}",
+  "table.myHand": "My hand",
+  "table.localOnly": "Visible on this device only",
+  "table.watchOnly": "Decrypted locally",
+  "table.encrypted": "Decrypted",
+  "table.waitingDeal": "Waiting for cards…",
+  "table.notSeatedShort": "Not seated",
+  "table.emptySeat": "Seat {i}",
+  "table.me": "Me",
+  "table.left": "Left",
+  "table.pendingCashout": "Pending payout",
+  "table.folded": "Folded",
+  "table.leaveRequested": "Leaving",
+  "table.section.hand": "Hand info",
+  "table.section.fair": "Provably fair",
+  "table.section.sit": "Take a seat",
+  "table.section.feed": "Action feed",
+  "table.section.ledger": "My ledger",
+  "table.sitBtn": "Sit down · seat {n}",
+  "table.pickSeat": "Pick a seat first",
+  "table.signing": "Signing…",
+  "table.noSeat": "No empty seat",
+  "table.buyInLabel": "Buy-in",
+  "table.mixedConfirm": "Mixed table: AI opponents may be present; agents of the same owner never share my table (§2.3), seats are not fixed.",
+  "table.leaveTitle": "Leave the table?",
+  "table.leaveWarn": "Leaving mid-hand will",
+  "table.leaveWarnBold": "fold immediately",
+  "table.leaveWarnAfter": ". When the hand ends, your full stack is cashed out to your wallet automatically (or hit “Cash out” anytime).",
+  "table.leaveNow": "Fold & leave",
+  "table.stay": "Keep playing",
+  "table.feed.handStart": "Hand #{n} started",
+  "table.feed.streetRevealed": "{s} revealed ({n} cards)",
+  "table.feed.handEnd": "Hand over",
+  "table.feed.commit": "Salt commit phase",
+  "table.feed.reveal": "Salt reveal phase",
+  "table.feed.settling": "Settling",
+  "table.feed.pot": "Pot {n}",
+  "table.feed.toAct": "Seat {n} to act",
+  "table.feed.loaded": "Table loaded · hand #{n}",
+  "table.street.flop": "Flop",
+  "table.street.turn": "Turn",
+  "table.street.river": "River",
+  "table.street.board": "Board",
+  "table.notice.sitSubmitted": "Sit-down submitted: {sig}… (the crank is crediting chips; you'll appear at the table in a few seconds)",
+  "table.notice.sitFailed": "Sit-down failed: {e}",
+  "table.notice.cashoutDone": "Cashed out: {sig}…",
+  "table.notice.cashoutFailed": "Cash-out failed: {e}",
+  "table.noSeatFound": "Could not find your seat",
+  "table.dataErAuth": "ER live (authorized)",
+  "table.dataErPublic": "ER live (public)",
+  "table.dataL1": "L1 snapshot",
+  "table.loadingTable": "Loading table data…",
+  "table.verifyLink": "Open in verifier →",
+  "table.trustLink": "Trust & verification",
+  "table.verifierLink": "Hand verifier",
+  "table.kv.handNo": "Hand #",
+  "table.kv.phase": "Phase",
+  "table.kv.blinds": "Blinds / ante",
+  "table.kv.myCommit": "My commitment",
+  "table.kv.myPos": "My position",
+  "table.kv.timeLeft": "Time left",
+  "table.kv.eventChain": "Event chain",
+  "table.kv.salt": "Salt commit / reveal",
+  "table.saltCommitted": "✓ committed",
+  "table.saltNotCommitted": "— not committed",
+  "table.saltRevealed": "✓ revealed",
+  "table.saltNotRevealed": "— not revealed",
+  "table.kv.deposited": "Total deposited",
+  "table.kv.paid": "Total cashed out",
+  "table.kv.payout": "Payout address",
+  "table.sitHint": "One signature: create ATA (if needed) + fund the session key + buy in. After that your in-game actions are signed by the session key — no more popups.",
+  "table.qr": "one human vs one agent",
+};
+
+const DICT: Record<Lang, Record<MsgKey, string>> = { zh: ZH, en: EN };
+
+function detectLang(): Lang {
+  if (typeof navigator !== "undefined" && !navigator.language.toLowerCase().startsWith("zh")) return "en";
+  return "zh";
+}
+
+interface I18nCtx {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  t: (key: MsgKey, vars?: Record<string, string | number>) => string;
+}
+
+const Ctx = createContext<I18nCtx | null>(null);
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>("zh");
+
+  // hydration 之后再切到实际语言（SSR 首帧恒为 zh，避免 mismatch）
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const next = stored === "zh" || stored === "en" ? (stored as Lang) : detectLang();
+    setLangState(next);
+  }, []);
+  useEffect(() => {
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  }, [lang]);
+
+  const setLang = useCallback((l: Lang) => {
+    setLangState(l);
+    try {
+      localStorage.setItem(STORAGE_KEY, l);
+    } catch {
+      /* 隐私模式下写不了 —— 本次会话内仍然生效 */
+    }
+  }, []);
+
+  const t = useCallback(
+    (key: MsgKey, vars?: Record<string, string | number>) => {
+      const table = DICT[lang] as Record<string, string>;
+      let s = table[key];
+      if (s === undefined) {
+        console.warn(`[i18n] 缺键 ${lang}.${key}`);
+        s = (ZH as Record<string, string>)[key] ?? key;
+      }
+      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v));
+      return s;
+    },
+    [lang]
+  );
+
+  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useI18n(): I18nCtx {
+  const v = useContext(Ctx);
+  if (!v) throw new Error("useI18n 必须在 <I18nProvider> 内使用");
+  return v;
+}
