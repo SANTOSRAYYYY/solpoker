@@ -52,6 +52,23 @@
 
 ### 遗留问题
 
+- **（2026-10-08）实时推送：L1 事件 → SSE 中继 → 大厅即时刷新（无中继时自动回落轮询）**。
+  中继 `scripts/helius-webhook.mjs`（零依赖 `node:http`，127.0.0.1:8787）：
+  `POST /` 吃 Helius webhook（enhanced 或原始 payload 统一摘要成
+  `{signature, description, slot, accounts[]}`）、`GET /events` 是 SSE 流
+  （CORS `*`、keep-alive、`hello` 握手事件）、`GET /health` 报客户端与计数、
+  `POST /simulate` 走同一 handler 本地造事件。前端 `web/lib/live-updates.ts`
+  的 `useLiveUpdates()`：设了 `NEXT_PUBLIC_SSE_URL` 就订阅（四态
+  `off/connecting/live/error`），没设保持现状轮询；大厅轮询 effect 依赖
+  `live.tick` → 每条 L1 事件立即重拉，英雄区徽章如实显示
+  「L1 事件推送 / 连接推送… / 轮询 8s」。**实测**：页面订阅后中继日志
+  `[sse] 客户端接入（当前 1）`，`POST /simulate` →
+  `[in] simulate → 1 笔 (TESTSIG1) → 广播给 1 个客户端`，页面徽章切到
+  「L1 事件推送」并即时刷新（徽章由 SSE 连接状态驱动，不会假装）。
+  **架构边界**：Helius 只看得到 L1——ER 交易对它不可见（实测 helius∩er=0/40
+  签名），所以推送覆盖 L1 侧活动（入座/兑现/commit_game/委托/注册），牌桌上的
+  行动实时性仍靠 ER 轮询。接真实 webhook：`ngrok http 8787` 后在 Helius 控制台
+  把 Webhook URL 指向隧道地址（API key 只存 gitignored 的 `web/.env.local`）。
 - **（2026-10-08）行动序列可验证：能验证的边界推到"每一手都与链上承诺一致"**。
   方案 A 落地（详见 `docs/design/hand-replay-design.md` §7）。**实链证据**：
   - v2 街锚点在真手上确认（桌 #14 手 #2）：`layout=v2`、`streets=0b1111`、

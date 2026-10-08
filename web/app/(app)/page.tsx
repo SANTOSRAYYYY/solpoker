@@ -19,6 +19,7 @@ import {
   type TableLive,
 } from "@/lib/chain-read";
 import { fmtUsdc } from "@/lib/game-state";
+import { useLiveUpdates } from "@/lib/live-updates";
 
 type Filter = "all" | 0 | 1 | 2;
 
@@ -201,7 +202,8 @@ export default function LobbyPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [loading, setLoading] = useState(true);
 
-  // 桌子：Game 走 ER 实时（公开账户，无需 token），账本走 L1；8s 轮询
+  // 桌子：Game 走 ER 实时（公开账户，无需 token），账本走 L1；8s 轮询 + SSE 事件立即刷新
+  const live = useLiveUpdates();
   useEffect(() => {
     let stop = false;
     (async () => {
@@ -219,7 +221,8 @@ export default function LobbyPage() {
     return () => {
       stop = true;
     };
-  }, [er, ctx.l1]);
+    // live.tick：收到 L1 活动（入座/兑现/commit/委托）时立即重拉一次
+  }, [er, ctx.l1, live.tick]);
 
   // 我的座位 / 我的 Agent（登录后）
   useEffect(() => {
@@ -292,6 +295,10 @@ export default function LobbyPage() {
                   <Dot kind="live" /> 底牌 TEE 加密
                 </Badge>
                 <Badge tone="plain">状态实时 · 账本 L1</Badge>
+                <Badge tone={live.state === "live" ? "mint" : "plain"}>
+                  <Dot kind={live.state === "live" ? "live" : "idle"} />
+                  {live.state === "live" ? "L1 事件推送" : live.state === "connecting" ? "连接推送…" : "轮询 8s"}
+                </Badge>
               </div>
               <h1 className="title-cn text-[24px] leading-snug text-white drop-shadow-[0_2px_6px_rgba(0,0,0,.6)] sm:text-[30px]">
                 私密德州扑克 · 链上可验证
