@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 追加：sweep 预筛 —— 每桌 pass 的固定 L1 读从 9 降到 0（2026-10-09）
+
+`sweep` 此前每一轮都无条件并行读 9 个座位账本（L1 读），是每桌 pass 的最大固定开销，
+也是 L1 出口抖动时整桌 pass **在第一步就中断**的首因（当晚 Helius 直连事故即被它放大：
+空闲桌全部空转、日志刷屏）。现在先按 **Game 侧 status==Left(2)** 预筛，只为这些座位
+读账本 —— 绝大多数轮次（没有离座待兑现的座位）**0 个 L1 读**。语义不变：只有 Left
+状态可被 sweep（新 sit_down 在 take_seat 前显示 Empty，sweep 它会误伤刚付款的玩家）。
+
+**验证（t33 实测）**：carol 入座 → 离座（Left + owed 100）→ crank 按预筛找到该座位 →
+快照陈旧先 `commit_game` → `sweep cash_out[0]` 成功（付款到入座钉死的 payout 后释放
+座位，账本 occupant 清空）。22 号桌正常对局不受影响。
+
+
 ## 提速：揭示提前到 Commit + crank 原地等 VRF 直达发牌（2026-10-09，devnet-tee）
 
 **动机**：发牌要等 crank 下一轮轮询才发生（每街 ~2.5–4s）。评估确认：把「请求 VRF 后

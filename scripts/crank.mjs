@@ -205,23 +205,30 @@ async function main() {
     // credited/owed 全部结清）。快照陈旧时座位会卡住（死态：账本还有 occupant，
     // sit_down 报 6008）。所以发现僵尸候选而快照又陈旧时，先催一次 commit_game
     // （就在手与手之间做，正好符合 §10 的时机要求），下一轮再清。
-    // 座位账本一次并行读完（9 个串行 RPC 是每轮延迟的主要来源）
-    const sweepAccs = await Promise.all(
-      Array.from({ length: 9 }, (_, i) => l1.getAccountInfo(seatPda(table, i)))
-    );
+    //
+    // 2026-10-09 提速：先按 Game 侧 status==Left(2) 预筛，只为这些座位读 L1
+    // 账本 —— 此前每轮无条件 9 个 L1 读，是每桌 pass 的最大固定开销，也是 L1
+    // 出口抖动时整桌 pass 在第一步就中断的首因（见 CHANGELOG「fetch failed」
+    // 修正条）。没有 Left 座位（绝大多数轮次）→ 0 个 L1 读。
+    // 语义不变：只有 Left(2) 状态可被 sweep（新 sit_down 在 take_seat 前显示
+    // Empty(0)，sweep 它会误伤刚付款的玩家）。
+    const sweepCandidates = [];
     for (let i = 0; i < 9; i++) {
-      const ledAcc = sweepAccs[i];
-      if (!ledAcc) continue;
-      const occ = ledAcc.data.subarray(41, 73);
-      if (occ.every((b) => b === 0)) continue; // empty seat
-      const seatStatus = g[152 + i * 152 + 145];
-      // ONLY the Left(2) state is sweepable: a fresh sit_down still shows 0
-      // (Empty) until take_seat flips it to 1, and sweeping that would evict a
-      // player who just paid in.
-      if (seatStatus !== 2) continue;
-      // 而且必须是**同一任占用者**：账本的 occupancy_id == Game 座位的 occupancy_id。
-      // 否则就是"新人刚坐下、Game 座位还停在上一任的 Left"——那不是僵尸，不能动。
-      const gameOcc = g.readBigUInt64LE(152 + i * 152 + 96);
+      if (g[152 + i * 152 + 145] === 2) sweepCandidates.push(i);
+    }
+    if (sweepCandidates.length > 0) {
+      const sweepAccs = await Promise.all(
+        sweepCandidates.map((i) => l1.getAccountInfo(seatPda(table, i)))
+      );
+      for (let k = 0; k < sweepCandidates.length; k++) {
+        const i = sweepCandidates[k];
+        const ledAcc = sweepAccs[k];
+        if (!ledAcc) continue;
+        const occ = ledAcc.data.subarray(41, 73);
+        if (occ.every((b) => b === 0)) continue; // empty seat
+        // 而且必须是**同一任占用者**：账本的 occupancy_id == Game 座位的 occupancy_id。
+        // 否则就是"新人刚坐下、Game 座位还停在上一任的 Left"——那不是僵尸，不能动。
+        const gameOcc = g.readBigUInt64LE(152 + i * 152 + 96);
       const ledOcc = ledAcc.data.readBigUInt64LE(73);
       if (gameOcc !== ledOcc) continue;
       const deposited = ledAcc.data.readBigUInt64LE(186);
@@ -279,8 +286,9 @@ async function main() {
         sweepTried.add(sweepKey);
         zombieTables.add(tableId);
         console.log(`[t${tableId}] sweep skip[${i}]: ${String(e.message ?? e).slice(0, 90)}`);
+        }
+        return; // one action per pass
       }
-      return; // one action per pass
     }
     // 1) take_seat：比较每个座位 L1 账本与 game 里的 occupancy_id
     // 座位账本一次并行读完（9 个串行 RPC 是每轮延迟的主要来源）
