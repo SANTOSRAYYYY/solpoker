@@ -307,8 +307,26 @@ sequenceDiagram
 链上复核：`occupant = 付款人`、`payout = 付款人`、`deposited_total = 10 000 000`、
 `paid_total = 0`、`session_key` 未设；重复提交同一签名 → 409（不可重复入账）。
 
-**仍延后**：`refund_x402_deposit`（座位被占时退款）留待有真实 x402 客户端时实现——
-原子模式（§4.1）仍是首选主路径，标准模式只是兼容路径。
+**退款（2026-10-08 同日落地）**：`refund_x402_deposit(amount, sig_lo, sig_hi)` ——
+同样 `config.gateway` 门禁，把「付了款但未入账」的钱从 TableVault 退回
+`ATA(payer, mint)`（收款方由地址约束钉死，运营方转不给别人）。**只能动盈余**：
+退款后余额仍须 ≥ I-X 要求（与 `audit_table` 同一套 `required_vault_backing*`，
+校验失败返回 Conservation）；`RefundRecord`（PDA `["x402refund", sig_lo, sig_hi]`，
+`init` 语义）防重复退款并记录付款人/金额/签名。9 个座位账本走 `remaining_accounts`。
+网关新增 `POST /v1/tables/:id/refunds?payer=&amount=` + `X-PAYMENT: <付款签名>`
+（复用同一套付款校验，反向调用）。
+**实测**：桌 20 那笔因 `SameOwner` 未入账的 10 tUSDC 经 `scripts/x402-refund.mjs`
+退回原付款人（vault 20 → 10、付款人 +10、`RefundRecord` 落链）；随后 5 次退款
+（桌 24–28，含经网关接口的一次）全部 `记录签名回编 == 付款签名 ✓`。
+
+**栈纪律（血泪）**：refund 最初把 9 份 `SeatLedger` 当局部变量、签名拷贝放在
+指令尾部，结果 **`RefundRecord.sig` 的后 24 字节被冲成别处数据**——而 PDA 种子
+只用前 32+32 字节，所以链上校验照样通过，非常隐蔽。修法：账本逐座借字节
+（`fund::read_seat_counters` + `required_vault_backing_iter`）、重活拆
+`#[inline(never)]` 函数、**签名写入放到 handler 最前面**。同型指令
+（`credit_x402_deposit`）因为账本读取本来就在循环里而没有踩到。
+
+**仍延后**：无（标准模式两件套已齐）；原子模式（§4.1）仍是首选主路径。
 
 ### 4.4 facilitator 的校验清单
 

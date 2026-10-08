@@ -73,6 +73,8 @@ function tableView(tableId, seatIdx) {
     vaultAuth,
     vault: getAssociatedTokenAddressSync(TUSDC_MINT, vaultAuth, true),
     otherPdas: others.map(seat),
+    seatPdas: Array.from({ length: 9 }, (_, i) => seat(i)),
+    game: pda([Buffer.from("game"), table.toBuffer()]),
   };
 }
 
@@ -155,6 +157,40 @@ async function verifyPayment(sig, payer, vault, vaultAuth, amount) {
     return { ok: false, detail: "付款人不是该交易的签名者" };
   }
   return { ok: true, detail: { delta: delta.toString() } };
+}
+
+/** 退款：调 refund_x402_deposit（网关签名）。程序只允许动盈余（退款后余额仍须
+ *  ≥ I-X 要求），且收款 ATA 由地址约束钉死为 ATA(payer, mint)。 */
+async function refund({ tableId, tv, payer, amount, sig }) {
+  const sigBytes = Buffer.from(bs58Decode(sig));
+  const sigLo = Array.from(sigBytes.slice(0, 32));
+  const sigHi = Array.from(sigBytes.slice(32, 64));
+  const [refundRecord] = PublicKey.findProgramAddressSync(
+    [Buffer.from("x402refund"), Buffer.from(sigLo), Buffer.from(sigHi)],
+    programId
+  );
+  const [config] = PublicKey.findProgramAddressSync([Buffer.from("config")], programId);
+  const payerKey = new PublicKey(payer);
+  const payerAta = getAssociatedTokenAddressSync(TUSDC_MINT, payerKey, true);
+  const ix = await program.methods
+    .refundX402Deposit(new BN(amount), sigLo, sigHi)
+    .accounts({
+      config, table: tv.table, game: tv.game, vaultAuth: tv.vaultAuth, vault: tv.vault,
+      mint: TUSDC_MINT, payer: payerKey, payerAta, refundRecord, gateway: gateway.publicKey,
+    })
+    .remainingAccounts(
+      Array.from({ length: 9 }, (_, i) => ({ pubkey: tv.seatPdas[i], isWritable: false, isSigner: false }))
+    )
+    .instruction();
+  const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), ix);
+  tx.feePayer = gateway.publicKey;
+  tx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
+  tx.sign(gateway);
+  const txSig = await l1.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+  await l1.confirmTransaction(txSig, "confirmed");
+  const status = (await l1.getSignatureStatuses([txSig])).value[0];
+  if (status?.err) throw new Error(`refund failed on-chain: ${JSON.stringify(status.err)}`);
+  return { refundSig: txSig, refundRecord: refundRecord.toBase58() };
 }
 
 /** 入账：调 credit_x402_deposit（网关签名）。 */
@@ -303,6 +339,23 @@ const server = http.createServer(async (req, res) => {
       console.log(`[402] 校验失败：${JSON.stringify(v.detail).slice(0, 120)}`);
       return;
     }
+    // 退款分支：?refund=1（同一套付款校验，反向退款）
+    if (url.searchParams.get("refund") === "1") {
+      try {
+        const r = await refund({ tableId, tv, payer, amount, sig: String(paymentSig) });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, refunded: amount, seat: tv.seatIdx, ...r }, null, 1));
+        console.log(`[退款] 桌 #${tableId} → ${payer.slice(0, 8)}… ${amount} 单位  refund_tx=${r.refundSig.slice(0, 12)}…`);
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        const replay = /already in use|AccountAlreadyInUse|0x0/i.test(msg);
+        res.writeHead(replay ? 409 : 400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: replay ? "refund already exists（同一笔付款不可重复退款）" : "refund failed", detail: msg.slice(0, 400) }, null, 1));
+        console.log(`[err] 退款失败：${msg.slice(0, 120)}`);
+      }
+      return;
+    }
+
     let c;
     try {
       c = await credit({ tableId, tv, payer, amount, sig: String(paymentSig) });

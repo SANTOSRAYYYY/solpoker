@@ -39,7 +39,7 @@ const LABEL: Record<string, string> = {
   advance: "推进阶段", act: "玩家行动", claim_timeout: "超时裁决",
   apply_deposits: "入账", sweep_rake: "抽水", audit_table: "审计",
   admin_force_stand_up: "管理强离", admin_set_members: "管理成员",
-  set_session: "会话授权", revoke_session: "会话吊销", credit_x402_deposit: "x402 入账",
+  set_session: "会话授权", revoke_session: "会话吊销", credit_x402_deposit: "x402 入账", refund_x402_deposit: "x402 退款",
 };
 
 const pascalToSnake = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();

@@ -52,6 +52,37 @@
 
 ### 遗留问题
 
+- **（2026-10-08）`refund_x402_deposit` 落地 + 一个 SBF 栈破坏 bug 的完整排查（x402 标准模式两件套齐了）**。
+  **程序**：新指令 `refund_x402_deposit(amount, sig_lo, sig_hi)` —— `config.gateway` 门禁；
+  把「付了款但未入账」的钱从 TableVault 退回 `ATA(payer, mint)`（地址约束钉死收款方）；
+  **只允许动盈余**（退款后余额仍须 ≥ I-X 要求，复用 `required_vault_backing`）；
+  `RefundRecord`（PDA `["x402refund", sig_lo, sig_hi]`）防重复退款 + 记录签名供审计；
+  9 个座位账本走 `remaining_accounts`。
+  **网关/CLI**：`POST /v1/tables/:id/refunds?payer=&amount=` + `X-PAYMENT`（复用同一套
+  付款校验，反向退款）、`scripts/x402-refund.mjs`（含记录签名回编自检）。
+  **实测**：桌 20 那笔因 `SameOwner` 卡住的 10 tUSDC 已退回原付款人（vault 20→10、
+  付款人 +10、`RefundRecord` 落链）；随后桌 24–28 共 5 次退款（含经网关接口的一次）
+  全部 **记录签名回编 == 付款签名 ✓**；`program-smoke` 4/4（新增退款探针：金额超盈余
+  → 6021 Conservation，不动钱）；`audit_table` 在 credit/top-up/退款后都通过（I-X 守恒 ✓）。
+  **中间抓到一个非常隐蔽的 bug，值得记档**：退款记录里 `sig` 的**后 24 字节稳定地被
+  冲成别处数据**（前 40 字节正确），而 PDA 种子只用前 32+32 字节 → 链上校验照过、
+  引用付款签名却查不到那笔交易 —— 靠 ① 的审计闭环（回编比对）才暴露。排查路径：
+  ① 交易数据逐字节核对（客户端序列化正确）→ ② 两独立 RPC 读账户一致（不是缓存）→
+  ③ Anchor 按 IDL 反序列化确认字段布局无误 → ④ 临时 `msg!` 打印 handler 收到的分片，
+  发现 **入参在入口正确（种子校验通过）但在 handler 里被覆盖** → ⑤ 对照实验：
+  同一构建下 `credit_x402_deposit` 存 64 字节**完全正确**，`refund` 坏 → 定位到
+  refund 的栈占用（9 份 `SeatLedger` 局部变量 + 重活 + 尾巴上才写签名）。
+  **修法**：`fund::read_seat_counters`（零拷贝逐座读计数器）+
+  `required_vault_backing_iter`（同一公式、迭代版，附与切片版等价的单测）+
+  I-X/转账拆成 `#[inline(never)]` 独立函数 + **签名写入移到 handler 最前面**；
+  另加 `seat_ledger_counter_offsets_match_borsh` 单测把硬编码字段偏移钉死。
+  修后 5/5 退款签名正确；gPA 枚举全部记录：**8 条 RefundRecord 中 4 条（修复前创建，
+  桌 20/21/22/23）尾部损坏、4 条（修复后）正确；DepositRecord 3/3 全对** ——
+  那 4 条历史记录的 sig 字段是错的（钱都对），审计时请以
+  `/history` 的 L1 审计视图 + vault 流水为准。
+  排查途中还顺手修掉两个测试基础设施问题：临时调试脚本曾按「已删除的命名账户」发座位
+  （交易其实是 6010 失败，而 `confirmTransaction` 没抛错）→ 现在所有脚本都会显式检查
+  `getSignatureStatuses().err`。
 - **（2026-10-08）全面测试 + 优化：clippy 清零、加载并发化（大厅冷加载 15s→2s）、x402 网关加固、派发烟测常驻化**。
   **测什么**：`cargo test --workspace`（32+90+7+1+1+1 全绿）、`cargo clippy --workspace --all-targets`
   （我们三个 crate 的警告 **27 → 0**）、`npx tsc --noEmit`（web 全量类型检查）、脚本自检

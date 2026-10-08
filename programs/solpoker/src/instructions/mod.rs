@@ -20,6 +20,7 @@ pub mod delegate_table;
 pub mod init_config;
 pub mod init_replay;
 pub mod init_permissions;
+pub mod refund_x402_deposit;
 pub mod request_vrf;
 pub mod retry_vrf;
 pub mod reveal_salt;

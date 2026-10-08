@@ -332,17 +332,71 @@ pub fn required_vault_backing(
     rake_swept: u64,
 ) -> Result<u128> {
     require!(ledgers.len() == MAX_SEATS, SolpokerError::SeatMismatch);
+    required_vault_backing_iter(
+        ledgers.iter().map(|l| (l.deposited_total, l.paid_total)),
+        snap,
+        rake_swept,
+    )
+}
+
+/// 与 [`required_vault_backing`] 同一个公式，但计数器由调用方逐座提供
+/// （顺序 = 座位 0..8）。存在的理由：把 9 份 `SeatLedger`（203B each）作为
+/// 局部变量声明会顶穿 SBF 的 4096 字节栈上限，**把栈上的指令入参尾部冲掉**
+/// ——2026-10-08 `refund_x402_deposit` 实测：RefundRecord.sig 的后 24 字节
+/// 变成别处数据（PDA 推导只用前 32+32 字节，所以仍然通过校验，极隐蔽）。
+/// 审计/退款路径务必用本函数 + [`read_seat_counters`]。
+pub fn required_vault_backing_iter<I>(
+    counters: I,
+    snap: &Game,
+    rake_swept: u64,
+) -> Result<u128>
+where
+    I: IntoIterator<Item = (u64, u64)>,
+{
     require!(snap.rake_total >= rake_swept, SolpokerError::Conservation);
     let mut req: u128 = (snap.rake_total - rake_swept) as u128;
-    for (l, s) in ledgers.iter().zip(snap.seats.iter()) {
-        require!(l.deposited_total >= s.credited_total, SolpokerError::Conservation);
-        require!(s.owed_total >= l.paid_total, SolpokerError::Conservation);
-        req += (l.deposited_total - s.credited_total) as u128;
+    let mut n = 0usize;
+    for (deposited, paid) in counters {
+        require!(n < MAX_SEATS, SolpokerError::SeatMismatch);
+        let s = &snap.seats[n];
+        require!(deposited >= s.credited_total, SolpokerError::Conservation);
+        require!(s.owed_total >= paid, SolpokerError::Conservation);
+        req += (deposited - s.credited_total) as u128;
         req += s.stack as u128;
-        req += (s.owed_total - l.paid_total) as u128;
+        req += (s.owed_total - paid) as u128;
+        n += 1;
     }
+    require!(n == MAX_SEATS, SolpokerError::SeatMismatch);
     Ok(req)
 }
+
+/// 零拷贝读取 L1 SeatLedger 的 (deposited_total, paid_total)（只借字节，不把
+/// 203B 的结构体搬上栈 —— 见 [`required_vault_backing_iter`] 的理由）。
+/// 字段偏移由 `seat_ledger_counter_offsets_match_borsh` 单测钉死。
+#[inline(never)]
+pub fn read_seat_counters(ai: &AccountInfo) -> Result<(u64, u64)> {
+    require!(ai.owner == &crate::ID, SolpokerError::BadSnapshot);
+    let data = ai.try_borrow_data()?;
+    require!(
+        data.len() >= 8 + SeatLedger::INIT_SPACE,
+        SolpokerError::BadSnapshot
+    );
+    require!(&data[..8] == SeatLedger::DISCRIMINATOR, SolpokerError::BadSnapshot);
+    let mut dep = [0u8; 8];
+    dep.copy_from_slice(&data[SEAT_DEPOSITED_OFF..SEAT_DEPOSITED_OFF + 8]);
+    let mut paid = [0u8; 8];
+    paid.copy_from_slice(&data[SEAT_PAID_OFF..SEAT_PAID_OFF + 8]);
+    Ok((u64::from_le_bytes(dep), u64::from_le_bytes(paid)))
+}
+
+/// SeatLedger 在**账户数据**里的字段偏移（含 8 字节 discriminator）。
+/// 由单测与 borsh 序列化结果比对钉死（改结构体会立刻测挂）。
+pub const SEAT_DEPOSITED_OFF: usize = 186;
+pub const SEAT_PAID_OFF: usize = 194;
+/// ER 克隆读取用的占用者偏移（同样由单测钉死）。
+pub const SEAT_OCCUPANT_OFF: usize = 41;
+/// occupancy_id 偏移。
+pub const SEAT_OCCUPANCY_ID_OFF: usize = 73;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -730,5 +784,76 @@ mod tests {
         // rake_swept ahead of the snapshot is also a violation
         let snap2 = sample_game();
         assert!(required_vault_backing(&ledgers, &snap2, 1).is_err());
+    }
+
+    /// 硬编码的账户字段偏移必须与 borsh 布局一致：
+    /// read_seat_counters / ER 克隆读取都靠这些常量（栈溢出修复引入），
+    /// 改动 SeatLedger 字段顺序必须让本测试失败。
+    #[test]
+    fn seat_ledger_counter_offsets_match_borsh() {
+        let mut l = sample_ledger(0);
+        l.deposited_total = 0x1122_3344_5566_7788;
+        l.paid_total = 0x99AA_BBCC_DDEE_FF00;
+        let mut buf = Vec::new();
+        l.serialize(&mut buf).unwrap();
+        // Anchor 账户 = discriminator(8) + borsh
+        let mut acct = Vec::new();
+        acct.extend_from_slice(SeatLedger::DISCRIMINATOR);
+        acct.extend_from_slice(&buf);
+        assert_eq!(acct.len(), 8 + SeatLedger::INIT_SPACE);
+        let read_u64 = |off: usize| {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&acct[off..off + 8]);
+            u64::from_le_bytes(b)
+        };
+        assert_eq!(read_u64(SEAT_DEPOSITED_OFF), l.deposited_total);
+        assert_eq!(read_u64(SEAT_PAID_OFF), l.paid_total);
+        assert_eq!(&acct[SEAT_OCCUPANT_OFF..SEAT_OCCUPANT_OFF + 32], l.occupant.as_ref());
+        assert_eq!(read_u64(SEAT_OCCUPANCY_ID_OFF), l.occupancy_id);
+        // read_seat_counters 与切片版一致（同一公式、同一偏移）
+        assert_eq!(read_seat_counters_from_data(&acct).unwrap(), (l.deposited_total, l.paid_total));
+    }
+
+    /// 迭代版与切片版必须给出完全相同的要求（单一公式的保障）。
+    #[test]
+    fn required_backing_iter_equals_slice_version() {
+        let mut ledgers = Vec::new();
+        for i in 0..MAX_SEATS as u8 {
+            let mut l = sample_ledger(i);
+            l.deposited_total = 1_000_000 + i as u64 * 1_111;
+            l.paid_total = i as u64 * 101;
+            ledgers.push(l);
+        }
+        let refs: Vec<&SeatLedger> = ledgers.iter().collect();
+        let mut snap = sample_game();
+        for (i, s) in snap.seats.iter_mut().enumerate() {
+            s.credited_total = (i as u64) * 500;
+            // owed 必须 ≥ paid（I-X 的前提），所以 owed 取 paid 的两倍量级
+            s.owed_total = (i as u64) * 200 + 10;
+            s.stack = 1_000 + i as u64 * 7;
+        }
+        snap.rake_total = 5_000;
+        let a = required_vault_backing(&refs, &snap, 1_000).unwrap();
+        let b = required_vault_backing_iter(
+            ledgers.iter().map(|l| (l.deposited_total, l.paid_total)),
+            &snap,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    /// 与 [`read_seat_counters`] 相同的解析逻辑，作用于内存字节（单元测试用）。
+    fn read_seat_counters_from_data(data: &[u8]) -> Result<(u64, u64)> {
+        require!(
+            data.len() >= 8 + SeatLedger::INIT_SPACE,
+            SolpokerError::BadSnapshot
+        );
+        require!(&data[..8] == SeatLedger::DISCRIMINATOR, SolpokerError::BadSnapshot);
+        let mut dep = [0u8; 8];
+        dep.copy_from_slice(&data[SEAT_DEPOSITED_OFF..SEAT_DEPOSITED_OFF + 8]);
+        let mut paid = [0u8; 8];
+        paid.copy_from_slice(&data[SEAT_PAID_OFF..SEAT_PAID_OFF + 8]);
+        Ok((u64::from_le_bytes(dep), u64::from_le_bytes(paid)))
     }
 }

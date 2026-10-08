@@ -150,6 +150,20 @@ pub struct DepositRecord {
     pub bump: u8,
 }
 
+/// x402 标准模式的退款凭据（2026-10-08）。PDA ["x402refund", sig_lo, sig_hi]
+/// （付款签名的两半）——`init` 语义保证同一笔付款不会重复退款。记录
+/// 付款人/桌/金额/时间/完整签名，供任何人事后到 L1 核对那笔付款交易。
+#[account]
+#[derive(InitSpace)]
+pub struct RefundRecord {
+    pub payer: Pubkey,
+    pub table: Pubkey,
+    pub amount: u64,
+    pub refunded_at: i64,
+    pub sig: [u8; 64],
+    pub bump: u8,
+}
+
 // ---------------------------------------------------------------------------
 // ER accounts (delegated to TEE_VALIDATOR)
 // ---------------------------------------------------------------------------

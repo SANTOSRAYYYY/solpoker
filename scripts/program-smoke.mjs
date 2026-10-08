@@ -89,6 +89,30 @@ await probe(
     .instruction()
 );
 
+// 2b) 退款指令（x402 标准模式）：金额超出盈余 → 预期 Conservation(6021)，证明派发且不动钱
+const refundSig = Buffer.alloc(64, 8);
+const [refundRecord] = PublicKey.findProgramAddressSync(
+  [Buffer.from("x402refund"), refundSig.slice(0, 32), refundSig.slice(32, 64)],
+  programId
+);
+const payerKey = deployer.publicKey; // 任意付款人（探针不会真的退款：金额超盈余）
+const payerAta = getAssociatedTokenAddressSync(TUSDC, payerKey, true);
+await probe(
+  "RefundX402Deposit",
+  await program.methods
+    .refundX402Deposit(new BN(999_000_000_000), Array.from(refundSig.slice(0, 32)), Array.from(refundSig.slice(32, 64)))
+    .accounts({
+      config, table: p.table, game: p.game, vaultAuth: p.vaultAuth, vault, mint: TUSDC,
+      payer: payerKey, payerAta,
+      refundRecord, gateway: deployer.publicKey,
+    })
+    // 9 个座位账本走 remaining_accounts（栈纪律：见 refund_x402_deposit.rs）
+    .remainingAccounts(
+      Array.from({ length: 9 }, (_, i) => ({ pubkey: p.seat(i), isWritable: false, isSigner: false }))
+    )
+    .instruction()
+);
+
 // 3) audit_table（permissionless 只读）：应成功 —— 同时证明 I-X 守恒成立
 const seatPdas = Array.from({ length: 9 }, (_, i) => p.seat(i));
 await probe(

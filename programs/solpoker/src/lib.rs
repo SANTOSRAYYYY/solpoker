@@ -51,7 +51,7 @@ pub mod vrf;
 
 use state::{
     AgentProfile, Deck, DepositRecord, Game, HandProof, HandReplay, HandSecrets, OwnerAllowlist,
-    PlayerHand, ProgramConfig, SeatLedger, Table,
+    PlayerHand, ProgramConfig, RefundRecord, SeatLedger, Table,
 };
 
 // Program id pinned since Stage 0 deployment (docs/design/pubkeys.json); this
@@ -976,6 +976,55 @@ pub struct CreditX402Deposit<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// refund_x402_deposit：网关把「付了款但未入账」的盈余退回付款人。
+/// 收款 ATA 由地址约束钉死为 ATA(payer, mint)（运营方无法把退款转给别人）；
+/// Game 快照 + 9 个 L1 账本用于 I-X 校验（只允许动盈余）。
+#[derive(Accounts)]
+#[instruction(amount: u64, sig_lo: [u8; 32], sig_hi: [u8; 32])]
+pub struct RefundX402Deposit<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = config.gateway == gateway.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
+    /// Game 的 L1 快照（委托账户在 L1 上是最后一次 commit 的镜像）。
+    /// CHECK: fund::read_game_snapshot 手工校验 owner + discriminator。
+    pub game: UncheckedAccount<'info>,
+    /// CHECK: vault_auth PDA；退款时以它的 seeds 签名。
+    #[account(seeds = [b"vault_auth", table.key().as_ref()], bump = table.vault_auth_bump)]
+    pub vault_auth: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        address = anchor_spl::associated_token::get_associated_token_address(&vault_auth.key(), &mint.key()),
+    )]
+    pub vault: Account<'info, TokenAccount>,
+    #[account(address = table.mint)]
+    pub mint: Account<'info, Mint>,
+    /// CHECK: 退款收款人（只用作 ATA 派生与记录；不需要签名）。
+    pub payer: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        address = anchor_spl::associated_token::get_associated_token_address(&payer.key(), &mint.key()),
+    )]
+    pub payer_ata: Account<'info, TokenAccount>,
+    /// 退款凭据（付款签名两半为种子；重复退款在此失败）。
+    #[account(
+        init,
+        payer = gateway,
+        space = 8 + RefundRecord::INIT_SPACE,
+        seeds = [b"x402refund", sig_lo.as_ref(), sig_hi.as_ref()],
+        bump,
+    )]
+    pub refund_record: Account<'info, RefundRecord>,
+    #[account(mut)]
+    pub gateway: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
 /// take_seat（§5.2.2，ER，permissionless）：把 L1 买入计入 ER 筹码。
 #[derive(Accounts)]
 #[instruction(idx: u8)]
@@ -1405,6 +1454,19 @@ pub mod solpoker {
         sig_hi: [u8; 32],
     ) -> Result<()> {
         instructions::credit_x402_deposit::handler(ctx, idx, payer, amount, sig_lo, sig_hi)
+    }
+
+    /// x402 标准模式退款（配套文档一 §4.3）：config.gateway 签名，把「已付进
+    /// TableVault 但未入账」的付款退回 ATA(payer, mint)。只能动盈余（退款后
+    /// 余额仍须 ≥ I-X 要求，算法与 audit_table 相同）；RefundRecord（PDA 以
+    /// 付款签名两半为种子）防重复退款。
+    pub fn refund_x402_deposit(
+        ctx: Context<RefundX402Deposit>,
+        amount: u64,
+        sig_lo: [u8; 32],
+        sig_hi: [u8; 32],
+    ) -> Result<()> {
+        instructions::refund_x402_deposit::handler(ctx, amount, sig_lo, sig_hi)
     }
 
     /// §5.2.2（ER，permissionless）：读 SeatLedger 克隆，把买入计入筹码。

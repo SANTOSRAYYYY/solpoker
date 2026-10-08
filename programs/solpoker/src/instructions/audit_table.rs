@@ -18,26 +18,32 @@ use anchor_lang::prelude::*;
 
 use crate::errors::SolpokerError;
 use crate::fund;
-use crate::state::{SeatLedger, MAX_SEATS};
+use crate::state::MAX_SEATS;
 use crate::AuditTable;
 
 pub fn handler(ctx: Context<AuditTable>) -> Result<()> {
     let table = &ctx.accounts.table;
     let snap = fund::read_game_snapshot(ctx.accounts.game.as_ref())?;
 
-    let ledger0 = fund::read_seat_ledger_l1(&ctx.accounts.seat0.to_account_info())?;
-    let ledger1 = fund::read_seat_ledger_l1(&ctx.accounts.seat1.to_account_info())?;
-    let ledger2 = fund::read_seat_ledger_l1(&ctx.accounts.seat2.to_account_info())?;
-    let ledger3 = fund::read_seat_ledger_l1(&ctx.accounts.seat3.to_account_info())?;
-    let ledger4 = fund::read_seat_ledger_l1(&ctx.accounts.seat4.to_account_info())?;
-    let ledger5 = fund::read_seat_ledger_l1(&ctx.accounts.seat5.to_account_info())?;
-    let ledger6 = fund::read_seat_ledger_l1(&ctx.accounts.seat6.to_account_info())?;
-    let ledger7 = fund::read_seat_ledger_l1(&ctx.accounts.seat7.to_account_info())?;
-    let ledger8 = fund::read_seat_ledger_l1(&ctx.accounts.seat8.to_account_info())?;
-    let ledgers: [&SeatLedger; MAX_SEATS] = [
-        &ledger0, &ledger1, &ledger2, &ledger3, &ledger4, &ledger5, &ledger6, &ledger7, &ledger8,
-    ];
-    let required = fund::required_vault_backing(&ledgers, &snap, table.rake_swept_total)?;
+    // 逐座读计数器（同 refund：避免 9 份 SeatLedger 顶穿 SBF 4KB 栈）。
+    let mut counters = [(0u64, 0u64); MAX_SEATS];
+    for (i, ai) in [
+        &ctx.accounts.seat0,
+        &ctx.accounts.seat1,
+        &ctx.accounts.seat2,
+        &ctx.accounts.seat3,
+        &ctx.accounts.seat4,
+        &ctx.accounts.seat5,
+        &ctx.accounts.seat6,
+        &ctx.accounts.seat7,
+        &ctx.accounts.seat8,
+    ]
+    .iter()
+    .enumerate()
+    {
+        counters[i] = fund::read_seat_counters(&ai.to_account_info())?;
+    }
+    let required = fund::required_vault_backing_iter(counters, &snap, table.rake_swept_total)?;
 
     let balance = ctx.accounts.vault.amount as u128;
     require!(balance >= required, SolpokerError::Conservation);
