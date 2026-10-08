@@ -52,6 +52,28 @@
 
 ### 遗留问题
 
+- **（2026-10-08）L1 审计视图：Helius 解析历史 + 我们自己的指令解码 → `/history` 表级时间线**。
+  **实测发现（决定架构的关键）**：Helius 的地址解析历史对我们程序返回
+  `type/source=UNKNOWN`、`description=""`、`events={}` —— 它没有我们的 IDL，**不做语义解析**；
+  它给的是「按地址聚合的完整签名 + 时间戳 + 费用 + 失败标记」。所以审计视图 =
+  **Helius 解析历史（聚合/时间线）＋ 我们自己从 L1 原始交易日志解码语义**
+  （anchor 每个指令打 `Program log: Instruction: <Name>`，与 IDL 对齐）。
+  **落地**：
+  - `scripts/l1-audit.mjs`（CLI，引擎与 web 一致）：覆盖 Table/Game/9×Seat/Replay
+    共 12 个地址，按签名去重、slot 倒序取前 30，逐笔解出指令名 + tUSDC 移动量
+    （token 余额正向 delta）+ 付款人 + 费用；`--json` 机器可读、`--explain <sig>`
+    打印单笔原始日志（排查标签用）。
+  - `web/app/api/l1-audit/route.ts`（服务端）：浏览器**不直连** Helius —— 解析历史 API
+    要 key，key 只在服务端 `HELIUS_RPC`（非 `NEXT_PUBLIC_`，永远进不了 bundle）。
+    15s 内存缓存；无 key 时自动降级为原始 RPC（`getSignaturesForAddress`），徽章如实标
+    「原始 RPC（降级）」。
+  - `/history` 新增全宽「L1 审计视图」小节：来源徽章 + 事件推送徽章（复用 ① 的 SSE tick，
+    L1 有动静即刷新）+ 手动刷新；每行 = 语义徽章 / slot / 时间 / 金额 / 涉及账户 / Solscan 外链。
+  **实链证据**：CLI 对桌 #14 输出 sweep 的 `CashOut`（23.75 / 35.44 tUSDC，付款人=玩家钱包）；
+  浏览器 `/history` 实测渲染出「入座 20 tUSDC」「兑现 20 tUSDC」「委托 ER」「初始化复算环」等条目，
+  另有若干「PER 快照/委托」条目 —— 那些是 TEE 验证者付款、只含 DLP+ComputeBudget 的
+  快照/委托流量（无指令日志），标签如实区分而不是硬套成玩家动作。`npm run build` 通过。
+  **边界**：玩家行动（跟注/加注/弃牌）在 ER，不在这条时间线上 —— 页面文案已写明。
 - **（2026-10-08）实时推送：L1 事件 → SSE 中继 → 大厅即时刷新（无中继时自动回落轮询）**。
   中继 `scripts/helius-webhook.mjs`（零依赖 `node:http`，127.0.0.1:8787）：
   `POST /` 吃 Helius webhook（enhanced 或原始 payload 统一摘要成

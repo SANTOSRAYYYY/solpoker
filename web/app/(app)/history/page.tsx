@@ -46,6 +46,8 @@ import {
   type SecretsEntryView,
 } from "@/lib/chain-read";
 import { scanTables, type TableInfo } from "@/lib/tables";
+import { useLiveUpdates } from "@/lib/live-updates";
+import { useL1Audit, solscanTx, auditTone, fmtAuditAmount } from "@/lib/l1-audit";
 
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS: Suit[] = ["♠", "♥", "♦", "♣"];
@@ -222,6 +224,10 @@ export default function HistoryPage() {
         results: { name: string; ok: boolean; board: string; button: number; diffs: string[] }[];
       }
   >({ phase: "idle" });
+
+  /** L1 审计视图：表级时间线（服务端 Helius 解析历史 + 我们自己的指令解码） */
+  const live = useLiveUpdates();
+  const audit = useL1Audit(tableId, live.tick);
 
   // 桌列表
   useEffect(() => {
@@ -894,6 +900,79 @@ export default function HistoryPage() {
                 ? `引擎自检通过：${engine.results.length}/${engine.results.length} 向量与参考实现逐字节一致 ✓`
                 : "引擎自检未通过 —— 请勿采信本页的复算结果"}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* ---------------------------------------------------- L1 审计视图 */}
+      <section className="panel mt-8 p-5">
+        <SectionTitle
+          zh="L1 审计视图"
+          en="L1 AUDIT TRAIL · TABLE-LEVEL"
+          right={
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={audit.view?.source === "helius-parsed" ? "cyan" : "plain"}>
+                {audit.view?.source === "helius-parsed" ? "Helius 解析历史" : "原始 RPC（降级）"}
+              </Badge>
+              <Badge tone={live.state === "live" ? "mint" : "plain"}>
+                {live.state === "live" ? "L1 事件推送" : live.state === "connecting" ? "连接推送…" : "手动刷新"}
+              </Badge>
+              <button
+                className="btn-casino px-3 py-1.5 text-[12px]"
+                disabled={audit.state === "loading"}
+                onClick={audit.refresh}
+              >
+                {audit.state === "loading" ? "读取中…" : "刷新"}
+              </button>
+            </div>
+          }
+        />
+        <p className="mb-4 max-w-[860px] text-[12.5px] leading-relaxed text-mist-dim">
+          这张桌在 <span className="font-mono">L1</span> 上的动作流水（
+          <span className="font-mono">
+            {audit.view ? `${audit.view.table.slice(0, 8)}…` : "—"}
+          </span>
+          ）：入座 / 离座 / 兑现 / 提交快照 / 委托 ER / 建桌与初始化，全部按签名聚合、
+          点开即到 Solscan。数据来自 Helius 的地址解析历史（服务端读取，key 不进浏览器），
+          语义标签由本页服务端从 L1 交易日志解（Helius 没有本程序 IDL，它的
+          type/description 对本程序恒为 UNKNOWN）。<b className="text-mist">边界</b>：
+          玩家行动（跟注/加注/弃牌）发生在 ER，不在这条时间线上 —— 见上方「验证行动流」。
+        </p>
+        {audit.state === "error" && (
+          <p className="text-[12px] text-loss">审计视图读取失败（服务端 /api/l1-audit）。</p>
+        )}
+        {audit.view && audit.view.items.length === 0 && (
+          <p className="text-[12px] text-mist-faint">这张桌还没有 L1 历史。</p>
+        )}
+        {audit.view && audit.view.items.length > 0 && (
+          <div className="scroll-thin max-h-[420px] space-y-1 overflow-y-auto pr-1">
+            {audit.view.items.map((it) => (
+              <div
+                key={it.signature}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-accent-500/10 bg-black/25 px-3 py-1.5 font-mono text-[11.5px]"
+              >
+                <Badge tone={auditTone(it.kind)}>{it.label}</Badge>
+                <span className="text-mist-faint">{it.slot}</span>
+                <span className="text-mist-faint">
+                  {it.blockTime
+                    ? new Date(it.blockTime * 1000).toISOString().slice(5, 16).replace("T", " ")
+                    : "—"}
+                </span>
+                {fmtAuditAmount(it.amount) && (
+                  <span className="text-accent-200">{fmtAuditAmount(it.amount)} tUSDC</span>
+                )}
+                <span className="text-mist-faint">[{it.accounts.join(",")}]</span>
+                {it.err && <span className="text-loss">⚠ {it.err.slice(0, 40)}</span>}
+                <a
+                  href={solscanTx(it.signature)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto text-accent-300 underline decoration-dotted hover:text-accent-200"
+                >
+                  {it.signature.slice(0, 8)}…{it.signature.slice(-4)} ↗
+                </a>
+              </div>
+            ))}
           </div>
         )}
       </section>
