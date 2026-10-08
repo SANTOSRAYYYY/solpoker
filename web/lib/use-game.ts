@@ -179,9 +179,14 @@ export function useGame(
         }
         return;
       }
-      // Reveal: phase AwaitSeed, my hand's salt is not for this hand yet.
+      // Reveal: as soon as we're in the hand and the salt isn't revealed yet
+      // (phase Commit onward, 2026-10-09). Dealing can now happen within ~2s
+      // of the VRF fulfillment, so a late reveal could get the hand voided
+      // (missing salt => void + strike). Only phases 1/2: a phase>=3 reveal
+      // would write the NEXT hand's pre-committed salt with the current
+      // hand_id.
       if (
-        game.phase === 2 &&
+        (game.phase === 1 || game.phase === 2) &&
         inHand &&
         myHand &&
         myHand.saltHandId !== game.handId

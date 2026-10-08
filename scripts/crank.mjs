@@ -192,6 +192,9 @@ async function main() {
     const handsSinceCommit = g[1550];
     const pendingToAct = g.readUInt16LE(1532); // 死状态检测（stand_up 折断脚本，2026-10-08）
     const now = Math.floor(Date.now() / 1000);
+    // 本次 pass 内刚等到 VRF 履行（第 2 步原地等待）→ 允许第 5 步越过
+    // 「Pending 不推进」的门槛，立刻发牌（2026-10-09 提速）。
+    let vrfFulfilledNow = false;
 
     // 0) sweep: clear "left but not cashed out" zombie seats. cash_out is
     // permissionless (design X7) and the program pins the payout ATA recorded at
@@ -342,7 +345,23 @@ async function main() {
         const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} request_vrf`, ER_CU);
         console.log(`[t${tableId}] request_vrf: ${sig.slice(0, 12)}…`);
         vrfWaitUntil.set(tableId, Date.now() + 4000);
-        return;
+        // 原地等履行（≤2s，实测 ~1.1s，2026-10-09）：等到就直接落到第 5 步发牌，
+        // 省掉一整轮轮询（每街 ~2.5–3.5s）。等不到保持旧时序（return，下一轮发牌）。
+        // 边界：有上限、只发生在本桌刚发出请求之后；活跃桌多时自然退化为旧节奏。
+        // 安全前提：揭示已提前到 Commit 阶段（agent/网页同日改动）——发牌变快
+        // 也不会撞上「缺盐作废」窗口。
+        const waitDeadline = Date.now() + 2000;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 700));
+          const fresh = await er.getAccountInfo(game);
+          const st = fresh ? fresh.data[144] : 1;
+          if (st !== 1 && st !== 2) {
+            vrfFulfilledNow = st === 3; // 3=Fulfilled；4=Void 也落到第 5 步走作废路径
+            break;
+          }
+          if (Date.now() > waitDeadline) break;
+        }
+        if (!vrfFulfilledNow) return;
       }
     }
 
@@ -441,7 +460,7 @@ async function main() {
       // 2=Pending（等 oracle 履行）时不要无谓推进；0=Idle 时 advance 负责
       // arm（AwaitStreet/AwaitRunout 的 VRF 就是这样启动的），3=Fulfilled
       // 时 advance 负责发牌。
-      if ([2, 4, 6].includes(phase) && (vrfState === 1 || vrfState === 2)) return;
+      if ([2, 4, 6].includes(phase) && !vrfFulfilledNow && (vrfState === 1 || vrfState === 2)) return;
       // Idle 无手可开（有筹码的 Seated 座位 < 2）时不要空转发交易——
       // advance 会静默 no-op，每秒一发的交易纯烧手续费（2026-10-07 发现）。
       if (phase === 0) {

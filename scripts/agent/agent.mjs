@@ -341,8 +341,11 @@ async function cmdRun(name, opts) {
         continue;
       }
 
-      // ---- AwaitSeed：揭示 ----
-      if (inHand && g.phase === 2) {
+      // ---- 揭示（提前到 Commit 即做，2026-10-09）----
+      // reveal_salt 不限定阶段：承诺落地后立刻揭示，发牌再快也不会撞上
+      // 「缺盐作废+strike」。仅限 phase 1/2 —— phase≥3 时内存里的盐属于
+      // 「下一手预提交」，此刻用当前 hand_id 揭示会写错账户。
+      if (inHand && (g.phase === 1 || g.phase === 2)) {
         const hAcc = await er.getAccountInfo(myHand);
         const saltHandId = hAcc ? hAcc.data.readBigUInt64LE(50) : 0n;
         if (saltHandId !== g.handId) {
