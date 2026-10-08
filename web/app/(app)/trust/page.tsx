@@ -4,6 +4,7 @@
 // 仍然需要信任什么」，每项都链到链上或代码证据。
 
 import Link from "next/link";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Dot, SectionTitle } from "@/components/ui";
 import { PROGRAM_ID } from "@/lib/config";
 import { useI18n } from "@/lib/i18n";
@@ -203,6 +204,15 @@ const FLOW: { zh: string; en: string; dZh: string; dEn: string; sealed?: boolean
   },
 ];
 
+/** 流程图步骤选择器上的短名（与 FLOW 一一对应）。 */
+const FLOW_SHORT: { zh: string; en: string }[] = [
+  { zh: "座位 · 浏览器", en: "Seats · browser" },
+  { zh: "VRF 队列", en: "VRF queue" },
+  { zh: "TDX 私有牌桌", en: "TDX table" },
+  { zh: "L1 金库", en: "L1 vault" },
+  { zh: "你的浏览器", en: "Your browser" },
+];
+
 /** 方框之间的编号说明（比 FLOW 少一条）。 */
 const FLOW_STEPS: { zh: string; en: string }[] = [
   {
@@ -278,9 +288,46 @@ const LIMITS: { zh: string; en: string; dZh: string; dEn: string }[] = [
   },
 ];
 
+/** 折叠容器：grid-rows 0fr→1fr 过渡（Tailwind），内容 overflow-hidden。 */
+function Fold({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+      }`}
+    >
+      <div className="overflow-hidden">{children}</div>
+    </div>
+  );
+}
+
 export default function TrustPage() {
   const { lang } = useI18n();
   const zh = lang === "zh";
+
+  // 「一手牌的旅程」分步：默认自动播放；用户一点就交出控制权；悬停暂停；
+  // prefers-reduced-motion 时完全不自动播放。
+  const [step, setStep] = useState(0);
+  const [auto, setAuto] = useState(true);
+  const [hover, setHover] = useState(false);
+  useEffect(() => {
+    if (!auto || hover) return;
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const t = setInterval(() => setStep((s) => (s + 1) % FLOW.length), 4200);
+    return () => clearInterval(t);
+  }, [auto, hover]);
+
+  // 折叠状态：作弊卡（首张默认展开作示范）与主张卡（默认全收，页面更轻）
+  const [openA, setOpenA] = useState<number[]>([0]);
+  const [openC, setOpenC] = useState<number[]>([]);
+  const flip = (list: number[], set: (v: number[]) => void, i: number) =>
+    set(list.includes(i) ? list.filter((x) => x !== i) : [...list, i]);
+
   return (
     <main className="mx-auto max-w-[1180px] px-4 py-6 sm:px-5 sm:py-8">
       <div className="mb-7">
@@ -313,43 +360,107 @@ export default function TrustPage() {
             ? "顺着箭头走一遍：一手牌经过谁的手、哪些环节全程公开、哪些只存在于 TDX 硬件里，以及你最后在哪一步能自己复算。"
             : "Follow the arrows: whose hands a hand passes through, which steps are public end-to-end, which exist only inside TDX hardware, and where you can recompute it all yourself."}
         </p>
-        <div className="mx-auto max-w-[760px]">
+        {/* 步骤选择器 */}
+        <div className="no-bar mb-4 flex gap-2 overflow-x-auto pb-1">
           {FLOW.map((b, i) => (
-            <div key={b.zh}>
-              <div
-                className={`rail-quiet p-4 ${
-                  b.sealed ? "border-accent-500/40 bg-accent-500/6" : ""
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="title-cn text-[13.5px] text-mist">
-                    {zh ? b.zh : b.en}
-                  </div>
-                  {b.sealed ? (
-                    <Badge tone="brand">{zh ? "硬件内保密" : "SEALED IN HW"}</Badge>
-                  ) : (
-                    <Badge tone="cyan">{zh ? "公开可查" : "PUBLIC"}</Badge>
-                  )}
-                </div>
-                <p className="mt-1.5 text-[12px] leading-relaxed text-mist-dim">
-                  {zh ? b.dZh : b.dEn}
-                </p>
+            <button
+              key={b.zh}
+              onClick={() => {
+                setStep(i);
+                setAuto(false);
+              }}
+              aria-current={i === step}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-[11.5px] transition-all duration-200 ${
+                i === step
+                  ? b.sealed
+                    ? "border-accent-400/70 bg-accent-500/15 text-mist"
+                    : "border-cyanx-500/60 bg-cyanx-500/10 text-mist"
+                  : "border-mist/12 text-mist-faint hover:border-mist/25 hover:text-mist-dim"
+              }`}
+            >
+              <span className="mr-1.5 font-mono text-[10px] text-accent-300">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              {zh ? FLOW_SHORT[i].zh : FLOW_SHORT[i].en}
+            </button>
+          ))}
+        </div>
+
+        {/* 当前步骤（切换时淡入上浮）+ 指向下一步的编号说明 */}
+        <div
+          className="mx-auto max-w-[820px]"
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+        >
+          <div
+            key={step}
+            className={`rail-quiet animate-rise p-4 ${
+              FLOW[step].sealed ? "border-accent-500/40 bg-accent-500/6" : ""
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="title-cn text-[13.5px] text-mist">
+                {zh ? FLOW[step].zh : FLOW[step].en}
               </div>
-              {i < FLOW.length - 1 && (
-                <div className="flex items-start gap-2.5 py-2.5 pl-4">
-                  <span className="font-mono text-[13px] leading-none text-accent-300">
-                    ↓
-                  </span>
-                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11.5px] text-mist-dim">
-                    <span className="font-mono text-[10.5px] text-accent-300">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    {zh ? FLOW_STEPS[i].zh : FLOW_STEPS[i].en}
-                  </span>
-                </div>
+              {FLOW[step].sealed ? (
+                <Badge tone="brand">{zh ? "硬件内保密" : "SEALED IN HW"}</Badge>
+              ) : (
+                <Badge tone="cyan">{zh ? "公开可查" : "PUBLIC"}</Badge>
               )}
             </div>
-          ))}
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-mist-dim">
+              {zh ? FLOW[step].dZh : FLOW[step].dEn}
+            </p>
+          </div>
+
+          {step < FLOW.length - 1 && (
+            <div className="flex items-start gap-2.5 py-2.5 pl-4">
+              <span className="font-mono text-[13px] leading-none text-accent-300">
+                ↓
+              </span>
+              <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11.5px] text-mist-dim">
+                <span className="font-mono text-[10.5px] text-accent-300">
+                  {String(step + 1).padStart(2, "0")}
+                </span>
+                {zh ? FLOW_STEPS[step].zh : FLOW_STEPS[step].en}
+              </span>
+            </div>
+          )}
+
+          {/* 控制条：手动切换 / 自动播放开关 / 进度点 */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                setStep((s) => (s + 1) % FLOW.length);
+                setAuto(false);
+              }}
+              className="rounded-md border border-mist/12 px-2.5 py-1 text-[11px] text-mist-dim transition-colors hover:border-mist/25 hover:text-mist"
+            >
+              {zh ? "下一步" : "Next"}
+            </button>
+            <button
+              onClick={() => setAuto((a) => !a)}
+              className="rounded-md border border-mist/12 px-2.5 py-1 text-[11px] text-mist-dim transition-colors hover:border-mist/25 hover:text-mist"
+            >
+              {auto
+                ? zh
+                  ? "暂停自动播放"
+                  : "Pause"
+                : zh
+                  ? "自动播放"
+                  : "Auto-play"}
+            </button>
+            <span className="ml-1 flex items-center gap-1.5">
+              {FLOW.map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                    i === step ? "w-6 bg-accent-400" : "w-1.5 bg-mist/20"
+                  }`}
+                />
+              ))}
+            </span>
+          </div>
         </div>
       </section>
 
@@ -365,24 +476,42 @@ export default function TrustPage() {
           }
         />
         <div className="grid gap-4 md:grid-cols-2">
-          {ATTACKS.map((a, i) => (
-            <div key={a.zh} className="panel flex flex-col p-4">
-              <div className="mb-2 flex items-start justify-between gap-3">
-                <div className="flex items-baseline gap-2.5">
-                  <span className="font-mono text-[11px] text-loss/80">
-                    {String(i + 1).padStart(2, "0")}
+          {ATTACKS.map((a, i) => {
+            const open = openA.includes(i);
+            return (
+              <div key={a.zh} className="panel p-4">
+                <button
+                  onClick={() => flip(openA, setOpenA, i)}
+                  aria-expanded={open}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <span className="flex items-baseline gap-2.5">
+                    <span className="font-mono text-[11px] text-loss/80">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <span className="title-cn text-[14px] text-mist">
+                      {zh ? a.zh : a.en}
+                    </span>
                   </span>
-                  <h3 className="title-cn text-[14px] text-mist">{zh ? a.zh : a.en}</h3>
-                </div>
-                <Badge tone="mint" className="shrink-0">
-                  {zh ? "拦住了" : "BLOCKED"}
-                </Badge>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <Badge tone="mint">{zh ? "拦住了" : "BLOCKED"}</Badge>
+                    <span
+                      className={`text-[10px] text-mist-faint transition-transform duration-300 ${
+                        open ? "rotate-180" : ""
+                      }`}
+                    >
+                      ▼
+                    </span>
+                  </span>
+                </button>
+                <Fold open={open}>
+                  <p className="mt-2.5 pl-[26px] text-[12.5px] leading-relaxed text-mist-dim">
+                    {zh ? a.dZh : a.dEn}
+                  </p>
+                </Fold>
               </div>
-              <p className="text-[12.5px] leading-relaxed text-mist-dim">
-                {zh ? a.dZh : a.dEn}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -425,62 +554,97 @@ export default function TrustPage() {
           </span>
         }
       />
-      <div className="grid gap-5 md:grid-cols-2">
-        {ITEMS.map((t) => (
-          <article key={t.zh} className="panel flex flex-col p-5">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h3 className="title-cn text-[15px] text-mist">{zh ? t.zh : t.en}</h3>
-                {zh && (
-                  <div className="mt-0.5 text-[10px] tracking-[0.24em] text-accent-400/80 uppercase">
-                    {t.en}
+      <div className="grid gap-4 md:grid-cols-2">
+        {ITEMS.map((t, i) => {
+          const open = openC.includes(i);
+          return (
+            <article key={t.zh} className="panel p-4">
+              <button
+                onClick={() => flip(openC, setOpenC, i)}
+                aria-expanded={open}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="flex items-baseline gap-2.5">
+                  <span className="font-mono text-[10.5px] text-accent-300/80">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span>
+                    <span className="title-cn block text-[14px] text-mist">
+                      {zh ? t.zh : t.en}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] tracking-[0.22em] text-accent-400/70 uppercase">
+                      {zh ? t.en : t.zh}
+                    </span>
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <Badge tone="mint">✓</Badge>
+                  <span
+                    className={`text-[10px] text-mist-faint transition-transform duration-300 ${
+                      open ? "rotate-180" : ""
+                    }`}
+                  >
+                    ▼
+                  </span>
+                </span>
+              </button>
+
+              <Fold open={open}>
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <div className="mb-1 text-[10.5px] tracking-widest text-mist-faint">
+                      {zh ? "由什么保证" : "Guaranteed by"}
+                    </div>
+                    <p className="text-[12.5px] leading-relaxed text-mist-2">
+                      {zh ? t.by : t.byEn}
+                    </p>
                   </div>
-                )}
-              </div>
-              <Badge tone="mint" className="mt-0.5 shrink-0">
-                ✓
-              </Badge>
-            </div>
 
-            <div className="mb-3">
-              <div className="mb-1 text-[10.5px] tracking-widest text-mist-faint">{zh ? "由什么保证" : "Guaranteed by"}</div>
-              <p className="text-[12.5px] leading-relaxed text-mist-2">{zh ? t.by : t.byEn}</p>
-            </div>
+                  <div>
+                    <div className="mb-1 text-[10.5px] tracking-widest text-mist-faint">
+                      {zh ? "你怎么验证" : "How you verify"}
+                    </div>
+                    <p className="text-[12.5px] leading-relaxed text-mist-dim">
+                      {zh ? t.how : t.howEn}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {t.links.map((l) =>
+                        l.href.startsWith("/") ? (
+                          <Link
+                            key={l.label}
+                            href={l.href}
+                            className="rounded-md border border-accent-500/35 px-2.5 py-1 text-[11px] text-accent-200 hover:bg-accent-500/10"
+                          >
+                            {zh ? l.label : l.labelEn} →
+                          </Link>
+                        ) : (
+                          <a
+                            key={l.label}
+                            href={l.href}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-md border border-accent-500/35 px-2.5 py-1 text-[11px] text-accent-200 hover:bg-accent-500/10"
+                          >
+                            {zh ? l.label : l.labelEn} ↗
+                          </a>
+                        ),
+                      )}
+                    </div>
+                  </div>
 
-            <div className="mb-3">
-              <div className="mb-1 text-[10.5px] tracking-widest text-mist-faint">{zh ? "你怎么验证" : "How you verify"}</div>
-              <p className="text-[12.5px] leading-relaxed text-mist-dim">{zh ? t.how : t.howEn}</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {t.links.map((l) =>
-                  l.href.startsWith("/") ? (
-                    <Link
-                      key={l.label}
-                      href={l.href}
-                      className="rounded-md border border-accent-500/35 px-2.5 py-1 text-[11px] text-accent-200 hover:bg-accent-500/10"
-                    >
-                      {zh ? l.label : l.labelEn} →
-                    </Link>
-                  ) : (
-                    <a
-                      key={l.label}
-                      href={l.href}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-md border border-accent-500/35 px-2.5 py-1 text-[11px] text-accent-200 hover:bg-accent-500/10"
-                    >
-                      {zh ? l.label : l.labelEn} ↗
-                    </a>
-                  ),
-                )}
-              </div>
-            </div>
-
-            <div className="mt-auto rounded-lg border border-warn/25 bg-warn/8 px-3 py-2">
-              <span className="text-[10.5px] tracking-widest text-warn/90">{zh ? "仍然需要信任" : "Still trusted"}</span>
-              <p className="mt-0.5 text-[12px] leading-relaxed text-mist-dim">{zh ? t.trust : t.trustEn}</p>
-            </div>
-          </article>
-        ))}
+                  <div className="rounded-lg border border-warn/25 bg-warn/8 px-3 py-2">
+                    <span className="text-[10.5px] tracking-widest text-warn/90">
+                      {zh ? "仍然需要信任" : "Still trusted"}
+                    </span>
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-mist-dim">
+                      {zh ? t.trust : t.trustEn}
+                    </p>
+                  </div>
+                </div>
+              </Fold>
+            </article>
+          );
+        })}
       </div>
 
       {/* 风险与边界 */}
@@ -519,6 +683,9 @@ export default function TrustPage() {
           </a>
           <Link href="/history" className="hover:text-mist-dim">
             {zh ? "验证器 →" : "Verifier →"}
+          </Link>
+          <Link href="/docs" className="hover:text-mist-dim">
+            {zh ? "产品文档 →" : "Docs →"}
           </Link>
         </span>
       </footer>

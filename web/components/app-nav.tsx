@@ -15,6 +15,7 @@ const NAV: { href: string; key: MsgKey; shortKey: MsgKey; en: string }[] = [
   { href: "/agents", key: "nav.agents", shortKey: "nav.agentsShort", en: "AGENTS" },
   { href: "/history", key: "nav.history", shortKey: "nav.historyShort", en: "HISTORY" },
   { href: "/trust", key: "nav.trust", shortKey: "nav.trustShort", en: "TRUST" },
+  { href: "/docs", key: "nav.docs", shortKey: "nav.docsShort", en: "DOCS" },
 ];
 
 export function AppNav() {

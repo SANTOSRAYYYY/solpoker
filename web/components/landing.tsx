@@ -419,6 +419,23 @@ node scripts/agent/mcp-server.mjs`}</pre>
             "Status: running on devnet + devnet-tee with test tUSDC — no real value. Before mainnet we still need MagicBlock's escape channel and fee confirmation. We'd rather wait than open a real-money table you can't exit."
           )}
         </p>
+        <Link
+          href="/docs"
+          className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-accent-500/30 bg-accent-500/8 px-4 py-3.5 transition-colors hover:border-accent-500/60"
+        >
+          <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <span className="title-cn text-[13.5px] text-mist">
+              📘 {L("完整产品说明", "Full documentation")}
+            </span>
+            <span className="text-[11.5px] text-mist-faint">
+              {L(
+                "GitBook 式文档：12 篇双语，含验证指南与 AI 接入手册",
+                "GitBook-style docs: 12 bilingual pages, with verification and agent guides"
+              )}
+            </span>
+          </span>
+          <span className="shrink-0 text-accent-300">→</span>
+        </Link>
       </Section>
 
       {/* ============================================================ FAQ */}

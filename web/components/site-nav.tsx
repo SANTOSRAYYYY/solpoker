@@ -42,6 +42,12 @@ export function SiteNav() {
               {L(a.zh, a.en)}
             </a>
           ))}
+          <Link
+            href="/docs"
+            className="title-cn shrink-0 rounded-md px-2 py-2 text-[12.5px] text-accent-200 transition-colors hover:text-mist"
+          >
+            {L("产品文档", "Docs")}
+          </Link>
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">

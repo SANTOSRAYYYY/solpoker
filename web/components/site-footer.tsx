@@ -20,6 +20,7 @@ export function SiteFooter() {
     { href: "/trust", zh: "信任模型", en: "Trust model" },
   ];
   const resources = [
+    { href: "/docs", zh: "产品文档", en: "Documentation" },
     { href: REPO, zh: "GitHub 源码", en: "GitHub" },
     { href: `${REPO}/blob/main/docs/dealing-protocol.zh.md`, zh: "发牌协议", en: "Dealing protocol" },
     { href: `${REPO}/blob/main/docs/runbook-testnet.md`, zh: "运维手册", en: "Operator runbook" },
