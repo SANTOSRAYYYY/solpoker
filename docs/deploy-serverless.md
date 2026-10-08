@@ -5,13 +5,17 @@
 ## 🚀 三步上线（2026-10-08 增补，已实测走通登录 → 部署）
 
 ```bash
+# 0) 部署前依赖审计（本地能跑≠线上能跑：直接 import 但没写进 dependencies 的包，
+#    Vercel 干净安装后会构建失败 —— 2026-10-08 首部就栽在 @solana/spl-token 上）
+node scripts/check-web-deps.mjs        # 期望输出 WEB_DEPS_OK
+
 # 1) 登录（设备码流程：浏览器打开提示的链接点一次 Authorize 即可）
 cd web && npx vercel login
 
 # 2) 一键准备 + 部署（link 项目 → 写 Production 环境变量（值不回显）→ --prod 部署）
 cd .. && node scripts/vercel-deploy.mjs
 #   默认 NEXT_PUBLIC_L1_RPC=https://rpc.magicblock.app/devnet（无密钥端点，已压测：
-#   65 账户批量 1.4s / 9 座位批读 0.4s，够大厅用）。想换更稳的端点：
+#   65 账户批量 1.4s / 9 座位批读 0.4s，CORS 全开 ✓）。想换更稳的端点：
 #   DEPLOY_L1_RPC=https://<你的 Helius Secure URL> node scripts/vercel-deploy.mjs
 
 # 3) 部署完把域名加入 Privy 控制台的 allowed origins（否则登录弹窗会被拒）

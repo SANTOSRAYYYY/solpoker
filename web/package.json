@@ -17,6 +17,7 @@
     "@solana-program/system": "^0.8.0",
     "@solana-program/token": "^0.6.0",
     "@solana/kit": "^3.0.3",
+    "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "1.98.4",
     "@types/bn.js": "^5.2.0",
     "bn.js": "^5.2.5",

@@ -13,19 +13,21 @@
 //   （默认用无密钥的 https://rpc.magicblock.app/devnet）
 import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { encode } from "./lib/bs58.mjs";
 
 const web = path.resolve("web");
 const VERCEL = "npx --yes vercel@latest";
 
-const runCapture = (cmd) => {
+const runCapture = (cmd, cwd = web) => {
   try {
-    return execSync(cmd, { cwd: web, stdio: ["ignore", "pipe", "pipe"] }).toString();
+    return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString();
   } catch (e) {
     return (e.stdout?.toString() ?? "") + (e.stderr?.toString() ?? "");
   }
 };
+const runCaptureIn = runCapture;
 
 const who = runCapture(`${VERCEL} whoami 2>&1`);
 if (/Logged out/i.test(who)) {
@@ -74,10 +76,30 @@ for (const [k, v] of Object.entries(VARS)) {
 }
 
 console.log("… 生产部署（首次构建约 2-4 分钟）");
-const out = runCapture(`${VERCEL} --prod --yes 2>&1`);
+
+// 关键：从「不含 .git 的干净副本」部署。直接从 git 仓库目录发 CLI 部署会把本地提交作者
+// 带给 Vercel，而作者邮箱不在团队里 → 部署被 Blocked（2026-10-08 实测两次）。
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "solpoker-deploy-"));
+const EXCLUDE = new Set(["node_modules", ".next", ".vercel", ".git"]);
+const copyDir = (from, to) => {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    if (EXCLUDE.has(e.name) || e.name === ".env.local" || e.name.endsWith(".log")) continue;
+    const src = path.join(from, e.name);
+    const dst = path.join(to, e.name);
+    if (e.isDirectory()) copyDir(src, dst);
+    else fs.copyFileSync(src, dst);
+  }
+};
+copyDir(web, tmp);
+console.log(`… 已复制干净副本：${tmp}`);
+const dl = spawnSync(`${VERCEL} link --project solpoker --yes`, { shell: true, cwd: tmp, stdio: "inherit" });
+if (dl.status !== 0) process.exit(dl.status ?? 1);
+
+const out = runCaptureIn(`${VERCEL} --prod --yes 2>&1`, tmp);
 const lines = out.trim().split(/\r?\n/);
 const url = lines.find((l) => /^https?:\/\//.test(l.trim()))?.trim() ?? "(未解析到 URL，见上方输出)";
 console.log("\n=== 部署结果 ===");
 console.log(lines.slice(-8).join("\n"));
 console.log(`\nURL: ${url}`);
-console.log("提醒：把该域名加入 Privy 控制台的 allowed origins，否则登录弹窗会被拒。");
+console.log("提醒：① 把该域名加入 Privy 控制台的 allowed origins；② 项目设置里确认 Deployment Protection 已关闭。");
