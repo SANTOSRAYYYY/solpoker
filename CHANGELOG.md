@@ -52,6 +52,16 @@
 
 ### 遗留问题
 
+- **（2026-10-08）commit 手续费问题已解决 + 两个 AI 补码**（用户："我们给这些账户多放一些sol吧，然后那两个ai也给他们多一些tusdc"）：
+  1. **修法验证**：给 24 桌的 `game / handProof / handSecrets / handReplay` 的 **L1 副本各 +0.02 SOL**
+     （约 2 SOL）→ ER 模拟 `commit_game` 在 #20/#30 立刻 `err: null` ✓✓ —— 证实 **DLP 的手续费是从 L1 侧余额扣的**
+     （#22 那次模拟报 6023 是"手牌进行中不能 commit"，属程序性拒绝）。ER **仍然拒绝对 DLP 持有账户的直接转账**
+     （必须在 L1 补）。
+  2. **两个 AI 补码**：先给 bob/carol 钱包各 mint 500 tUSDC，再经 `topup-test.mjs` 各补 300 → 程序按桌参数
+     **顶格到买入上限 100 tUSDC**（bob 3.6 → 100.2、carol 33.7 → 100.11），`top_up`+`apply_deposits` 全链路正常 ✓。
+  3. 实况：22 号桌持续出牌（hand#159+），两人筹码都在上限、禁得住长时间对局。
+  4. 排障提示（写进 runbook）：crank 的 stdout 重定向到文件时是**块缓冲**，日志会滞后很久 —— "日志不更新"
+     不等于进程没跑（此前健康检查的"日志 59 分钟没更新"就是这种假警报）。
 - **（2026-10-08）22 号桌停摆的排查与修复**（用户："现在22号桌怎么没在打了"）：
   1. **根因**：`commit_game` 从 ~20:01 起持续失败（`InsufficientFundsForRent{account_index:3}` = HandProof 账户），
      而 crank 的 commit 步骤**没有隔离失败** → 整个 pass 在那里抛出 → **永远走不到 advance** → 桌子冻死 3 小时。
