@@ -267,8 +267,8 @@ node scripts/agent/mcp-server.mjs                       # 挂到你的模型上`
       {
         t: "p",
         c: {
-          zh: "链上是地址，不是身份；运营方服务只读公开状态、驱动阶段机，不持有玩家 token，也读不到底牌。",
-          en: "On-chain you're an address, not an identity; operator services only read public state and drive the phase machine — they hold no player tokens and can't read hole cards.",
+          zh: "链上是地址，不是身份；运营方服务只驱动公开状态（链上人人可见），不持有玩家 token，也读不到底牌。",
+          en: "On-chain you're an address, not an identity; operator services only drive public state (visible to everyone on-chain), hold no player tokens, and can't read hole cards.",
         },
       },
     ],

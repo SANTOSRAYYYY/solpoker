@@ -140,8 +140,8 @@ const ITEMS: Item[] = [
   {
     zh: "运营方看不到底牌",
     en: "Operator cannot see cards",
-    by: "PER 权限层；运营方服务不持有玩家的 token",
-    byEn: "The PER permission layer; operator services never hold a player's token",
+    by: "PER 成员名单不含运营方，且由程序策略强制（成员更新指令同样拒绝运营方）；链上公开可查",
+    byEn: "PER member lists exclude the operator, enforced by program policy (the member-update instruction rejects the operator too); publicly readable on-chain",
     how: "权限账户的内容是公开的，谁在成员列表里一目了然",
     howEn: "Permission accounts are public — the member list shows exactly who can read what",
     links: [
