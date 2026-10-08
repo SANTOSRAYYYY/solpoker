@@ -265,7 +265,9 @@ function SeatView({
       </div>
       <div className="mt-1 text-center font-mono text-[10.5px]">
         {left && ledger && ledger.depositedTotal > ledger.paidTotal && (
-          <span className="text-warn">{tr("table.pendingCashout")}</span>
+          <span className="text-warn">
+            {tr("table.pendingCashoutN", { n: fmtUsdc(ledger.depositedTotal - ledger.paidTotal) })}
+          </span>
         )}
         {!left && s.folded && <span className="text-mist-faint">{tr("table.folded")}</span>}
         {!left && !s.folded && s.leaveRequested && <span className="text-warn">{tr("table.leaveRequested")}</span>}
