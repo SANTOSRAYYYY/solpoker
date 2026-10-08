@@ -10,11 +10,11 @@ import { Badge, Dot, SolMark } from "@/components/ui";
 import { useWalletCtx } from "@/components/wallet-context";
 import { useI18n, type MsgKey } from "@/lib/i18n";
 
-const NAV: { href: string; key: MsgKey; en: string }[] = [
-  { href: "/", key: "nav.lobby", en: "LOBBY" },
-  { href: "/agents", key: "nav.agents", en: "AGENTS" },
-  { href: "/history", key: "nav.history", en: "HISTORY" },
-  { href: "/trust", key: "nav.trust", en: "TRUST" },
+const NAV: { href: string; key: MsgKey; shortKey: MsgKey; en: string }[] = [
+  { href: "/", key: "nav.lobby", shortKey: "nav.lobbyShort", en: "LOBBY" },
+  { href: "/agents", key: "nav.agents", shortKey: "nav.agentsShort", en: "AGENTS" },
+  { href: "/history", key: "nav.history", shortKey: "nav.historyShort", en: "HISTORY" },
+  { href: "/trust", key: "nav.trust", shortKey: "nav.trustShort", en: "TRUST" },
 ];
 
 export function AppNav() {
@@ -47,7 +47,9 @@ export function AppNav() {
                   active ? "text-accent-200" : "text-mist-dim hover:text-mist"
                 }`}
               >
-                <span className="title-cn text-[12px] sm:text-[13px]">{t(n.key)}</span>
+                {/* 窄屏用短标签（英文全称放不下，会被裁） */}
+                <span className="title-cn text-[12px] sm:hidden">{t(n.shortKey)}</span>
+                <span className="title-cn hidden text-[13px] sm:inline">{t(n.key)}</span>
                 <span className="ml-1.5 hidden text-[9px] tracking-[0.16em] opacity-60 2xl:inline">
                   {n.en}
                 </span>
