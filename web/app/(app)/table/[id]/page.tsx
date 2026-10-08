@@ -920,8 +920,13 @@ export default function TablePage() {
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* --------------------------------------------------- 行动坞 */}
+          {/* 毡桌缩放容器到此为止（2026-10-08 修）：行动坞原先被包在 felt-fit 里 ——
+              felt-fit 是 overflow-hidden + 按缩放补偿高度，宽窗口下会把坞裁掉，
+              既看不见也点不到（用户反馈"被遮挡了"）。坞与提示必须留在外层。 */}
+
+          {/* --------------------------------------------------- 行动坞 */}
             <div className="panel mx-auto mt-5 flex w-full max-w-[1020px] flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
               {game && (
                 <span className="timer-ring" style={{ ["--p" as string]: Math.min(1, (timeLeft ?? 0) / Math.max(1, actionTimeoutS)) }}>
@@ -1088,7 +1093,6 @@ export default function TablePage() {
                 TEE 连接失败：{tee.message}
               </p>
             )}
-          </div>
         </div>
 
         {/* --------------------------------------------------------- 侧栏 */}
