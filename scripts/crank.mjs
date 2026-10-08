@@ -65,6 +65,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
 const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
 const sweepWaitLog = new Set(); // sweep: dedupe "等快照" 日志（key 含快照值，刷新后会重新评估）
+const idleSkipUntil = new Map(); // tableId -> ts：空闲桌（无占用且 Idle）节流——削减 23 桌每轮 ~207 个座位账本读（RPC 429 的来源）
 const commitFailUntil = new Map(); // table -> ts：commit_game 失败后的冷却（避免刷屏，且不阻塞阶段机）
 const zombieTables = new Set(); // tables whose sweep hit a stuck seat -> force a commit_game to refresh the L1 snapshot
 const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
@@ -165,6 +166,11 @@ async function main() {
     await mapLimit(tableIds, 6, async (tableId) => {
       const table = tablePda(tableId);
       const game = gamePda(table);
+      // 空闲桌节流（2026-10-09）：上一轮判定为「无占用座位且 Idle」的桌，15s 内
+      // 直接跳过（零读）。新入座最迟 ~15s 被 take_seat 接上（测试网可接受）；
+      // 有占用/在手/待提交的桌永远全速。目的是削减 23 桌每轮 ~207 个座位账本读
+      // ——这正是 RPC 429 的来源。
+      if (Date.now() < (idleSkipUntil.get(tableId) ?? 0)) return;
       try {
         // 阶段性动作（advance / commit_game）成功后立刻用新鲜状态再跑一轮：
         // 一手收尾往往是 close→commit_game→freeze→arm→request 这样一串，
@@ -195,6 +201,12 @@ async function main() {
     // 本次 pass 内刚等到 VRF 履行（第 2 步原地等待）→ 允许第 5 步越过
     // 「Pending 不推进」的门槛，立刻发牌（2026-10-09 提速）。
     let vrfFulfilledNow = false;
+    // 空闲桌记录（供主循环节流）：无占用座位且 Idle → 15s 内不再轮询本桌。
+    if (g.readUInt16LE(1524) === 0 && g[1544] === 0) {
+      idleSkipUntil.set(tableId, Date.now() + 15_000);
+    } else {
+      idleSkipUntil.delete(tableId);
+    }
 
     // 0) sweep: clear "left but not cashed out" zombie seats. cash_out is
     // permissionless (design X7) and the program pins the payout ATA recorded at
