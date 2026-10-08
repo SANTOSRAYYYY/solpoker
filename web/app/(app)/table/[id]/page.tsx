@@ -410,6 +410,25 @@ export default function TablePage() {
   const myHand = demo ? DEMO_HAND : driver.myHand;
   const mySeat = demo ? 4 : driver.mySeat;
 
+  // 2026-10-08 实测坑：用 A 钱包坐下、页面却选中了 B 钱包（Privy 有多个钱包，后连的 Phantom 等
+  // 可能变成选中项）→ mySeat 判为 null、行动区整块消失、连盐都不会提交 → 被 strike 请离。
+  // 这里检测"这张桌上有没有属于我其它钱包的座位"，把一次性切回入口摆出来。
+  const altSeat = useMemo(() => {
+    if (!game || demo || mySeat !== null) return null;
+    const mine = new Set(ctx.options.map((o) => o.address));
+    for (let i = 0; i < game.seats.length; i++) {
+      const s = game.seats[i];
+      if (
+        s.status === 1 &&
+        !s.occupant.equals(PublicKey.default) &&
+        mine.has(s.occupant.toBase58())
+      ) {
+        return { idx: i, addr: s.occupant.toBase58() };
+      }
+    }
+    return null;
+  }, [game, demo, mySeat, ctx.options]);
+
   // ---- TEE 会话 ----
   const connectTee = useCallback(async () => {
     if (!ctx.address || !ctx.wallet) return;
@@ -1007,11 +1026,43 @@ export default function TablePage() {
                 ) : (
                   <span className="text-[12.5px] text-mist-dim">
                     {statusText}
+                    {mySeat !== null && (
+                      <span className="text-mist-faint"> · {tr("table.actionsHint")}</span>
+                    )}
                     {mySeat === null && game && <span className="text-mist-faint">{tr("table.statusJoin")}</span>}
                   </span>
                 )
+              ) : altSeat ? (
+                // 座位上是我另一个钱包 → 一键切过去（否则行动区永远不会出现）
+                <span className="flex flex-wrap items-center gap-2.5 text-[12.5px] text-mist-dim">
+                  <span>
+                    {tr("table.altWalletSeat", {
+                      i: altSeat.idx,
+                      a: `${altSeat.addr.slice(0, 4)}…${altSeat.addr.slice(-4)}`,
+                    })}
+                  </span>
+                  <button
+                    className="btn-casino btn-brand px-4 py-2 text-[12.5px]"
+                    onClick={() => ctx.pick(altSeat.addr)}
+                  >
+                    {tr("table.switchWallet")}
+                  </button>
+                </span>
+              ) : mySeat !== null ? (
+                // 已入座但还没连接 TEE：行动区就在这个位置，先给一个明确的入口
+                // （2026-10-08 用户反馈：真人玩家找不到"下注/加注"在哪）
+                <span className="flex flex-wrap items-center gap-2.5 text-[12.5px] text-mist-dim">
+                  <span>{tr("table.actionsNeedTee")}</span>
+                  <button
+                    className="btn-casino btn-brand px-4 py-2 text-[12.5px]"
+                    onClick={connectTee}
+                    disabled={tee.phase === "working"}
+                  >
+                    {tee.phase === "working" ? tr("table.teeChecking") : tr("table.teeConnect")}
+                  </button>
+                </span>
               ) : (
-                // 观众（未连接钱包 / 未连 TEE）：也要能看懂现在在等什么
+                // 观众（未连接钱包 / 未入座）：也要能看懂现在在等什么
                 <span className="text-[12.5px] text-mist-dim">
                   {statusText}
                   <span className="text-mist-faint">
