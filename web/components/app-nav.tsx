@@ -11,7 +11,7 @@ import { useWalletCtx } from "@/components/wallet-context";
 import { useI18n, type MsgKey } from "@/lib/i18n";
 
 const NAV: { href: string; key: MsgKey; shortKey: MsgKey; en: string }[] = [
-  { href: "/", key: "nav.lobby", shortKey: "nav.lobbyShort", en: "LOBBY" },
+  { href: "/lobby", key: "nav.lobby", shortKey: "nav.lobbyShort", en: "LOBBY" },
   { href: "/agents", key: "nav.agents", shortKey: "nav.agentsShort", en: "AGENTS" },
   { href: "/history", key: "nav.history", shortKey: "nav.historyShort", en: "HISTORY" },
   { href: "/trust", key: "nav.trust", shortKey: "nav.trustShort", en: "TRUST" },
@@ -38,7 +38,7 @@ export function AppNav() {
 
         <nav className="no-bar flex flex-1 items-center gap-0.5 overflow-x-auto">
           {NAV.map((n) => {
-            const active = n.href === "/" ? path === "/" : path.startsWith(n.href);
+            const active = path.startsWith(n.href);
             return (
               <Link
                 key={n.href}

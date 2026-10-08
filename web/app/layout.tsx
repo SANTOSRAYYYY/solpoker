@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" className="scroll-smooth">
       <body>
         <Providers>{children}</Providers>
         {/* ?debug=1 时的浮动诊断面板（放在根布局：段错误边界不会把它一起替换掉） */}

@@ -20,7 +20,7 @@ npm install
 npm run build && npx next start -p 3100   # 或 npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:3100` → 连接钱包（Privy）→ 连接 TEE（attestation + 一次 challenge 签名）→ 入座 → 对局。
+浏览器打开 `http://127.0.0.1:3100` → **官方落地页**（实时链上数据 + 产品介绍）→「进入大厅」到 `/lobby` → 连接钱包（Privy）→ 连接 TEE（attestation + 一次 challenge 签名）→ 入座 → 对局。
 
 新钱包需要 SOL（手续费）和 tUSDC（买入）。devnet 演示用 crank 的 fund 子命令从 deployer 发放：
 
@@ -67,8 +67,10 @@ NEXT_PUBLIC_PRIVY_APP_ID=your-privy-app-id
 
 ## 目录
 
-- `app/page.tsx` — 牌桌页：钱包/TEE 门控、入座、桌面（公共牌/座位/底池）、手牌（仅本人可见）、行动区、兑现
-- `app/trust/page.tsx` — 信任页（逐项证据链接，设计 §16）
+- `app/(site)/page.tsx` — **官方落地页 `/`**（产品入口 + 全面介绍；主体 `components/landing.tsx`，实时数据条 `components/landing-live.tsx` 直读链上）
+- `app/(app)/lobby/page.tsx` — **大厅 `/lobby`**：牌桌列表（实时状态 + 盲注 + 买入区间 + 折叠）
+- `app/(app)/table/[id]/page.tsx` — 对局页：钱包/TEE 门控、入座、桌面（公共牌/座位/底池）、手牌（仅本人可见）、行动区、兑现
+- `app/(app)/trust/page.tsx` — 信任页（逐项证据链接，设计 §16）
 - `app/providers.tsx` — PrivyProvider（Solana 嵌入式钱包，登录时自动创建）
 - `lib/config.ts` — 链/程序常量（与 scripts/stage6-full-hand-e2e.mjs 同步）
 - `lib/game-state.ts` — Game/PlayerHand 原始字节解码、牌面与金额格式化

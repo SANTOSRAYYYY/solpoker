@@ -52,6 +52,22 @@
 
 ### 遗留问题
 
+- **（2026-10-08）官方落地页 `/`（产品入口 + 全面介绍，参考 pokerable.fun 的结构）**：应用大厅从 `/` 移到 `/lobby`（牌桌等其余路由不变）。
+  1. **新路由组 `(site)`**：`app/(site)/layout.tsx`（`SiteNav` + `SiteFooter`，不挂钱包区 —— 连接钱包发生在进入大厅之后）
+     + `app/(site)/page.tsx`（服务端组件，带 metadata/OG，渲染客户端 `components/landing.tsx`）。
+  2. **章节**：Hero（徽章 + 主张 + 双 CTA + 纯 CSS 毡桌/底牌/筹码视觉，无新图片素材）→ **链上实时数据条**
+     （`components/landing-live.tsx`：readTablesLive 8s 轮询 + SSE 即时刷新 —— 进行中桌数 / 在座（含 AI 数）/
+     桌内托管 tUSDC / 盲注档位；实测 1 / 共 23 张、3 在座（AI 2）、59.00 tUSDC）→ 为什么（公开链上三个死穴 → 逐条解法）
+     → 玩法五步（配 每手 ~40s / VRF ~1.1s / ≤9 座 / 会话 7 天）→ 公平性可验证（整手复算 / 行动流 / L1 审计 + 诚实缺口）
+     → 钱与托管（全额担保 / 付款只付本人 / 随时离桌 / 运营方不持币）→ AI Agent（AgentProfile + MCP 工具清单 + 命令框）
+     → 技术底座（Solana/Anchor/PER-Intel TDX + 程序账户 solscan + 文档外链 + 测试网声明）→ FAQ 五条
+     → 收尾 CTA（进入大厅 / 看 22 号桌直播）→ 页脚（产品 + 资源两列）。全部文案中英双语（页面内 `L(zh,en)`，能复用字典的复用）。
+  3. **导航调整**：`app-nav` 大厅 href → `/lobby`（logo 仍指 `/`，应用内可回官方页）；对局页「返回大厅」→ `/lobby`；
+     `SiteNav` 带页内锚点（为什么/怎么玩/公平性/AI Agent/常见问题，均带 `scroll-mt` 避开吸顶栏）+ 语言切换 + 「进入大厅」；
+     根布局 `<html>` 加 `scroll-smooth`。
+  4. **验证**：`npx tsc --noEmit` 全绿；浏览器实测（1280 桌面 + 375 移动）：中英切换、锚点滚动（#fair ✓）、
+     移动端零横向溢出（scrollWidth == clientWidth == 360）、CTA → `/lobby` 正常、页脚 8 个链接齐全；
+     `/lobby`、`/table/22`、`/agents`、`/history`、`/trust` 全部回归 200；`TESTNET_HEALTH_OK` 仍绿。
 - **（2026-10-08）每手节奏大修：「打完一手再等下一手很久」的实测根因与三处修复**（用户提问）。用逐秒相位观测器（新工具 `scripts/watch-table.mjs <tableId>`）实测桌 #22：
   1. **根因一：commit_timeout_s=60 的死等**。程序侧 `commit_to_await_seed`（hand.rs）在
      hand_mask 全员已承诺时本可立即 arm Preflop VRF + 进 AwaitSeed，但 crank 按

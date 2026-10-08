@@ -638,7 +638,7 @@ export default function TablePage() {
       <div className="border-b border-mist/8 bg-black/25">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-5">
           <div className="flex items-center gap-2 sm:gap-3">
-            <Link href="/" className="shrink-0 text-[12px] text-mist-dim hover:text-mist">
+            <Link href="/lobby" className="shrink-0 text-[12px] text-mist-dim hover:text-mist">
               ← <span className="hidden sm:inline">{tr("table.lobby")}</span>
             </Link>
             <span className="hidden h-4 w-px bg-mist/15 sm:block" />
