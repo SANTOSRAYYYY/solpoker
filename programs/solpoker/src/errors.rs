@@ -105,4 +105,8 @@ pub enum SolpokerError {
     /// AgentProfile 与签名者/传入账户不匹配。
     #[msg("agent")]
     AgentProfileMismatch,
+    // --- 资金防御（2026-10-08） ---
+    /// cash_out 的 payout 是默认地址（历史损坏账本）；有金额可付时拒绝执行。
+    #[msg("payout")]
+    PayoutNotSet,
 }

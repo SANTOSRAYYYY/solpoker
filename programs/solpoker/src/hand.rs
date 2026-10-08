@@ -566,6 +566,77 @@ pub fn apply_claim_timeout(table: &Table, game: &mut Game, now: i64) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
+// stand_up 的手内折叠 / 下注街自愈（2026-10-08）
+// ---------------------------------------------------------------------------
+
+/// 被动折叠：标记 + 掩码同步 + 规范 Action 事件（不动引擎、不推进轮次）。
+/// 适用：非当前行动者的 stand_up 折叠、AwaitStreet 阶段的离座折叠。引擎镜像
+/// 会在下次重建（engine_from_game 读 folded）时自然一致，pending 仍有 to_act
+/// 在列，不受影响。
+///
+/// 事件纪律：stand_up 的折叠也是行动流的一部分，验证器要靠它复现 transcript
+/// 链式哈希（旧实现不记事件 → 事件流与链上 transcript 对不上，2026-10-08 修）。
+pub fn apply_passive_fold(game: &mut Game, idx: u8) -> Result<()> {
+    use solpoker_core::deal::ActionKind;
+    let bit = seat_bit(idx);
+    game.seats[idx as usize].folded = 1;
+    game.actionable_mask &= !bit;
+    game.pending_to_act_mask &= !bit;
+    transcript_append(
+        &mut game.transcript,
+        &Event::Action {
+            seat: idx,
+            kind: ActionKind::Fold,
+            amount: 0,
+        },
+    );
+    emit!(HandEventLog {
+        hand_id: game.hand_id,
+        seq: game.action_seq,
+        event_tag: EVENT_TAG_ACTION,
+        seat: idx,
+        kind: ActionKind::Fold as u8,
+        amount: 0,
+    });
+    game.action_seq = game
+        .action_seq
+        .checked_add(1)
+        .ok_or(SolpokerError::Overflow)?;
+    Ok(())
+}
+
+/// stand_up 的手内「立即折叠」规范路径（§5.2.5）：与一次自愿 Fold 动作同语义。
+/// 当前行动者走 [`apply_action`] 的完整引擎推进（关街/结算/runout 一步不缺）；
+/// 其他座位走 [`apply_passive_fold`]。
+///
+/// 背景（table #22 卡死根因）：旧实现在指令侧直接 `pending_to_act_mask &= !bit`，
+/// 轮到该座位时折叠后 pending 归零却没有关街，phase 停在下注阶段、advance 对
+/// 下注阶段是 no-op → 全桌死锁。
+pub fn apply_stand_up_fold(table: &Table, game: &mut Game, idx: u8, now: i64) -> Result<()> {
+    require_betting_phase(game)?;
+    let bit = seat_bit(idx);
+    if game.pending_to_act_mask & bit != 0 && game.to_act == idx {
+        return apply_action(table, game, idx, CoreAction::Fold, now);
+    }
+    apply_passive_fold(game, idx)
+}
+
+/// 下注街自愈（2026-10-08）：`pending_to_act_mask == 0` 却还停在下注阶段，
+/// 即「下注轮已结束、关街没跑」。唯一已知来源是旧版 stand_up 的直接清位
+/// （已修）；这里为存量桌（table #22）和任何漏网路径兜底——advance 是
+/// permissionless 的，任何 keeper 一发即修复。pending 非零时正常 no-op。
+#[inline(never)]
+fn close_stalled_betting(table: &Table, game: &mut Game, now: i64) -> Result<()> {
+    if game.pending_to_act_mask != 0 {
+        return Ok(()); // 正常：等玩家行动
+    }
+    let mut engine = engine_from_game(game, table.sb, table.bb, table.ante);
+    let outcome = engine.resolve_stalled_street();
+    sync_game_from_engine(game, &engine);
+    resolve_outcome(game, table, &outcome, now)
+}
+
+// ---------------------------------------------------------------------------
 // Hand close (shared by Settle and Void)
 // ---------------------------------------------------------------------------
 
@@ -1485,7 +1556,7 @@ pub fn advance(
         PHASE_AWAIT_SEED => {
             await_seed(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }
-        PHASE_PREFLOP | PHASE_BETTING => Ok(()), // waiting for player actions
+        PHASE_PREFLOP | PHASE_BETTING => close_stalled_betting(table, game, now),
         PHASE_AWAIT_STREET => {
             await_street(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }
@@ -2599,6 +2670,77 @@ mod tests {
         assert_eq!(w.proof.entries[15].hand_id, 15);
         assert_eq!(w.proof.entries[1].hand_id, 1);
         assert_eq!(w.game.hand_id, 17);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
+    // --- stand_up 折叠与下注街自愈（2026-10-08，table #22 死锁回归） ---------
+
+    /// 行动者 stand_up 折叠必须走引擎：pending 清空的同时关街/结束推进，
+    /// 不留下「pending=0 且停在下注阶段」的死状态（旧 bug 的修复本体）。
+    #[test]
+    fn stand_up_fold_on_actor_never_stalls() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        let button = w.game.button;
+        apply_stand_up_fold(&w.table, &mut w.game, button, NOW).unwrap();
+        fund::assert_conservation_er(&w.game).unwrap();
+        assert!(w.game.seats[button as usize].folded != 0);
+        // 2 人：fold 后 live 只剩 1 → 手直接进入 Settle（而不是死状态）。
+        assert_eq!(w.game.phase, PHASE_SETTLE);
+        assert_eq!(w.game.pending_to_act_mask, 0);
+        w.step(); // Settle → Idle
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        assert_eq!(w.game.hand_id, 1);
+    }
+
+    /// 非行动者 stand_up 折叠：手牌继续，行动权仍在原行动者，且补规范事件。
+    #[test]
+    fn stand_up_fold_off_actor_keeps_hand_running() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        let button = w.game.button;
+        let other = 1 - button;
+        apply_stand_up_fold(&w.table, &mut w.game, other, NOW).unwrap();
+        assert!(w.game.seats[other as usize].folded != 0);
+        assert_eq!(w.game.phase, PHASE_PREFLOP);
+        assert_eq!(w.game.to_act, button);
+        assert_eq!(w.game.pending_to_act_mask, seat_bit(button));
+        assert_eq!(w.game.action_seq, 1); // 折叠进了行动流
+        // button 跟注后 live=1 → 手结束。
+        apply_action(&w.table, &mut w.game, button, CoreAction::Call, NOW).unwrap();
+        assert_eq!(w.game.phase, PHASE_SETTLE);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
+    /// 存量死状态（旧 stand_up 直接清 pending 位留下的形态，table #22 实况）
+    /// 由 advance 自愈：关街/结算继续走，离座者的筹码经 owed 释放。
+    #[test]
+    fn advance_heals_legacy_stalled_betting_and_releases_leaver() {
+        let mut w = World::heads_up();
+        w.start_hand();
+        let button = w.game.button;
+        let stack_before = w.game.seats[button as usize].stack;
+        let in_hand_before = w.game.seats[button as usize].in_hand;
+        assert!(in_hand_before > 0); // 强制注已投出（ante+SB）
+        // 复刻旧 stand_up 的死状态：不经过引擎，裸标记 folded + 清掩码位。
+        w.game.seats[button as usize].folded = 1;
+        w.game.seats[button as usize].leave_requested = 1;
+        w.game.actionable_mask &= !seat_bit(button);
+        w.game.pending_to_act_mask = 0;
+        assert_eq!(w.game.phase, PHASE_PREFLOP);
+
+        w.step(); // 自愈：live 只剩 1 → SETTLE（不再是无路可走的死状态）
+        assert_eq!(w.game.phase, PHASE_SETTLE);
+        assert!(w.game.pot > 0);
+        w.step(); // Settle：写证明 + 释放离座者
+        assert_eq!(w.game.phase, PHASE_IDLE);
+        let s = &w.game.seats[button as usize];
+        assert_eq!(s.status, fund::SEAT_LEFT);
+        assert_eq!(s.stack, 0);
+        // 弃牌者拿回未投入的剩余 stack；已投入的（ante+SB）留在池里归赢家。
+        assert_eq!(s.owed_total, stack_before);
+        assert_eq!(w.game.occupied_mask & seat_bit(button), 0);
+        assert_eq!(w.proof.entries[0].status, PROOF_SETTLED);
         fund::assert_conservation_er(&w.game).unwrap();
     }
 }

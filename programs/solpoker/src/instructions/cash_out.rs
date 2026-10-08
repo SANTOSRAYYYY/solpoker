@@ -48,6 +48,12 @@ pub fn handler(ctx: Context<CashOut>, idx: u8) -> Result<()> {
     let amount = snap_seat.owed_total - seat.paid_total;
 
     if amount > 0 {
+        // 2026-10-08 事故防线：payout 被清成默认地址（全零 bytes）的损坏账本
+        // 不能付钱——transfer 会进 ATA(1111…, mint)（System Program 名下，
+        // 无人能再取出），等于烧币。座 6/7 的历史账本即为此形态。释放分支
+        // 清空 payout 只发生在 owed == paid 全结清时（amount 恒 0），不会误伤；
+        // 任何"有钱可付但 payout 缺失"的账本都应停在待兑现状态等人工核实。
+        require!(seat.payout != Pubkey::default(), SolpokerError::PayoutNotSet);
         let vault = &mut ctx.accounts.vault;
         let before = vault.amount;
         let table_key = table.key();

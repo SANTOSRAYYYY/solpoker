@@ -5,9 +5,13 @@
 //! occupant。
 //!
 //! 座位在当前手牌中（hand_mask 含本座位且未 fold）→ 立即 fold 语义：标记
-//! folded + leave_requested，并从 actionable / pending_to_act 掩码中移除
-//! ——这次 fold 由手牌状态机按一次普通 fold 处理（Phase 3）。不移动任何
-//! 资金计数器。此分支不动 PER 成员（手牌还没结束，占用者还要读牌/reveal）。
+//! folded + leave_requested。折叠走 `hand::apply_stand_up_fold`：轮到该座位
+//! 时是**完整引擎动作**（关街/结算推进一步不缺，2026-10-08 修——旧实现直接
+//! 清 pending 位会留下 pending=0 的死状态，table #22 曾整桌卡死）；其他座位
+//! 只标记 + 掩码同步 + 补规范 Fold 事件。all-in / AwaitRunout / Settle 的
+//! 座位不折叠（牌已在池里或本手已定局，折叠会没收其底池权益），只登记离座，
+//! 手牌结束时由 close_hand 释放。不移动任何资金计数器。此分支不动 PER 成员
+//! （手牌还没结束，占用者还要读牌/reveal）。
 //!
 //! 在手牌边界（或本座位不在手牌中）→ 释放：未计入的补码直接记 owed
 //! （credited 同时追平 deposited），`owed += stack`，`stack = 0`，状态
@@ -21,6 +25,7 @@ use anchor_lang::prelude::*;
 use crate::auth;
 use crate::errors::SolpokerError;
 use crate::fund;
+use crate::hand;
 use crate::perms;
 use crate::state::MAX_SEATS;
 use crate::StandUp;
@@ -43,25 +48,31 @@ pub fn handler(ctx: Context<StandUp>, idx: u8) -> Result<()> {
 
     let bit = 1u16 << idx;
     let in_hand = game.hand_mask & bit != 0;
-    let seat = &mut game.seats[idx as usize];
 
-    let mut folded_now = false;
     if in_hand {
-        // In the current hand: immediate fold semantics. The fold itself is
-        // processed like a fold action by the hand machine (Phase 3); the
-        // fund release happens at the hand boundary via a later stand_up.
-        if seat.folded == 0 {
-            seat.folded = 1;
-            folded_now = true;
+        // 手内立即折叠语义（§5.2.5）。2026-10-08 修复：折叠不能再绕过引擎——
+        // 旧实现直接清 pending 位，轮到该座位时会把下注轮清空却不关街，留下
+        // pending=0 且阶段未推进的死状态（table #22 卡死 7 分钟+ 的根因）。
+        //
+        // all-in / AwaitRunout / Settle 的座位不折叠：牌已在池里或本手已定局，
+        // 折叠等于没收其底池权益，只登记离座（手牌结束时由 close_hand 释放）。
+        let already_folded = game.seats[idx as usize].folded != 0;
+        let all_in = game.seats[idx as usize].all_in != 0 || game.seats[idx as usize].stack == 0;
+        if !already_folded && !all_in {
+            match game.phase {
+                hand::PHASE_PREFLOP | hand::PHASE_BETTING => {
+                    hand::apply_stand_up_fold(table, &mut game, idx, now)?;
+                }
+                hand::PHASE_AWAIT_STREET => {
+                    hand::apply_passive_fold(&mut game, idx)?;
+                }
+                // AwaitRunout / Settle：不折叠，只登记离座。
+                _ => {}
+            }
         }
-        seat.leave_requested = 1;
+        game.seats[idx as usize].leave_requested = 1;
     } else {
-        fund::stand_up_release(seat, ledger.deposited_total);
-    }
-    // Seat borrow ends here; game-level fields follow.
-    if folded_now {
-        game.actionable_mask &= !bit;
-        game.pending_to_act_mask &= !bit;
+        fund::stand_up_release(&mut game.seats[idx as usize], ledger.deposited_total);
     }
     if !in_hand {
         game.occupied_mask &= !bit;

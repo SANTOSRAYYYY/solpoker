@@ -621,6 +621,40 @@ impl Engine {
         }
         outcome
     }
+
+    /// 自愈入口（2026-10-08）：`pending_to_act_mask == 0` 但阶段机没有推进时，
+    /// 由链上 `advance` 补跑关街循环。正常路径不会依赖它——[`Engine::act`] /
+    /// [`Engine::claim_timeout`] 在 pending 清零的同一调用里已经通过
+    /// [`Engine::advance_turn`] 关街；唯一能绕过它的是链上 stand_up 的旧「直接
+    /// 清 pending 位」路径（已在指令侧改走引擎；此方法兜底存量桌与任何漏网）。
+    ///
+    /// 语义边界：pending 非零（正常等待行动）或本手已结束/已进入 runout 时
+    /// 返回对应 no-op/report 值，只有「停在下注街且无人欠行动」才真正推进。
+    pub fn resolve_stalled_street(&mut self) -> ActOutcome {
+        if self.finished {
+            self.recompute_masks();
+            return ActOutcome {
+                street_ended: true,
+                hand_finished: true,
+                runout_started: false,
+            };
+        }
+        if self.runout_needed {
+            self.recompute_masks();
+            return ActOutcome {
+                street_ended: true,
+                hand_finished: false,
+                runout_started: true,
+            };
+        }
+        if self.pending_to_act_mask != 0 {
+            return ActOutcome::default();
+        }
+        // 死状态常带着陈旧的 live/actionable 掩码（旧 stand_up 直接清位、
+        // 不重建），先按座位标志重算，否则「只剩一人」会被漏判成 runout。
+        self.recompute_masks();
+        self.close_streets()
+    }
 }
 
 #[cfg(test)]
@@ -1008,5 +1042,54 @@ mod tests {
         // stack 为 0 不能入 hand。
         let zero = stacks_for(0b10, BB);
         assert!(Engine::new(&zero, mask, mask, 1, SB, BB, 0).is_err());
+    }
+
+    // --- 自愈（2026-10-08 stand_up 死锁） ------------------------------------
+
+    #[test]
+    fn resolve_stalled_street_heals_stand_up_deadlock() {
+        // 复刻 table #22 死锁：0/1 跟注后轮到 2 号（BB），旧 stand_up 在行动者
+        // 身上直接清 pending/actionable 并把座位标记 folded —— 街没推进。
+        let mut e = engine3();
+        e.act(0, Action::Call).unwrap();
+        e.act(1, Action::Call).unwrap();
+        assert_eq!(e.to_act, 2);
+        // 手工复刻旧 stand_up 留下的死状态。
+        e.seats[2].folded = true;
+        e.seats[2].leave_requested = true;
+        e.pending_to_act_mask = 0;
+        e.actionable_mask &= !seat_bit(2);
+        let pot_before = e.pot;
+
+        let out = e.resolve_stalled_street();
+        assert!(out.street_ended);
+        assert!(!out.hand_finished && !out.runout_started);
+        assert_eq!(e.street, 1); // 关街进翻牌
+        assert!(e.flop_dealt);
+        assert_eq!(e.live_mask, 0b011); // folded 的 2 号离开 live
+        assert_eq!(e.actionable_mask, 0b011);
+        assert_eq!(e.pending_to_act_mask, 0b011); // 翻牌重建 pending
+        assert_eq!(e.to_act, 1); // 翻后 button 左侧第一位
+        assert_eq!(e.pot, pot_before); // 筹码不动
+        assert!(e.seats[2].folded); // 折叠保留
+        assert!(e.seats[2].leave_requested); // 离座请求保留
+
+        // 幂等：正常等待行动时调用是 no-op。
+        let out2 = e.resolve_stalled_street();
+        assert!(!out2.street_ended && !out2.hand_finished && !out2.runout_started);
+        assert_eq!(e.pending_to_act_mask, 0b011);
+        assert_eq!(e.street, 1);
+    }
+
+    #[test]
+    fn resolve_stalled_street_reports_over_states() {
+        // finished：0/1 弃牌后 2 号独活，手已结束。
+        let mut e = engine3();
+        e.act(0, Action::Fold).unwrap();
+        e.act(1, Action::Fold).unwrap();
+        assert!(e.finished);
+        let out = e.resolve_stalled_street();
+        assert!(out.hand_finished && !out.runout_started);
+        assert_eq!(e.street, 0); // 不再推进
     }
 }
