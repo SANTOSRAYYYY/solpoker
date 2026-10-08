@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 运维工具转正 + 全桌同步（2026-10-09）
+
+把当晚反复用到的三段流程固化成正式脚本（原本是一次性 tmp-*）：
+- `scripts/sync-tables.mjs` —— 全桌 ER→L1 快照同步（对 Idle 桌发 commit_game，幂等；
+  用法 `node scripts/sync-tables.mjs [ids]`，默认全部）；
+- `scripts/migrate-members.mjs` —— 成员策略迁移（deck→[VRF]、手牌→[占用者]/[VRF]，幂等）；
+- `scripts/init-permissions.mjs` —— 补建某桌的 10 个 ER 权限账户（**建桌脚本遇到 ER token
+  过期时会静默漏掉这一步**，表现为成员更新报 InvalidAccountData —— #41 即此因；用它补齐）。
+
+**本轮全量结果**：成员迁移 240 项幂等复验 ✓；`commit_game` **24 桌 ✓**（#22 正在牌局中，
+由 crank 手间自动提交；#2 为远古坏桌，Custom 3007 跳过）；**#41 权限补齐 + 迁移 10/10 ✓**，
+正式纳入 crank 列表（大厅白名单未加——它暂为实验桌）。
+
+
 ## 追加：空闲桌节流 —— 消除 23 桌每轮 ~207 个座位账本读（2026-10-09）
 
 sweep 预筛（上一条）之后，剩下的固定开销是 `take_seat` 步骤对每张桌每轮的 9 个座位账本
