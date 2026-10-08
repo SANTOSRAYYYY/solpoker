@@ -141,16 +141,15 @@ pub fn handler(ctx: Context<InitPermissions>) -> Result<()> {
             vault: vault.clone(),
             magic_program: magic_program.clone(),
             permission_program: permission_program.clone(),
-            // 基线成员 = [table.admin]（crank 角色）：deck 永不加玩家；空座
-            // hand 也只有 admin——advance 的 Anchor 写回要求 crank 是所有
-            // hand 的成员（2026-10-07 实测 InvalidWritableAccount）。占用者
-            // 由 take_seat 按 §11.2 加入自己的 hand。
+            // 基线成员 = [VRF 程序身份]（无密钥哨兵，成员策略见
+            // perms::member_policy_ok）：运营方（table.admin）不入名单；
+            // deck 永不加玩家；占用者由 take_seat 加入自己的 hand。
             args: EphemeralMembersArgs {
                 is_private: true,
                 members: vec![Member {
                     flags: 0,
                     pubkey: ephemeral_rollups_sdk::compat::Pubkey::new_from_array(
-                        ctx.accounts.admin.key().to_bytes(),
+                        crate::perms::vrf_identity().to_bytes(),
                     ),
                 }],
             },

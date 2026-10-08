@@ -109,4 +109,8 @@ pub enum SolpokerError {
     /// cash_out 的 payout 是默认地址（历史损坏账本）；有金额可付时拒绝执行。
     #[msg("payout")]
     PayoutNotSet,
+    // --- 成员策略（2026-10-09） ---
+    /// 成员名单超出策略：运营方不可入名单；hand 只允许该座占用者/VRF 身份。
+    #[msg("members")]
+    MemberNotAllowed,
 }

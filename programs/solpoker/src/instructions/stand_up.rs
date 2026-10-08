@@ -95,7 +95,9 @@ pub fn handler(ctx: Context<StandUp>, idx: u8) -> Result<()> {
         ];
         let cp_bump = [ctx.bumps.commit_payer];
         let cp_seeds: &[&[u8]] = &[b"commit_payer", table_bytes.as_ref(), &cp_bump];
-        let member_keys = [table.admin];
+        // 成员策略（2026-10-09）：离座后名单回到 [VRF 身份]（无密钥哨兵）——
+        // 运营方不入名单；空账户无数据，哨兵只为满足"至少一名成员"的建议。
+        let member_keys = [perms::vrf_identity()];
         perms::update_members(
             ctx.accounts.player_hand.to_account_info(),
             ctx.accounts.permission.to_account_info(),

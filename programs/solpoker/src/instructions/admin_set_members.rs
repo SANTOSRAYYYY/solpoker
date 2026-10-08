@@ -1,23 +1,19 @@
-//! admin_set_members — §11.2 过渡版（ER，admin 门禁）：更新 Deck 或
+//! admin_set_members — §11.2 覆盖/修复通道（ER，admin 门禁）：更新 Deck 或
 //! PlayerHand[i] 的 PER 成员列表。
 //!
 //! 背景：PER 权限的 authority 是被权限账户本身（init_permissions 创建时由
 //! PDA 签名），客户端无法直接更新成员——必须由本程序以 PDA invoke_signed
 //! 发起 UpdateEphemeralPermissionCpi。
 //!
-//! 为什么现在需要它（2026-10-07 实测）：devnet-tee 对「交易写了 PER 私有
-//! 账户而签名者不是成员」拒绝执行（顶层 InvalidWritableAccount）。Anchor 对
-//! `mut` 的 borsh 账户在成功退出时无条件写回——`advance` 每次都会写回全部
-//! 9 个 PlayerHand + Deck，所以 crank 签名者必须是 deck 与全部 hand 的成员，
-//! 否则 advance 永远被拒。
+//! **成员策略（2026-10-09，见 perms::member_policy_ok）**：运营方
+//! （table.admin）永久退出成员名单——历史版本把 admin 作为全部 10 个私有权限
+//! 的基线成员（为旧 keeper 写回而设），实测证实运营方借此可 RPC 读底牌/牌堆；
+//! 实验证明收紧名单后 keeper 的程序读写与整手流程照常（CHANGELOG 同日）。
+//! 本指令保留为修复通道，但同样过策略校验：deck 仅 [VRF 身份]（或空），
+//! hand_i 仅 [VRF 身份 ∪ 该座当前占用者]——运营方无法把自己加回来。
 //!
-//! 成员模型（Stage 6 验收）：
-//! - deck ← [crank/admin]：含全部盐与 VRF 输出，**绝不加玩家**；
-//! - hand_i ← [crank/admin, 占用者_i]：占用者读自己的手牌无害（盐和牌本来
-//!   就是他自己的），reveal_salt 由占用者签名写自己的 hand 需要此成员资格。
-//!
-//! Phase 3 正式版会把成员轮换并入 take_seat/stand_up（见两处 TODO）；本指令
-//! 作为 admin 覆盖通道保留。
+//! 正常轮换在 take_seat（占用者加入）/ stand_up（恢复到 [VRF 身份]）内联完成；
+//! 本指令处理存量账本的修复（如老版本留下的 [admin, …] 名单）。
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::access_control::instructions::UpdateEphemeralPermissionCpi;
@@ -63,6 +59,18 @@ pub fn handler(
         permission.key(),
         expected_permission,
         SolpokerError::SeatMismatch
+    );
+
+    // 成员策略（2026-10-09）：运营方永久出局；hand 的"当前占用者"从 Game 读。
+    let occupant = if target_index == 0 {
+        Pubkey::default()
+    } else {
+        let game = ctx.accounts.game.load()?;
+        game.seats[(target_index - 1) as usize].occupant
+    };
+    require!(
+        crate::perms::member_policy_ok(target_index, &occupant, &member_pubkeys),
+        SolpokerError::MemberNotAllowed
     );
 
     let idx = [target_index.saturating_sub(1)];

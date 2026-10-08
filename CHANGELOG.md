@@ -28,6 +28,25 @@
 **踩坑**：`admin_set_members` 首轮全部 6010 —— 又是脚本 PDA 推导 bug（helper 闭包吞掉第二个
 program-id 参数，权限 PDA 用错 program），与 `er-acl-permission-blocked` 记录同款。
 
+### 落地（同日，程序升级 + 全量迁移 + 文案）
+
+- **程序（成员策略，升级已 parity ✓）**：
+  - `take_seat`：成员 = **[占用者]**（不再加 admin）；
+  - `stand_up`：释放时恢复 **[VRF 程序身份]**（无密钥哨兵，替代原 [admin]）；
+  - `init_permissions`：新桌基线 = **[VRF 身份]**；
+  - `admin_set_members`（覆盖/修复通道）：新增 `game` 账户 + **策略校验**
+    （`perms::member_policy_ok`：deck 仅 [VRF]（或空），hand_i 仅 [VRF ∪ 该座占用者]）
+    —— 运营方把自己加回来会被拒（新错误 `MemberNotAllowed` 6033，已实测拒绝）。
+  - 单元测试 +2（策略允许/拒绝面）；全部 39 + 92 绿。
+- **存量迁移**（`tmp-migrate-members.mjs`，1..40 全表）：deck→[VRF]、手牌→[占用者]/空座[VRF]，
+  **ok=240 / fail=10**（失败全部为老桌 #2 的旧布局账户，不在使用）。
+- **新路径链上验证（t33）**：`take_seat` 后运营方读不到、占用者能读自己的；`stand_up` 后
+  **[VRF] 哨兵生效**（谁都不读）；t22 演示桌实测：运营方读 deck/hand0/hand1 全 null，
+  bob/carol 正常读自己的牌，牌局不间断。
+- **文案**：核对 4 处后只改 2 处（`content-more.ts` FAQ "只读公开状态"→"只驱动公开状态"；
+  `trust/page.tsx` "运营方看不到底牌"的 by 改为"程序策略强制（更新指令同样拒绝运营方）"），
+  另 2 处（`content-start.ts` / `content-trust.ts`）在收紧后已成事实、无需改动；landing 同款保持。
+
 
 ## 修复：已释放座位（Left）在牌桌上不可点选（2026-10-09，devnet-tee）
 

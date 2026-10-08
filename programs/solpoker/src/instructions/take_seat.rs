@@ -52,8 +52,9 @@ pub fn handler(ctx: Context<TakeSeat>, idx: u8) -> Result<()> {
         fund::take_seat_transition(seat, &ledger);
         game.occupied_mask |= bit;
 
-        // §11.2: PER members = [crank(admin), occupant wallet]（占用者钱包而
-        // 不是 session key——读权限绑定钱包，§12）。
+        // §11.2 + 成员策略（2026-10-09）：PER members = [占用者钱包] ——
+        // 读权限绑定钱包（§12，不是 session key）；运营方（table.admin）
+        // 不再入名单（名单=隐私开关，见 perms::member_policy_ok）。
         let table_bytes = table.key().to_bytes();
         let epoch_bytes = table.epoch.to_be_bytes();
         let idx_bytes = [idx];
@@ -67,7 +68,7 @@ pub fn handler(ctx: Context<TakeSeat>, idx: u8) -> Result<()> {
         ];
         let cp_bump = [ctx.bumps.commit_payer];
         let cp_seeds: &[&[u8]] = &[b"commit_payer", table_bytes.as_ref(), &cp_bump];
-        let member_keys = [table.admin, ledger.occupant];
+        let member_keys = [ledger.occupant];
         perms::update_members(
             ctx.accounts.player_hand.to_account_info(),
             ctx.accounts.permission.to_account_info(),

@@ -800,10 +800,10 @@ pub struct AdminForceStandUp<'info> {
 /// PlayerHand[i] 的 PER 成员。权限的 authority 是被权限账户自身（创建时由
 /// PDA 签名），所以只能由本程序以 PDA invoke_signed 更新。
 /// 背景：devnet-tee 拒绝「写 PER 私有账户而签名者非成员」的交易（顶层
-/// InvalidWritableAccount）；Anchor 对 mut borsh 账户成功退出时无条件写回，
-/// 因此 advance 的 crank 签名者必须是 deck + 全部 hand 的成员。
-/// 成员模型（Stage 6）：deck ← [crank/admin]（绝不加玩家——含全部盐与 VRF
-/// 输出）；hand_i ← [crank/admin, 占用者_i]（自读无害，reveal 需要）。
+/// 成员策略（2026-10-09）：运营方（table.admin）永不入名单——deck ← [VRF 身份]
+/// （或空），hand_i ← [VRF 身份 ∪ 该座占用者]。名单=隐私开关的实验与理由见
+/// perms::member_policy_ok；本指令作为覆盖/修复通道保留，但同样受策略校验，
+/// 运营方无法再把自己加回名单。
 #[derive(Accounts)]
 pub struct AdminSetMembers<'info> {
     #[account(
@@ -812,6 +812,9 @@ pub struct AdminSetMembers<'info> {
         constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
     )]
     pub table: Account<'info, Table>,
+    /// CHECK: Game（只读）：成员策略校验 hand_i 的"当前占用者"从这里读。
+    #[account(seeds = [b"game", table.key().as_ref()], bump)]
+    pub game: AccountLoader<'info, Game>,
     /// CHECK: 目标账户（deck 或 hand PDA）；handler 内按 target_index 推导断言。
     pub target: UncheckedAccount<'info>,
     /// CHECK: 目标账户的 permission PDA；handler 内断言。
