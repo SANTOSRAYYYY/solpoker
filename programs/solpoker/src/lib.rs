@@ -46,8 +46,8 @@ pub mod state;
 pub mod vrf;
 
 use state::{
-    AgentProfile, Deck, Game, HandProof, HandReplay, HandSecrets, OwnerAllowlist, PlayerHand,
-    ProgramConfig, SeatLedger, Table,
+    AgentProfile, Deck, DepositRecord, Game, HandProof, HandReplay, HandSecrets, OwnerAllowlist,
+    PlayerHand, ProgramConfig, SeatLedger, Table,
 };
 
 // Program id pinned since Stage 0 deployment (docs/design/pubkeys.json); this
@@ -919,6 +919,59 @@ pub struct TopUp<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// credit_x402_deposit（配套文档一 §4.3，L1）：网关把标准 x402 付款记入座位账本。
+///
+/// 门禁：`config.gateway` 签名。付款交易与入账分离（标准 x402 客户端的付款
+/// 交易里只能有 compute budget + 一笔 TransferChecked + Memo）——「这笔钱是
+/// 谁付的」由网关认定，但 `DepositRecord` 记下付款签名供任何人事后审计。
+/// `DepositRecord` 的 `init` 语义（PDA 以付款签名两半为种子）保证同一笔付款
+/// 不可重复入账。新占座走与 sit_down 相同的金额/身份规则（其余 8 座随交易传入）。
+#[derive(Accounts)]
+#[instruction(idx: u8, payer: Pubkey, amount: u64, sig_lo: [u8; 32], sig_hi: [u8; 32])]
+pub struct CreditX402Deposit<'info> {
+    #[account(
+        seeds = [b"config"],
+        bump = config.bump,
+        constraint = config.gateway == gateway.key() @ errors::SolpokerError::Unauthorized,
+    )]
+    pub config: Account<'info, ProgramConfig>,
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
+    #[account(mut, seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
+    pub seat: Account<'info, SeatLedger>,
+    /// 入账凭据（付款签名两半为种子；重复入账在此失败）。
+    #[account(
+        init,
+        payer = gateway,
+        space = 8 + DepositRecord::INIT_SPACE,
+        seeds = [b"x402", sig_lo.as_ref(), sig_hi.as_ref()],
+        bump,
+    )]
+    pub deposit_record: Account<'info, DepositRecord>,
+    /// CHECK: 其余 8 个座位账本（新占座时的 §2.2/§2.3 扫描，同 sit_down）；
+    /// handler 内手工校验 owner+dish+idx 并为不同座位。
+    pub other0: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other1: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other2: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other3: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other4: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other5: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other6: UncheckedAccount<'info>,
+    /// CHECK: 同上。
+    pub other7: UncheckedAccount<'info>,
+    /// 可选：agent 身份档案（PDA ["agent", signer]）；不传 = 真人。
+    pub agent_profile: Option<Account<'info, AgentProfile>>,
+    #[account(mut)]
+    pub gateway: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
 /// take_seat（§5.2.2，ER，permissionless）：把 L1 买入计入 ER 筹码。
 #[derive(Accounts)]
 #[instruction(idx: u8)]
@@ -1334,6 +1387,20 @@ pub mod solpoker {
     /// §5.2.3（L1）：占用者本人补码，deposited_total += amount。断言 I-L1。
     pub fn top_up(ctx: Context<TopUp>, idx: u8, amount: u64) -> Result<()> {
         instructions::top_up::handler(ctx, idx, amount)
+    }
+
+    /// x402 标准模式入账（配套文档一 §4.3）：config.gateway 签名，把「已在 L1
+    /// 付进 TableVault」的付款记到座位账本。金额/身份规则与 sit_down 相同；
+    /// DepositRecord（PDA 以付款签名两半为种子）保证同一笔付款不可重复入账。
+    pub fn credit_x402_deposit(
+        ctx: Context<CreditX402Deposit>,
+        idx: u8,
+        payer: Pubkey,
+        amount: u64,
+        sig_lo: [u8; 32],
+        sig_hi: [u8; 32],
+    ) -> Result<()> {
+        instructions::credit_x402_deposit::handler(ctx, idx, payer, amount, sig_lo, sig_hi)
     }
 
     /// §5.2.2（ER，permissionless）：读 SeatLedger 克隆，把买入计入筹码。

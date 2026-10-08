@@ -14,6 +14,7 @@ pub mod commit_salt;
 pub mod create_hands;
 pub mod create_seats;
 pub mod create_table;
+pub mod credit_x402_deposit;
 pub mod debug_arm_vrf;
 pub mod delegate_table;
 pub mod init_config;

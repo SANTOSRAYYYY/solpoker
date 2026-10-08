@@ -274,9 +274,41 @@ sequenceDiagram
 
 签名只有两个：facilitator（手续费付款人）和 agent（转账授权人）。agent 先签，facilitator 后签；facilitator 改动交易的任何字节都会让 agent 的签名失效。
 
-### 4.3 标准模式（延后，保留设计）
+### 4.3 标准模式（2026-10-08 落地）
 
-以后需要时实现：`credit_x402_deposit(sig, payer, table, seat, amount)` 只有网关 authority 能调用，`DepositRecord` 以 `["x402", sig[0..32], sig[32..64]]` 为种子防止重复入账，金额不超过 TableVault 的盈余；`refund_x402_deposit` 在座位已被占用时把钱退回付款人；开源对账脚本保证每条 DepositRecord 都能对应到一笔链上交易。
+**指令**：`credit_x402_deposit(idx: u8, payer: Pubkey, amount: u64, sig_lo: [u8;32], sig_hi: [u8;32])`
+（付款签名的两半分开传，`DepositRecord` 的 PDA 种子就是 `["x402", sig_lo, sig_hi]`——
+`init` 语义天然防重复入账；第二笔同签名的入账会在「账户已存在」处失败）。
+
+**账户**：`config`（`config.gateway == signer` 门禁）· `table` · `seat` · `deposit_record`（init）·
+其余 8 个 SeatLedger（只在「新占座」时用，规则与 `sit_down` 完全相同的全桌扫描）·
+可选 `agent_profile` · `gateway`（签名，付 `DepositRecord` 租金）· system program。
+
+**语义**：
+- 座位为空 → 按入座处理：金额必须落在买入区间、身份规则（§2.2/§2.3）与 `sit_down` 一致，
+  占用者 = 付款人，payout 钉死（真人 = 付款人；agent = 按其 profile 设置）；
+  **不设 session key**（网关没有占用者签名）——占用者之后自己调 `set_session`。
+- 座位已被同一付款人占用 → 按补码处理：`deposited_total += amount`（单笔 ≤ 最大买入）。
+- 金额必须是 CENT（0.01 USDC）整数倍；单笔不超过本桌最大买入。
+
+**信任边界（如实）**：程序读不到别的交易，「这笔钱是谁付的」由网关认定；但 `DepositRecord`
+记下付款签名 —— 拿它去 L1 查那笔交易，核对「付款人 → ATA(vault_auth)」的转账金额 ≥ `amount`，
+即可完全审计（`/history` 的「L1 审计视图」就是干这个的）。
+
+**参考实现（本仓库，可跑）**：
+- `scripts/x402-gateway.mjs`：HTTP 402 报价（`payTo` = 该桌 `vault_auth`，字段对齐
+  @x402/core 2.28 的 exact-SVM 形状，另有 `extra.solpoker`）→ 校验付款（L1 查那笔
+  交易的 vault 增量与签名者；`FACILITATOR_URL` 设置时改为调外部 `/verify`，**facilitator
+  最终选型仍是待定项**）→ 调 `credit_x402_deposit` 入账 → 重复入账回 409。
+- `scripts/x402-pay.mjs`：标准客户端模拟（ComputeBudget + TransferChecked + Memo）。
+
+**实测（devnet，桌 #20 座 0）**：报价 402（`payTo` = `vault_auth`，最小买入 10 tUSDC）→
+付款交易 `3GbCEXrk…` → 入账 200（credit tx `5ujwU8hk…`，DepositRecord `AMGT1bPb…`）→
+链上复核：`occupant = 付款人`、`payout = 付款人`、`deposited_total = 10 000 000`、
+`paid_total = 0`、`session_key` 未设；重复提交同一签名 → 409（不可重复入账）。
+
+**仍延后**：`refund_x402_deposit`（座位被占时退款）留待有真实 x402 客户端时实现——
+原子模式（§4.1）仍是首选主路径，标准模式只是兼容路径。
 
 ### 4.4 facilitator 的校验清单
 

@@ -131,6 +131,25 @@ pub struct SeatLedger {
     pub bump: u8,
 }
 
+/// x402 标准模式的入账凭据（配套文档一 §4.3；2026-10-08 落地）。
+/// PDA ["x402", sig_lo, sig_hi]（付款交易签名的两半）——`init` 语义保证
+/// 同一笔付款不可能被网关重复入账。记录付款人/桌/座/金额/时间与完整签名，
+/// **供任何人事后审计**：拿 `sig` 去 L1 查那笔交易，核对「付款人 → TableVault」
+/// 的转账金额 ≥ `amount`（/history 的 L1 审计视图即为此准备）。
+/// 这是 x402 标准模式里唯一信任网关的地方，但可完全审计（同 §9.4 的说明）。
+#[account]
+#[derive(InitSpace)]
+pub struct DepositRecord {
+    pub payer: Pubkey,
+    pub table: Pubkey,
+    pub seat_idx: u8,
+    pub amount: u64,
+    pub credited_at: i64,
+    /// 付款交易签名（64 字节）。
+    pub sig: [u8; 64],
+    pub bump: u8,
+}
+
 // ---------------------------------------------------------------------------
 // ER accounts (delegated to TEE_VALIDATOR)
 // ---------------------------------------------------------------------------
