@@ -52,6 +52,11 @@
 
 ### 遗留问题
 
+- **（2026-10-08）commit 费用死结的真正解法：`lamports-topup`（MagicBlock skill 里有！）+ 两位真人退款到账**：
+  - **真机制**（skill `fees-and-commit-economics.md` 佐证）：委托账户的 commit/手续费从 **ER 副本**扣，长时对局超过 ~25 次 commit 后走 fee-vault 路径 **live debit**；**余额耗尽 → 整个可计费 bundle 失败**（我们看到的 `InsufficientFundsForRent`），而 **L1 侧充值无效、ER 层拒绝普通转账** ✗（我先前"补 L1"的结论是错的 ✗，已更正）。
+  - **解法**（skill `references/lamports-topup.md`）：用 **`lamportsDelegatedTransferIx`**（Ephemeral SPL Token 的一次性 lamports PDA：建 PDA → 注资 → 委托 → ER 消费并记到目标委托账户）✓。新增工具 **`scripts/topup-delegated.mjs <桌号>`**（读 ER 余额 → 低于阈值才补 ✓；每笔留痕 tmp-topup-log.jsonl ✓）。
+  - **执行结果**：桌 22 补 `commitPayer +0.049 / game +0.0415 / handProof +0.0304` ✓ → **快照从卡死的 #149 自动追到 #211** ✓✓（无需重启任何进程）；两笔挂账**已退回本人钱包**（朋友 99.88 / 用户 199.82 ✓✓）；**两张旧座位账本已释放**（可重新入座 ✓）。随后**全量 24 桌**跑了一遍（44 账户补齐 / 0 失败 ✓）；`commitPayer` 只有 22 号桌耗空（唯一在打的桌 ✓）。
+  - **附带教训**：临时兑现脚本没校验 payout 字段（已清零）→ 每座 0.1 多的零头被打到空地址 ✗（测试币，可忽略；"兑现前校验 payout ≠ 默认地址"已记入手册）。
 - **（2026-10-08）"行动坞被遮挡"——宽窗口下的真凶（用户一句"应该是被遮挡了"破案）**：
   - **症状**：玩家在宽窗口（~1918px）下坐在桌边、TEE 已验证、轮到自己、底牌可见，**但看不到任何下注/加注控件**；我用 1440 宽的一切验证都正常 ✗。
   - **定位**：在同一宽度复现 + `document.elementsFromPoint` 命中测试 → 行动坞（以及提示行）**被嵌在毡桌缩放容器 `.felt-fit` 内部** ✗；该容器是 `overflow: hidden` + 按缩放补偿高度（可视 532px vs 内容 668px），**行动坞正好落在被裁掉的部分** ✗✗ → 既不可见也不可点。

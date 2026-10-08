@@ -91,7 +91,7 @@ node scripts/deploy-tables.mjs --check            # 只预检：桌号占用 / D
 | **玩家说"已入座但没有下注/加注按钮"** | 先看座位状态：`node scripts/table-status.mjs <id>`。若已 **Left（被 strike 请离）**：说明他的页面判定不到自己的座位（多数是**入座钱包 ≠ 页面当前选中的钱包**，Privy 多钱包常见）→ 页面新版本会提示并允许"一键切换到该钱包"；让他刷新、切回入座用的钱包、重新入座。退款会自动经 Sweep 回到他的地址 |
 | ER 报 401 InvalidToken | `getAuthToken` 的 token 会过期；用 `mkEr()` 重新认证（`scripts/deploy-tables.mjs` 已内置重试） |
 | **某桌"不打牌"了（座位都还在）** | 先看 crank 日志有没有 `commit_game 失败`（2026-10-08 起 commit 失败会自动降级 60s 并继续推进，牌局不受影响）；若整桌真的冻住，检查 `advance` 是否被前面的步骤拦住。历史上曾因 commit 步骤未隔离失败而冻桌 3 小时（已修） |
-| **`InsufficientFundsForRent` on commit** | 被提交账户（game/handProof/handSecrets/handReplay）余额恰等于租金线、没有手续费余量（DLP 扣费即跌穿）。**修法（2026-10-08 已验证）：在这些账户的 L1 副本上各补 ~0.02 SOL** —— DLP 的手续费从 **L1 侧**余额扣；补完 ER 模拟立刻 `err: null`。注意 ER **不允许**向这些 DLP 持有的账户直接转账（补币必须在 L1 做）。若模拟报 `Custom:6023`，那是"手牌进行中不能 commit"，属正常 |
+| **`InsufficientFundsForRent` / commit 整包失败（快照停更 → 兑现/离座被堵）** | **委托账户在 ER 侧的手续费余额耗尽**（长时对局超过 ~25 次 commit 后开始 live debit；L1 侧充值**无效**、ER 也禁止普通转账 ✗）。**修法（2026-10-08 已验证）：`node scripts/topup-delegated.mjs <桌号,逗号分隔>`** —— 走 MagicBlock 的 `lamportsDelegatedTransferIx`（一次性 lamports PDA，见 skill `references/lamports-topup.md`）。补完无需重启：crank 下一手自动提交，快照即追上（实测 #149 → #211），挂账的座位随后由 sweep 自动兑现。建议**新桌部署后先跑一次**该脚本（`game/handProof` 常年在租金线上 ✓） |
 | **crank 日志"很久没更新"** | stdout 重定向到文件时是**块缓冲**（64KB），日志会滞后很久 —— 这是假警报。判断 crank 是否在跑：看 ER 状态/交易，或用 `node scripts/table-status.mjs <id>` 看牌局是否推进 |
 | 交易"成功"但什么都没发生 | 先用 `getSignatureStatuses` 查 `err`（本环境 `confirmTransaction` 不抛错）；再 `getTransaction` 看日志 |
 | 程序"部署成功"但新指令报 `Custom:101` | **老坑**：`anchor build` 会因 ID 校验中止而留下旧 `.so`。用 `anchor build --ignore-keys -p solpoker`，并跑 `node scripts/program-smoke.mjs` 复验派发 |
