@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 紧急修复：手牌冻结后中途入座 → 发牌清零旁观座位筹码（6020）（2026-10-09 下午）
+
+**现象**：往 #22 桌连放 5 个 agent（外加用户小号，6 人桌）后，该桌卡死在 AwaitSeed：
+`advance` 连续报 `6020 Conservation`（87 次），手牌发不出、整桌冻结（资金安全——每次都整笔回滚）。
+
+**根因（潜在 bug，今晚第一次被触发）**：手牌**冻结之后中途入座**的座位不在 `hand_mask` 里，
+而发牌路径的 `hand_inputs` 对非本手座位给出 **0 筹码**；`Engine::new(inputs.stacks)` 重建引擎后
+`sync_game_from_engine` 会把这些座位的 `stack` 写回成 0 → I-ER 守恒
+（`Σcredited == pot+rake+Σstack+Σowed`）立刻破裂。历史从未踩到：以前入座都发生在两手之间
+（冻结包含所有在座者）；今晚 4 个 agent 正好都塞进了同一手的窗口。
+
+**修复**：发牌前快照所有非 `hand_mask` 座位的手内字段（stack/in_hand/street_bet/folded/
+all_in/acted/strikes/leave_requested），`sync_game_from_engine` 之后原样写回——**发牌只影响
+本手参与者**。回归测试：`preflop_deal_preserves_side_seat_and_conservation`（座 2 中途
+入座、发牌后筹码/掩码/守恒全保持）。40 个单测全绿，已升级 + parity ✓；部署后卡住的手
+即刻发出，桌子恢复六人连打（各座位筹码分毫未动）。
+
+**教训**：模型层"整桌镜像"（engine sync 写全部 9 座）与"只写参与者"的语义边界必须在每次
+sync 前后显式维护；凡是"冻结后仍会变动的座位"（中途入座）都是这类盲区的高发点。
+
+
 ## 重启恢复 + 两处运维修正（2026-10-09 下午）
 
 昨晚整机关机 → 本机全部进程（crank/agents/relay/Privoxy）一并停止；链上无损伤（没有 crank

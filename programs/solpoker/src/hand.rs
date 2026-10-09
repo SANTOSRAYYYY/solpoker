@@ -1255,6 +1255,30 @@ fn await_seed(
     }
     deck.salts = salts;
 
+    // 2026-10-09 修补：非本手座位的手内状态必须原样保留 —— 手牌**冻结后中途
+    // 入座**的座位不在 hand_mask 里，而 `hand_inputs` 对它们给出 0 筹码，
+    // 随后的 sync_game_from_engine 会把它们的 stack 清零 → 破坏 I-ER
+    // （6020 Conservation，五 agent 同桌实测暴露；交易整笔回滚，手永远发不出）。
+    // 处理：发牌前快照这些座位的手内字段，sync 后原样写回。
+    let mut keep: [(u64, u64, u64, u8, u8, u8, u8, u8); MAX_SEATS] = [(0, 0, 0, 0, 0, 0, 0, 0); MAX_SEATS];
+    let mut keep_mask = 0u16;
+    for i in 0..MAX_SEATS {
+        if hand_mask & seat_bit(i as u8) == 0 {
+            let s = &game.seats[i];
+            keep[i] = (
+                s.stack,
+                s.in_hand,
+                s.street_bet,
+                s.folded,
+                s.all_in,
+                s.acted,
+                s.strikes,
+                s.leave_requested,
+            );
+            keep_mask |= seat_bit(i as u8);
+        }
+    }
+
     // Button: first dealt hand 閳?deal.first_button (鎼?.3); else clockwise
     // rotation from the previous button over the NEW hand_mask (鎼?.1).
     let inputs = hand_inputs(program_id, table_bytes, game, &salts, &deck.vrf_out);
@@ -1340,6 +1364,21 @@ fn await_seed(
     }
 
     sync_game_from_engine(game, &engine);
+    // 恢复非本手座位（冻结后中途入座者）的手内状态：sync 只应影响本手参与者。
+    for i in 0..MAX_SEATS {
+        if keep_mask & seat_bit(i as u8) != 0 {
+            let (stack, in_hand, street_bet, folded, all_in, acted, strikes, leave) = keep[i];
+            let s = &mut game.seats[i];
+            s.stack = stack;
+            s.in_hand = in_hand;
+            s.street_bet = street_bet;
+            s.folded = folded;
+            s.all_in = all_in;
+            s.acted = acted;
+            s.strikes = strikes;
+            s.leave_requested = leave;
+        }
+    }
     st.store(deck, game);
     game.street = deal::STREET_PREFLOP;
     game.board = [0xFF; 5];
@@ -2741,6 +2780,35 @@ mod tests {
         assert_eq!(s.owed_total, stack_before);
         assert_eq!(w.game.occupied_mask & seat_bit(button), 0);
         assert_eq!(w.proof.entries[0].status, PROOF_SETTLED);
+        fund::assert_conservation_er(&w.game).unwrap();
+    }
+
+    /// 2026-10-09 回归（五 agent 同桌的 6020）：手牌**冻结后中途入座**的座位
+    /// （有筹码、不在 hand_mask）在发牌时不得被 sync 清零——发牌只应影响本手
+    /// 参与者，非参与者的 stack/手内字段原样保留、守恒保持。
+    #[test]
+    fn preflop_deal_preserves_side_seat_and_conservation() {
+        let mut w = World::heads_up();
+        w.step(); // Idle → Commit（冻结 mask = 0b011）
+        assert_eq!(w.game.hand_mask, 0b011);
+        // 中途入座：座 2 在冻结之后坐下（有筹码，不在本手）。
+        seat_players(&mut w.game, 0b100, STACK);
+        assert_eq!(w.game.occupied_mask, 0b111);
+        {
+            let mut hands = w.hands.as_mut();
+            commit_and_reveal(&mut w.game, &mut hands, 0);
+            commit_and_reveal(&mut w.game, &mut hands, 1);
+        }
+        w.step(); // → AwaitSeed
+        w.fulfill(VrfTarget::Preflop, 0x90);
+        let stack2 = w.game.seats[2].stack;
+        let credited2 = w.game.seats[2].credited_total;
+        w.step(); // 发牌（修复前：sync 清零座 2 筹码 → I-ER 破 → 6020）
+        assert_eq!(w.game.phase, PHASE_PREFLOP);
+        assert_eq!(w.game.seats[2].stack, stack2, "非本手座位的筹码不得被发牌清零");
+        assert_eq!(w.game.seats[2].credited_total, credited2);
+        assert_eq!(w.game.seats[2].in_hand, 0);
+        assert_eq!(w.game.occupied_mask, 0b111);
         fund::assert_conservation_er(&w.game).unwrap();
     }
 }
