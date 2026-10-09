@@ -1,67 +1,109 @@
-# solpoker
+# SolPoker
 
-Private heads-up No-Limit Hold'em on Solana. Hands run inside a MagicBlock **Private Ephemeral Rollup** (Intel TDX, `devnet-tee`); USDC never enters the rollup and is escrowed per table on L1. v1 ships cash tables only (0.1/0.2, 0.5/1, 1/2 USDC).
+**Verifiably private poker on Solana.** Hands run inside a MagicBlock **Private Ephemeral
+Rollup** (Intel TDX, `devnet-tee`): hole cards are dealt and played encrypted inside a
+hardware enclave, and **the operator cannot read them** — every private account's reader
+list is on-chain policy, not a promise. Dealing is deterministic from commit–reveal salts
+and VRF randomness, so every hand can be recomputed card-by-card after settlement.
 
-Solana 上的隐私德州扑克（v1 为单挑现金桌）。对局运行在 MagicBlock 私有 Ephemeral Rollup（Intel TDX）里，USDC 只留在 L1 的每桌托管账户中。
+> **Status: devnet / testnet.** Test tUSDC (`9WUwFXp…`) carries no real value, and the
+> product is deliberately honest about its edges (see [Trust model](#trust-model)).
+> Mainnet waits until the escape channel, governance and fee model are done — the
+> [CHANGELOG](CHANGELOG.md) is the full build log.
 
-> Status: **Stage 1** (design documents, awaiting sign-off). Stage 0 delivered the pinned toolchain, repo skeleton and delegation smoke test on the local stack and devnet-tee. See [CHANGELOG.md](CHANGELOG.md).
->
-> **Running the testnet product**: [docs/runbook-testnet.md](docs/runbook-testnet.md) — start the four processes, add tables, verify hands, troubleshoot. One-command health check: `node scripts/testnet-health.mjs` (deep: `--deep <tableId>`).
->
-> Design: [Stage 1 design](docs/design/stage1-design.md) · [AI tables and x402](docs/design/stage1-agents-x402.md) · [commit fees and escape hatch](docs/design/stage1-fees-escape.md) · [decisions](docs/design/decisions.md) · [pre-dev review](docs/design/pre-dev-review.md)
+**Live (devnet):** [web app](https://solpoker-coinsatoshi666-5257.vercel.app) ·
+[docs](https://solpoker-coinsatoshi666-5257.vercel.app/docs) ·
+[trust & verification](https://solpoker-coinsatoshi666-5257.vercel.app/trust)
+*(get test tUSDC from the in-app faucet)*
 
-## Pinned toolchain
+## What's under the hood
 
-| Tool | Version | Notes |
-| --- | --- | --- |
-| Rust | 1.89.0 | `rust-toolchain.toml` |
-| Solana CLI (Agave) | 3.1.10 | `sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.10/install)"` |
-| Anchor CLI | 1.0.2 | prebuilt binary, sha256 in `.github/workflows/ci.yml` |
-| Node | 24.x | `package.json` `engines` |
-| Local MagicBlock stack | `@magicblock-labs/ephemeral-validator@0.14.10` | `npm i -g`, started by `scripts/mb-stack.sh` |
-| anchor-lang / ephemeral-rollups-sdk | `=1.0.2` / `=0.17.3` | exact pins in each program's `Cargo.toml` |
-| @anchor-lang/core / ER SDK / web3.js | 1.0.2 / 0.17.3 / 1.98.4 | exact pins + yarn `resolutions` |
-
-`scripts/check-pins.sh` fails if anything drifted.
-
-## Layout
-
-| Path | What |
+| Piece | Role |
 | --- | --- |
-| `programs/solpoker` | main program (skeleton in Stage 0), ID `EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf` |
-| `programs/smoke` | throwaway Stage 0 spike: delegate / commit / undelegate a counter, ID `BU1Ad3zgoJWrP11kZTzomMTJtebVGYdVweMjkQHtfQW4` |
-| `tests/smoke.ts` | smoke test; same file runs against the local stack or devnet-tee |
-| `scripts/mb-stack.sh`, `scripts/mb-health.sh` | start / health-check the local MagicBlock stack |
-| `scripts/tee-latency.ts` | latency breakdown against devnet-tee |
-| `scripts/check-pins.sh` | version pin checks |
-| `scripts/probe_dlp.py` | does a cluster's delegation program support the escape hatch (simulation only) |
-| `scripts/probe-er-feepayer.ts` | which fee payers (funded / zero / rent-exempt minimum) the ER accepts |
-| `docs/design/` | Stage 1 design (main, AI tables and x402, fees and escape hatch), decisions, pre-dev review, context block |
-| `docs/stage*-notes.md` | verified external facts with sources |
+| [`programs/solpoker`](programs/solpoker) | Anchor program on Solana devnet + MagicBlock ER. Program ID `EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf`. Full game state, dealing protocol, settlement, PER permissioning. |
+| [`crates/solpoker-core`](crates/solpoker-core) | Pure, unit-tested core: NLHE betting engine, deterministic deal driver, hand evaluator, settlement (side pots, rake), VRF state machine. The program is a thin shell over this — rules live in one place. |
+| [`web`](web) | Next.js app: landing + lobby + table + `/docs` (GitBook-style, bilingual) + `/history` (L1 audit) + `/trust` (interactive lifecycle, claims) + faucet. Privy wallet login, session keys, all play signed client-side. |
+| [`scripts`](scripts) | Operators' toolbox: `crank.mjs` (keeper that drives the phase machine), `testnet-health.mjs`, `verify-hand`, table deployment, per-table tools. |
+| [`scripts/agent`](scripts/agent) | AI players: `agent.mjs` (`new/fund/sit/run/stand/status`), MCP server, strategy hooks. Table 22 runs a live AI demo. |
+| [`docs`](docs) | [Dealing protocol (zh/en)](docs/dealing-protocol.zh.md), [testnet runbook](docs/runbook-testnet.md), design docs. |
 
-## Local test
+## How a hand works
+
+1. **Commit** — the table freezes a hand; each seat posts a salt commitment on the ER.
+2. **Randomness** — MagicBlock VRF delivers a seed (the oracle's callback writes it into the
+   private deck account; requests are permissionless).
+3. **Reveal + deal** — salts are revealed, every check passes, and the deal is computed
+   *inside* the program: `cards = f(VRF output, salt digest)`; hole cards land in per-seat
+   private accounts (readable by that seat only).
+4. **Play** — actions are signed by the player (or their session key) on the ER; the keeper
+   (crank) only drives timers and street transitions — it cannot act for anyone.
+5. **Settle** — showdown evaluation, side pots and rake are computed on-chain from the
+   revealed hands; a proof entry + secrets go into ring buffers so **anyone can recompute
+   all 52 cards** of the hand afterwards.
+6. **Settle to L1** — the game state is committed back to the base layer on a schedule;
+   money moves only between per-table escrow and the addresses pinned at sit-down.
+
+## Trust model
+
+- **Operator cannot see your cards.** Every hand/deck account has an on-chain member list
+  (`permission:` accounts) that excludes the operator; the seat's own wallet is the only
+  human reader. The program enforces this (`take_seat` adds only the occupant, `stand_up`
+  resets to a keyless VRF sentinel, and the admin override path itself rejects the
+  operator — `MemberNotAllowed`). You can check any table's lists on-chain.
+- **Operator cannot move your money.** Cash-out is permissionless and can only pay the ATA
+  pinned at your sit-down. The vault is per-table escrow on L1.
+- **Everything is recomputable.** Deals are deterministic from public randomness + your
+  revealed salts; the `/history` page and the `verify-hand` tool recompute hands from
+  on-chain data.
+- **Still trust (stated plainly):** the TEE platform (Intel TDX / MagicBlock), the program
+  upgrade authority (governance is a mainnet item), and validator liveness.
+
+## Running it
+
+Pinned toolchain (Rust 1.89, Agave 3.1.10, Anchor 1.0.2, Node 24) — `scripts/check-pins.sh`
+catches drift. Build + tests:
 
 ```bash
 yarn install --frozen-lockfile
-anchor build
-scripts/mb-stack.sh --reset          # terminal 1: base 8899, ER 7799, QFS 6699
-scripts/mb-health.sh                 # terminal 2
-anchor test --skip-local-validator
+cargo test -p solpoker-core && anchor build
 ```
 
-The local query-filtering-service (6699) enforces `?token=` auth just like devnet-tee, so the tests authenticate with `getAuthToken` locally too.
-
-## devnet-tee smoke test
+Run the testnet product (keeper + AI agents + web). Both MagicBlock endpoints are reached
+directly; pass the L1 endpoint explicitly:
 
 ```bash
-PROVIDER_ENDPOINT=https://api.devnet.solana.com \
-EPHEMERAL_PROVIDER_ENDPOINT=https://devnet-tee.magicblock.app \
-ANCHOR_WALLET=keys/deployer.json \
-yarn ts-mocha -p ./tsconfig.json -t 1000000 tests/smoke.ts
+export L1_URL=https://rpc.magicblock.app/devnet
+
+node scripts/crank.mjs 5,6,7,8,9,11,12,14,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,41
+node scripts/agent/agent.mjs run bob        # one process per AI player
+(cd web && npm run dev -- -p 3100)          # app on http://localhost:3100
 ```
 
-Delegation always names the validator explicitly (`MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo` on devnet-tee, `mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev` locally); `validator: None` is never used.
+One-command health check: `node scripts/testnet-health.mjs` (deep: `--deep 22`).
+Full operator manual: [docs/runbook-testnet.md](docs/runbook-testnet.md).
 
-## Keys
+**Bring your own AI:** register a profile and sit it down —
 
-Devnet keys go in `keys/` (gitignored, together with `solpoker-key-*.json` and `*-keypair.json`). Copy `keys/solpoker-program.json` to `target/deploy/solpoker-keypair.json` and `keys/smoke-program.json` to `target/deploy/smoke-keypair.json` before `anchor deploy`. CI generates a throwaway wallet and preloads the programs at their declared IDs, so no real key ever enters CI. Mainnet keys are managed separately, and the upgrade authority moves to a multisig before mainnet.
+```bash
+node scripts/agent/agent.mjs new alice
+node scripts/agent/register-agent.mjs alice --owner keys/agents/alice-owner.json
+node scripts/agent/agent.mjs fund alice 0.05 100
+node scripts/agent/agent.mjs sit alice 22 5 100
+node scripts/agent/agent.mjs run alice --strategy ./my-strategy.mjs
+```
+
+## 中文速览
+
+SolPoker 是运行在 **MagicBlock 私有 Ephemeral Rollup（Intel TDX）** 上的隐私德州扑克：
+底牌在硬件隔离区内加密运行，**运营方读不到任何人的底牌**（每张私有账户的可读名单是链上
+策略、公开可查：入座只加入本座玩家、离座回到无密钥哨兵、连管理员的覆盖通道也拒绝运营方）；
+发牌由 **VRF + 双方盐承诺** 确定性推导，**每一手都能在结算后逐张复算**；资金只存在每桌
+独立的 L1 托管账户里，兑现无许可且只能打到你入座时钉死的地址。
+
+当前为 **devnet 测试网**（测试币无价值）。产品站内置水龙头、GitBook 式双语文档、可交互
+信任页与手牌验证器。运维手册见 [docs/runbook-testnet.md](docs/runbook-testnet.md)，发牌
+协议见 [docs/dealing-protocol.zh.md](docs/dealing-protocol.zh.md)。
+
+## License
+
+[MIT](LICENSE)
