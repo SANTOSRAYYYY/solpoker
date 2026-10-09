@@ -48,8 +48,8 @@ import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
 import { isSfxMuted, primeSfx, setSfxMuted, sfx } from "@/lib/sfx";
 
-/** 摊牌面板的一条座位：cards=null 表示弃牌/未亮（HandProof 里 0xFF）。 */
-type ShowdownSeat = { i: number; cards: [number, number] | null; delta: bigint };
+/** 摊牌面板的一条座位：cards=null 时用 folded 区分「已弃牌」与「未亮牌」（无人跟注的赢家）。 */
+type ShowdownSeat = { i: number; cards: [number, number] | null; delta: bigint; folded: boolean };
 /** 结算后从公开 HandProof 取的那一手证明（board/hole/deltas）。 */
 type ShowdownView = { handId: bigint; board: number[]; seats: ShowdownSeat[] };
 
@@ -485,17 +485,23 @@ export default function TablePage() {
         // 每座筹码增减；取出来停在屏幕上几秒，让人看清这手赢在哪、输在哪
         // （2026-10-09 用户要求：结算后不要立刻把牌切掉）。
         const endedHand = prev.handId;
+        // 谁弃了牌只存在于「最后一帧观测」里：结算那笔会把 folded 位清掉，公开证明不含弃牌标记。
+        const foldedAtEnd = prev.seats.map((s) => s.folded);
         void (async () => {
           try {
             const proof = await readHandProofLive(erRead, l1, tableId);
             const e = proof?.entries.find((x) => x && x.handId === endedHand) ?? null;
             if (!e || e.status !== 0) return;
-            const seats: ShowdownSeat[] = [];
-            for (let i = 0; i < 9; i++) {
-              if ((e.handMask & (1 << i)) === 0) continue;
+            // 摊牌规则（2026-10-09 用户拍板）：≥2 人打到摊牌才亮牌，且只亮这些人的；
+            // 全弃给一家 = 赢家也不亮（扑克惯例的 muck）；公共牌与每座增减照常显示。
+            const mask: number[] = [];
+            for (let i = 0; i < 9; i++) if ((e.handMask & (1 << i)) !== 0) mask.push(i);
+            const showdown = mask.filter((i) => !foldedAtEnd[i]).length >= 2;
+            const seats: ShowdownSeat[] = mask.map((i) => {
               const [a, b] = e.hole[i];
-              seats.push({ i, cards: a < 52 && b < 52 ? ([a, b] as [number, number]) : null, delta: e.deltas[i] });
-            }
+              const revealed = showdown && !foldedAtEnd[i] && a < 52 && b < 52;
+              return { i, folded: foldedAtEnd[i], cards: revealed ? ([a, b] as [number, number]) : null, delta: e.deltas[i] };
+            });
             setShowdown({ handId: endedHand, board: e.board.filter((c) => c < 52), seats });
           } catch {
             /* 证明读不到时只留横幅 */
@@ -814,7 +820,9 @@ export default function TablePage() {
                       })}
                     </span>
                   ) : (
-                    <span className="text-[11px] text-mist-faint">{tr("table.showdownFolded")}</span>
+                    <span className="text-[11px] text-mist-faint">
+                      {s.folded ? tr("table.showdownFolded") : tr("table.showdownMucked")}
+                    </span>
                   )}
                   <span
                     className={`ml-auto font-mono text-[12px] font-bold ${
