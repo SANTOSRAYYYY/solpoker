@@ -9,7 +9,13 @@
 //   node scripts/topup-delegated.mjs 22                 # 只补桌 22
 //   node scripts/topup-delegated.mjs 20,21,22           # 多桌
 //   node scripts/topup-delegated.mjs 5,6,7,8,9,11,12,14,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34
-//   TARGET_SOL=0.05 MIN_SOL=0.02 node scripts/topup-delegated.mjs 22
+//   TARGET_SOL=0.12 MIN_SOL=0.10 node scripts/topup-delegated.mjs 22   # 覆盖默认
+//
+// 默认 TARGET=0.12 / MIN=0.10（2026-10-09 修正）：旧的 0.05/0.02 有真 bug ——
+// handSecrets（7.3KB）的免租下限 ≈0.0508 SOL **高于旧目标 0.05**，且旧 MIN=0.02
+// 会把已经跌破下限的它判为"够用"跳过，导致 commit 反复
+// InsufficientFundsForRent{account_index:3}。大账户 floor 参考：handSecrets
+// ~0.051 / handReplay ~0.028 / handProof ~0.026 — 0.12 目标给足余量。
 //
 // 覆盖账户（每桌 5 个）：commitPayer（手续费付款人，最关键）+ game/handProof/handSecrets/handReplay。
 import fs from "node:fs";
@@ -26,8 +32,8 @@ const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
 const pda = (s) => PublicKey.findProgramAddressSync(s, pid)[0];
 
 const ids = (process.argv[2] ?? "22").split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
-const TARGET = BigInt(Math.round(Number(process.env.TARGET_SOL ?? 0.05) * 1e9));
-const MIN = BigInt(Math.round(Number(process.env.MIN_SOL ?? 0.02) * 1e9));
+const TARGET = BigInt(Math.round(Number(process.env.TARGET_SOL ?? 0.12) * 1e9));
+const MIN = BigInt(Math.round(Number(process.env.MIN_SOL ?? 0.10) * 1e9));
 
 const deployer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync("keys/deployer.json", "utf8")))

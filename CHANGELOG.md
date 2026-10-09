@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 重启恢复 + 两处运维修正（2026-10-09 下午）
+
+昨晚整机关机 → 本机全部进程（crank/agents/relay/Privoxy）一并停止；链上无损伤（没有 crank
+就没有超时/推进发生，状态冻结、资金安全）。今天下午恢复时发现并修正两件事：
+
+1. **L1 改直连，relay/Privoxy 依赖整体移除**：恢复时 Privoxy 未随系统启动、relay 因此全挂，
+   但直连检测发现 `https://rpc.magicblock.app/devnet`（L1）与 devnet-tee（ER）**都可直连**
+   —— 全栈（crank/agents/webhook/x402）现以直连运行，0 fetch 失败。**新的启动约定：
+   `L1_URL=https://rpc.magicblock.app/devnet`，不再需要本地 relay/Privoxy。**
+2. **topup 阈值 bug（commit 失败的真正根因）**：脚本默认 TARGET=0.05 SOL **低于**
+   `handSecrets`（7.3KB）的免租下限（≈0.0508 SOL），且 MIN=0.02 会把已经跌破下限的它判为
+   "够用"跳过 —— 这正是 `commit_game InsufficientFundsForRent{account_index:3}` 反复复发的
+   原因。默认改为 TARGET=0.12 / MIN=0.10（可环境变量覆盖）；t22 五个账户已补足（+0.44 SOL）。
+
+**恢复现场**：crank 启动即清积压 —— 发现 bob 被超时清出后遗留的欠款（203.48），自动补 6 次
+快照提交后 `sweep cash_out[0]` 成功（按规则付款 + 释放座位）；bob 已重新入座，t22 恢复双人
+连打。网页（Vercel）与链上状态全程无影响。
+
+
 ## 运维工具转正 + 全桌同步（2026-10-09）
 
 把当晚反复用到的三段流程固化成正式脚本（原本是一次性 tmp-*）：
