@@ -63,7 +63,7 @@ const secretsPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("sec
 // HandReplay（§8.7 整手复算输入，2026-10-08）：advance 的必填账户；
 // 老桌需先跑 scripts/init-replay.mjs <tableId> 创建 + 委托。
 const replayPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("replay"), table.toBuffer()], programId)[0];
-const sweepTried = new Set(); // sweep: remember failed attempts keyed by (table, seat, deposited, paid)
+const sweepTried = new Map(); // sweep: key=${table:seat:dep:paid} -> 免试到期时间戳（2026-10-09：失败后 15 分钟允许重试——旧版永久 Set 会把瞬时 6019 的座位永久拉黑）
 const sweepWaitLog = new Set(); // sweep: dedupe "等快照" 日志（key 含快照值，刷新后会重新评估）
 const idleSkipUntil = new Map(); // tableId -> ts：空闲桌（无占用且 Idle）节流——削减 23 桌每轮 ~207 个座位账本读（RPC 429 的来源）
 const commitFailUntil = new Map(); // table -> ts：commit_game 失败后的冷却（避免刷屏，且不阻塞阶段机）
@@ -248,7 +248,7 @@ async function main() {
       if (deposited <= paid) continue; // nothing to pay out
       // 同一个（已存/已付）快照只尝试一次：程序拒绝过的座位不要每轮重试
       const sweepKey = `${tableId}:${i}:${deposited}:${paid}`;
-      if (sweepTried.has(sweepKey)) continue;
+      if ((sweepTried.get(sweepKey) ?? 0) > Date.now()) continue;
       const payout = new PublicKey(ledAcc.data.subarray(154, 186));
       // 快照门（2026-10-08）：cash_out 的付款/释放全部以 **L1 快照**（最后一次
       // commit 的 Game）为准。快照陈旧时发出去只会是 no-op 成功交易，而
@@ -295,7 +295,7 @@ async function main() {
         // L1 snapshot is stale, so cash_out refuses to release): remember it for this
         // snapshot and, if a hand is not in progress, force a commit so the next pass
         // sees a fresh snapshot and can release it.
-        sweepTried.add(sweepKey);
+        sweepTried.set(sweepKey, Date.now() + 15 * 60_000);
         zombieTables.add(tableId);
         console.log(`[t${tableId}] sweep skip[${i}]: ${String(e.message ?? e).slice(0, 90)}`);
         }
@@ -451,7 +451,7 @@ async function main() {
           console.log(`[t${tableId}] commit_game: ${sig.slice(0, 12)}…`);
           // 快照刷新完成：清掉该桌的 zombie 标记与 sweepTried 键，让下一轮真正去释放座位
           zombieTables.delete(tableId);
-          for (const k of [...sweepTried]) {
+          for (const k of [...sweepTried.keys()]) {
             if (k.startsWith(`${tableId}:`)) sweepTried.delete(k);
           }
           return true; // 连锁：下一轮直接尝试 freeze
