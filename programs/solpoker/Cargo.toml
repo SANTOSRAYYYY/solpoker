@@ -1,7 +1,7 @@
 [package]
 name = "solpoker"
 version = "0.1.0"
-description = "solpoker: private heads-up NLHE on Solana (MagicBlock Private Ephemeral Rollup)"
+description = "SolPoker: private, verifiable No-Limit Hold'em cash tables on Solana (2-9 players; MagicBlock Private Ephemeral Rollup)"
 edition = "2021"
 
 [lib]
