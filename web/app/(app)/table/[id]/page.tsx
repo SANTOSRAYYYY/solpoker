@@ -46,6 +46,7 @@ import { readGameLive, readSeatLedgers, type SeatLedgerView } from "@/lib/chain-
 import { scanTables, type TableInfo } from "@/lib/tables";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
+import { isSfxMuted, primeSfx, setSfxMuted, sfx } from "@/lib/sfx";
 
 const KIND_ZH: Record<number, { zh: string; en: string; tone: "plain" | "grad" | "cyan" }> = {
   0: { zh: "真人桌", en: "Human", tone: "plain" },
@@ -356,6 +357,9 @@ export default function TablePage() {
   const [buyIn, setBuyIn] = useState("20");
   const [seatPick, setSeatPick] = useState<number | null>(null);
   const [mixedOk, setMixedOk] = useState(false);
+  const [sfxOn, setSfxOn] = useState(true);
+  const [result, setResult] = useState<{ delta: bigint } | null>(null);
+  const handStackRef = useRef<bigint | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [sitBusy, setSitBusy] = useState(false);
 
@@ -463,28 +467,55 @@ export default function TablePage() {
     const push = (who: string, what: string, tone?: FeedItem["tone"]) =>
       setFeed((f) => [...f.slice(-60), { t, who, what, tone }]);
     if (prev) {
-      if (game.handId !== prev.handId) push(tr("table.feed.system"), tr("table.feed.handStart", { n: game.handId.toString() }), "brand");
+      if (game.handId !== prev.handId) {
+        // 上一手刚结算（handId 在结算 tx 里同步 +1）：用起始筹码算本手输赢并提示
+        if (mySeat !== null && handStackRef.current !== null) {
+          const delta = game.seats[mySeat].stack - handStackRef.current;
+          setResult({ delta });
+          if (delta > 0n) sfx("win");
+          else if (delta < 0n) sfx("lose");
+        }
+        push(tr("table.feed.system"), tr("table.feed.handStart", { n: game.handId.toString() }), "brand");
+        handStackRef.current = mySeat !== null ? game.seats[mySeat].stack : null;
+      }
       if (game.boardLen > prev.boardLen) {
         const street = [tr("table.street.flop"), tr("table.street.turn"), tr("table.street.river")][game.boardLen === 3 ? 0 : game.boardLen === 4 ? 1 : 2] ?? tr("table.street.board");
         push(tr("table.feed.system"), tr("table.feed.streetRevealed", { s: street, n: game.boardLen }), "brand");
+        sfx("deal");
       }
       if (game.phase !== prev.phase) {
         if (game.phase === 0) push(tr("table.feed.system"), tr("table.feed.handEnd"), "plain");
         else if (game.phase === 1) push(tr("table.feed.system"), tr("table.feed.commit"), "brand");
         else if (game.phase === 2) push(tr("table.feed.system"), tr("table.feed.reveal"), "brand");
         else if (game.phase === 7) push(tr("table.feed.system"), tr("table.feed.settling"), "plain");
+        // 新手开始（离开 Idle）→ 发牌声
+        if (prev.phase === 0 && (game.phase === 1 || game.phase === 2)) sfx("deal");
       }
       if (game.pot !== prev.pot) {
         push(tr("table.feed.table"), tr("table.feed.pot", { n: fmtUsdc(game.pot) }), "mint");
+        if (game.pot > prev.pot) sfx("chip");
       }
       if (game.toAct !== prev.toAct && (game.phase === 3 || game.phase === 5)) {
         push(tr("table.feed.system"), tr("table.feed.toAct", { n: game.toAct }), "gold");
       }
     } else {
       push(tr("table.feed.system"), tr("table.feed.loaded", { n: game.handId.toString() }), "brand");
+      handStackRef.current = mySeat !== null ? game.seats[mySeat].stack : null;
     }
     prevRef.current = game;
   }, [game]);
+
+  // ---- 音效：首次交互解锁 AudioContext；静音开关从 localStorage 恢复 ----
+  useEffect(() => {
+    primeSfx();
+    setSfxOn(!isSfxMuted());
+  }, []);
+  // 本手输赢提示自动消失（~3.5 秒）
+  useEffect(() => {
+    if (!result) return;
+    const h = window.setTimeout(() => setResult(null), 3600);
+    return () => window.clearTimeout(h);
+  }, [result]);
 
   // ---- 入座（L1，钱包签名：ATA + session key 预充 + sit_down） ----
   const buyInAmount = parseUsdcInput(buyIn);
@@ -656,6 +687,13 @@ export default function TablePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTurn, game?.handId.toString(), game?.street]);
 
+  // 轮到我 → 行动提示音
+  const prevTurnRef = useRef(false);
+  useEffect(() => {
+    if (myTurn && !prevTurnRef.current) sfx("turn");
+    prevTurnRef.current = myTurn;
+  }, [myTurn]);
+
   // ---- 未入座：空座可选 ----
   const emptySeats = useMemo(() => {
     if (!game) return [];
@@ -687,6 +725,26 @@ export default function TablePage() {
 
   return (
     <div className="min-h-screen">
+      {/* 本手输赢提示（结算后 ~3.5 秒消失；配合 crank 摊牌后的 3 秒发牌停顿） */}
+      {result && (
+        <div className="pointer-events-none fixed left-1/2 top-[60px] z-[70] -translate-x-1/2">
+          <div
+            className={`rounded-full border px-5 py-2 font-mono text-[16px] font-bold shadow-xl backdrop-blur-md ${
+              result.delta > 0n
+                ? "border-win/40 bg-win/15 text-win"
+                : result.delta < 0n
+                  ? "border-loss/40 bg-loss/15 text-loss"
+                  : "border-mist/25 bg-black/45 text-mist-dim"
+            }`}
+          >
+            {result.delta > 0n
+              ? tr("table.resultWon", { n: fmtUsdc(result.delta) })
+              : result.delta < 0n
+                ? tr("table.resultLost", { n: fmtUsdc(-result.delta) })
+                : tr("table.resultEven")}
+          </div>
+        </div>
+      )}
       {/* ------------------------------------------------------------ 顶栏 */}
       <div className="border-b border-mist/8 bg-black/25">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-2 px-3 py-2.5 sm:px-5">
@@ -742,6 +800,17 @@ export default function TablePage() {
                   {tee.phase === "working" ? tr("table.teeChecking") : tr("table.teeConnect")}
                 </button>
               ))}
+            <button
+              className="btn-casino btn-glass px-2.5 py-1.5 text-[12px] whitespace-nowrap"
+              onClick={() => {
+                const next = !sfxOn;
+                setSfxOn(next);
+                setSfxMuted(!next);
+                if (next) sfx("turn");
+              }}
+            >
+              {sfxOn ? tr("table.sfxOn") : tr("table.sfxOff")}
+            </button>
             {myStack !== null && (
               <span className="rounded-lg border border-accent-500/30 bg-black/40 px-2.5 py-1.5 font-mono text-[11.5px] whitespace-nowrap text-mist-2">
                 {tr("table.myStack")} <span className="text-accent-200">{fmtUsdc(myStack)}</span>
@@ -949,7 +1018,10 @@ export default function TablePage() {
                     <div className="flex gap-2">
                       <button
                         className="btn-casino btn-danger px-5 py-2.5 text-[13px]"
-                        onClick={() => driver.act("fold")}
+                        onClick={() => {
+                          sfx("fold");
+                          driver.act("fold");
+                        }}
                         disabled={!!driver.busy || demo}
                       >
                         {tr("table.fold")}
@@ -957,7 +1029,10 @@ export default function TablePage() {
                       {toCall === 0n ? (
                         <button
                           className="btn-casino btn-glass px-5 py-2.5 text-[13px]"
-                          onClick={() => driver.act("check")}
+                          onClick={() => {
+                            sfx("knock");
+                            driver.act("check");
+                          }}
                           disabled={!!driver.busy || demo}
                         >
                           {tr("table.check")}

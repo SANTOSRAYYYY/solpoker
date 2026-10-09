@@ -145,6 +145,7 @@ async function main() {
 
   const vrfWaitUntil = new Map(); // table -> ts，等待 VRF 履行期间不重复 request
   const vrfRetryUntil = new Map(); // table -> ts，Pending 超时后 retry 的冷却
+  const nextDealAt = new Map(); // table -> ts：摊牌结算完成后停 3 秒再发下一手（2026-10-09）
 
   // 桌与桌彼此独立：串行跑 24 桌时，一轮里每桌要花 1 次 game 读 + 两批座位读
   // （每批 9 个并行 RPC），24 桌串起来就是 25-30 次 RTT —— 实测轮次延迟 ~17s，
@@ -490,6 +491,8 @@ async function main() {
           if (g[o + 145] === 1 && g.readBigUInt64LE(o + 104) > 0n) eligible++;
         }
         if (eligible < 2) return;
+        // 摊牌后停 3 秒再发下一手（2026-10-09 用户要求：不然玩家不知道本手赢什么输什么）
+        if (Date.now() < (nextDealAt.get(tableId) ?? 0)) return;
       }
       // Commit 阶段：缺承诺时才守 Game.phase_deadline(@112)（到期敲 strike、缺盐
       // 座位按 max_strikes 释放 —— §6.3）；每秒空转会白烧手续费（2026-10-08 实测
@@ -531,6 +534,11 @@ async function main() {
           .instruction();
         const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} advance`, ER_CU);
         console.log(`[t${tableId}] advance (phase ${phase}): ${sig.slice(0, 12)}…`);
+        // 摊牌结算完成（phase 7 → Idle）：停 3 秒再开下一手，让玩家看清本手输赢
+        if (phase === 7) {
+          nextDealAt.set(tableId, Date.now() + 3000);
+          console.log(`[t${tableId}] 摊牌结算完成 → 3 秒后发下一手`);
+        }
         return true; // 连锁：推进可能立刻解锁下一阶段（arm→request、close→freeze…）
       } catch (e) {
         const msg = String(e.message ?? e);

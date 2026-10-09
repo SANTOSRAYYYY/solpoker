@@ -22,3 +22,7 @@ magicblock-test-storage/
 .mb-diag/
 __pycache__/  
 *.pyc  
+
+# --- local runtime/scratch ---
+logs/
+/tmp-*
