@@ -92,7 +92,12 @@ for (const id of ids) {
       if (ok) {
         topped++;
         console.log(`✓ #${id} ${name}: +${(Number(amount) / 1e9).toFixed(4)} SOL → 目标 ${(Number(TARGET) / 1e9)} SOL（${sig.slice(0, 12)}…）`);
-      } else failed++;
+      } else {
+        // 2026-10-09：这里曾经静默 failed++（42s 轮询耗尽、既无 err 也无 confirmed ——
+        // L1 丢包/块高过期的典型表现），日志里只见"失败 N"找不到是谁。现在留痕。
+        failed++;
+        console.log(`✗ #${id} ${name}: 42s 内未确认（L1 丢包/过期；下一轮自动重试） sig=${sig.slice(0, 12)}…`);
+      }
     } catch (e) {
       failed++;
       console.log(`✗ #${id} ${name}: ${String(e.message ?? e).slice(0, 140)}`);

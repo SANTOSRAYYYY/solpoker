@@ -15,6 +15,11 @@
 //   TARGET_SOL=0.12 MIN_SOL=0.10 node scripts/topup-watchdog.mjs
 // 注意：和 crank 一样必须带 L1_URL=https://rpc.magicblock.app/devnet（漏带会回落
 // Helius 直连，在此网络环境下全挂）。
+//
+// 健壮性（2026-10-09 首轮后补的坑）：① 所有 ER 请求带 20s fetch 超时——否则一次挂起
+// 的连接会让看门狗静默卡死（首版实测：第二轮 20 分钟没动静）；② 巡检阶段有 120s 硬上限
+// 与「巡检开始」心跳，卡在哪一步日志可见；③ 补币子进程输出按 Buffer 拼接（防多字节
+// 字符被 chunk 边界撕碎）、45 分钟未退出则终止；④ 子进程异常不影响下一轮。
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
@@ -25,9 +30,15 @@ const pid = new PublicKey("EZ5bMNxbtiTpSqdmRaGC4vYt6yWLUDC4WUNGqyvM6CSf");
 const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
 const pda = (s) => PublicKey.findProgramAddressSync(s, pid)[0];
 
+// 与 crank 同款：任何一次 RPC 挂起最多 20s，超时抛错走下一轮
+const fetchWithTimeout = (input, init = {}) =>
+  fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(20000) });
+
 const DEFAULT_IDS = "5,6,7,8,9,11,12,14,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,41";
 const ids = (process.argv[2] ?? DEFAULT_IDS).split(",").map((s) => Number(s.trim())).filter(Number.isFinite);
 const INTERVAL_S = Number(process.argv[3] ?? 600);
+const RECON_MS = 120_000;      // 巡检（读各桌 game + 选桌）的硬上限
+const CHILD_CAP_MS = 45 * 60_000; // 单个补币子进程的最长生命
 
 const deployer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync("keys/deployer.json", "utf8")))
@@ -49,10 +60,17 @@ function runTopup(list) {
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let out = "";
-    p.stdout.on("data", (d) => { out += d; });
-    p.stderr.on("data", (d) => { out += d; });
+    const chunks = [];
+    p.stdout.on("data", (d) => chunks.push(d));
+    p.stderr.on("data", (d) => chunks.push(d));
+    const cap = setTimeout(() => {
+      log(`子进程超过 ${CHILD_CAP_MS / 60000} 分钟未退出 → 终止（下一轮会重试未补上的账户）`);
+      try { p.kill(); } catch { /* ignore */ }
+    }, CHILD_CAP_MS);
     p.on("close", (code) => {
+      clearTimeout(cap);
+      // Buffer 拼接再解码：多字节字符（✓/✗/中文）不会被 chunk 边界撕碎
+      const out = Buffer.concat(chunks).toString("utf8");
       try { fs.appendFileSync(LOG, out); } catch { /* ignore */ }
       for (const line of out.split(/\r?\n/)) {
         if (/完成：|失败|错误|Error/.test(line)) log(`  topup> ${line}`);
@@ -62,7 +80,8 @@ function runTopup(list) {
   });
 }
 
-async function cycle(er) {
+// 巡检：只看「有占用或有待提交」的桌（每桌一次 game 读）
+async function recon(er) {
   const need = [];
   for (const id of ids) {
     const table = pda([Buffer.from("table"), u32(id)]);
@@ -78,6 +97,15 @@ async function cycle(er) {
     const pendingCommit = d.length > 1550 && d[1550] > 0; // hands_since_commit @1550
     if (occupied || pendingCommit) need.push(id);
   }
+  return need;
+}
+
+async function cycle(er) {
+  log("巡检开始");
+  const need = await Promise.race([
+    recon(er),
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`巡检超过 ${RECON_MS / 1000}s 未完成`)), RECON_MS)),
+  ]);
   if (need.length === 0) return log("巡检：无占用桌、无待提交 → 跳过补充");
   log(`巡检：${need.join(",")} 需要检查 → 调 topup-delegated（${need.length} 桌）`);
   const code = await runTopup(need);
@@ -93,7 +121,7 @@ for (;;) {
     const { token } = await getAuthToken(env.ER_BASE_URL, deployer.publicKey, async (m) =>
       (await import("tweetnacl")).default.sign.detached(m, deployer.secretKey)
     );
-    const er = new Connection(`${env.ER_BASE_URL}?token=${token}`, "confirmed");
+    const er = new Connection(`${env.ER_BASE_URL}?token=${token}`, { commitment: "confirmed", fetch: fetchWithTimeout });
     await cycle(er);
   } catch (e) {
     log(`本轮失败（继续下一轮）：${String(e.message ?? e).slice(0, 160)}`);
