@@ -42,11 +42,16 @@ import {
 } from "@/lib/solpoker-client";
 import { useI18n } from "@/lib/i18n";
 import { fmtUsdc, phaseName, type GameView } from "@/lib/game-state";
-import { readGameLive, readSeatLedgers, type SeatLedgerView } from "@/lib/chain-read";
+import { readGameLive, readHandProofLive, readSeatLedgers, type SeatLedgerView } from "@/lib/chain-read";
 import { scanTables, type TableInfo } from "@/lib/tables";
 import { loadOrCreateSessionKey } from "@/lib/session-key";
 import { parseUsdcInput } from "@/lib/amount";
 import { isSfxMuted, primeSfx, setSfxMuted, sfx } from "@/lib/sfx";
+
+/** 摊牌面板的一条座位：cards=null 表示弃牌/未亮（HandProof 里 0xFF）。 */
+type ShowdownSeat = { i: number; cards: [number, number] | null; delta: bigint };
+/** 结算后从公开 HandProof 取的那一手证明（board/hole/deltas）。 */
+type ShowdownView = { handId: bigint; board: number[]; seats: ShowdownSeat[] };
 
 const KIND_ZH: Record<number, { zh: string; en: string; tone: "plain" | "grad" | "cyan" }> = {
   0: { zh: "真人桌", en: "Human", tone: "plain" },
@@ -360,6 +365,7 @@ export default function TablePage() {
   const [sfxOn, setSfxOn] = useState(true);
   const [result, setResult] = useState<{ delta: bigint } | null>(null);
   const handStackRef = useRef<bigint | null>(null);
+  const [showdown, setShowdown] = useState<ShowdownView | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [sitBusy, setSitBusy] = useState(false);
 
@@ -475,6 +481,26 @@ export default function TablePage() {
           if (delta > 0n) sfx("win");
           else if (delta < 0n) sfx("lose");
         }
+        // 摊牌展示：公开的 HandProof 存了这一手的 board / hole（弃牌座 0xFF = 未亮）/
+        // 每座筹码增减；取出来停在屏幕上几秒，让人看清这手赢在哪、输在哪
+        // （2026-10-09 用户要求：结算后不要立刻把牌切掉）。
+        const endedHand = prev.handId;
+        void (async () => {
+          try {
+            const proof = await readHandProofLive(erRead, l1, tableId);
+            const e = proof?.entries.find((x) => x && x.handId === endedHand) ?? null;
+            if (!e || e.status !== 0) return;
+            const seats: ShowdownSeat[] = [];
+            for (let i = 0; i < 9; i++) {
+              if ((e.handMask & (1 << i)) === 0) continue;
+              const [a, b] = e.hole[i];
+              seats.push({ i, cards: a < 52 && b < 52 ? ([a, b] as [number, number]) : null, delta: e.deltas[i] });
+            }
+            setShowdown({ handId: endedHand, board: e.board.filter((c) => c < 52), seats });
+          } catch {
+            /* 证明读不到时只留横幅 */
+          }
+        })();
         push(tr("table.feed.system"), tr("table.feed.handStart", { n: game.handId.toString() }), "brand");
         handStackRef.current = mySeat !== null ? game.seats[mySeat].stack : null;
       }
@@ -516,6 +542,12 @@ export default function TablePage() {
     const h = window.setTimeout(() => setResult(null), 3600);
     return () => window.clearTimeout(h);
   }, [result]);
+  // 摊牌面板自动消失（~5.2 秒——比 crank 的 3 秒发牌停顿多留一点看牌时间）
+  useEffect(() => {
+    if (!showdown) return;
+    const h = window.setTimeout(() => setShowdown(null), 5200);
+    return () => window.clearTimeout(h);
+  }, [showdown]);
 
   // ---- 入座（L1，钱包签名：ATA + session key 预充 + sit_down） ----
   const buyInAmount = parseUsdcInput(buyIn);
@@ -725,8 +757,8 @@ export default function TablePage() {
 
   return (
     <div className="min-h-screen">
-      {/* 本手输赢提示（结算后 ~3.5 秒消失；配合 crank 摊牌后的 3 秒发牌停顿） */}
-      {result && (
+      {/* 本手输赢提示（结算后 ~3.5 秒消失；有摊牌面板时让位给它） */}
+      {result && !showdown && (
         <div className="pointer-events-none fixed left-1/2 top-[60px] z-[70] -translate-x-1/2">
           <div
             className={`rounded-full border px-5 py-2 font-mono text-[16px] font-bold shadow-xl backdrop-blur-md ${
@@ -742,6 +774,58 @@ export default function TablePage() {
               : result.delta < 0n
                 ? tr("table.resultLost", { n: fmtUsdc(-result.delta) })
                 : tr("table.resultEven")}
+          </div>
+        </div>
+      )}
+      {/* 摊牌面板：结算后从公开 HandProof 取本手底牌/公共牌/每座增减，停 ~5 秒
+          （轮到我就先让位；pointer-events-none 不挡操作） */}
+      {showdown && !myTurn && (
+        <div className="pointer-events-none fixed left-1/2 top-[46%] z-[65] w-[min(94vw,600px)] -translate-x-1/2 -translate-y-1/2">
+          <div className="panel px-4 py-3 shadow-2xl">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="title-cn text-[13px] whitespace-nowrap text-mist">
+                {tr("table.showdownTitle")} · #{showdown.handId.toString()}
+              </span>
+              {showdown.board.length > 0 && (
+                <span className="flex gap-1">
+                  {showdown.board.map((c, i) => {
+                    const p = cardParts(c);
+                    return p ? <PlayingCard key={i} rank={p.rank} suit={p.suit} w={38} /> : null;
+                  })}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {showdown.seats.map((s) => (
+                <div
+                  key={s.i}
+                  className={`flex items-center gap-2 rounded-lg border px-2 py-1 ${
+                    s.i === mySeat ? "border-accent-500/40 bg-accent-500/10" : "border-mist/10 bg-black/25"
+                  }`}
+                >
+                  <span className="w-[46px] shrink-0 font-mono text-[11px] whitespace-nowrap text-mist-dim">
+                    {tr("table.seatN", { n: s.i })}
+                  </span>
+                  {s.cards ? (
+                    <span className="flex gap-1">
+                      {s.cards.map((c, k) => {
+                        const p = cardParts(c);
+                        return p ? <PlayingCard key={k} rank={p.rank} suit={p.suit} w={34} /> : null;
+                      })}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-mist-faint">{tr("table.showdownFolded")}</span>
+                  )}
+                  <span
+                    className={`ml-auto font-mono text-[12px] font-bold ${
+                      s.delta > 0n ? "text-win" : s.delta < 0n ? "text-loss" : "text-mist-faint"
+                    }`}
+                  >
+                    {s.delta > 0n ? `+${fmtUsdc(s.delta)}` : s.delta < 0n ? `−${fmtUsdc(-s.delta)}` : "±0.00"}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
