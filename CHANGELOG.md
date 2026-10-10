@@ -48,6 +48,10 @@
 **运维**
 - crank：sweep no-op 形态守卫（快照无可付/可放时不再空转占动作位）；启动认证带重试
   （一次网络抖动不再让整支 crank 退出）。
+- crank：sweep 不再跳过「已付清但持仓未释放」的座位（#22 座 8 实锤——旧过滤
+  `dep≤paid` 直接 continue，座位永久占着、UI 显示旧占用者、新玩家坐不进；现在按
+  「可付/可放」守卫判断，0 支付 cash_out 即释放。手动释放时还兑回了该玩家遗漏的
+  20.08 tUSDC）。
 - `migrate-members` 默认干跑（`--apply` 才执行）；`force-stand-up` / `cash-out-seat` 需 `--yes`；
   helius-webhook 支持 `WEBHOOK_SECRET`；x402 入账改显式签名状态轮询复核。
 - README 信任模型改写（含 TEE/升级权/会话密钥口径，消除两处与实现不符的承诺）。
