@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use solpoker_core::engine::{Action, Engine, EngineError, EngineSeat, TimeoutResult, CENT};
 use solpoker_core::eval::evaluate7;
 use solpoker_core::seats::{next_clockwise, popcount, seat_bit};
-use solpoker_core::settle::{settle, NO_CARD};
+use solpoker_core::settle::{settle, RakeParams, NO_CARD};
 
 /// 单手握手上界：完整加注每次至少消耗加注者 1BB，全桌筹码有限，
 /// 动作总数必然有限；留出充足余量（§7.3 终止性）。
@@ -290,7 +290,7 @@ fn drive(setup: &Setup, seed: u64) -> (Engine, solpoker_core::settle::Settlement
             ];
         }
     }
-    let st = settle(&mut e, &hole, &board, board_len, evaluate7);
+    let st = settle(&mut e, &hole, &board, board_len, RakeParams::default(), evaluate7);
 
     // 结算守恒：Σ stack + rake == Σ 开局 stack。
     assert_eq!(
@@ -546,7 +546,7 @@ proptest! {
         }
         let live = popcount(e.live_mask);
         let board_len = if live >= 2 { 5 } else { 0 };
-        let st = settle(&mut e, &hole, &board, board_len, evaluate7);
+        let st = settle(&mut e, &hole, &board, board_len, RakeParams::default(), evaluate7);
 
         // 未跟注退回与公式一致。
         prop_assert_eq!(st.refunds, expected_refunds(&contribs));
@@ -614,7 +614,7 @@ proptest! {
             };
         }
         let board = [2, 6, 10, 14, 18]; // 低分公共牌
-        let st = settle(&mut e, &hole, &board, 5, eval_sum);
+        let st = settle(&mut e, &hole, &board, 5, RakeParams::default(), eval_sum);
 
         let net = n as u64 * level_cents * CENT;
         let w = n_winners as u64;

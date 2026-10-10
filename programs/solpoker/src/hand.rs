@@ -400,7 +400,7 @@ pub fn current_salt_digest(
 }
 
 // ---------------------------------------------------------------------------
-// VRF slot helpers (mirror pattern, same as debug_arm_vrf)
+// VRF slot helpers (mirror pattern of advance's arm path)
 // ---------------------------------------------------------------------------
 
 /// arm the slot for `target` via the core state machine.
@@ -899,6 +899,13 @@ fn do_settle(
         &hole,
         &game.board,
         game.board_len,
+        // 2026-10-10（审计 P2-3）：抽水参数改由 Table 上链值传入（此前 core 硬编码
+        // 2.5%/3BB，Table 上的 rake_* 字段是死码）。
+        solpoker_core::settle::RakeParams {
+            bps: table.rake_bps,
+            cap_bb: table.rake_cap_bb,
+            min_pot_bb: table.rake_min_pot_bb,
+        },
         eval::evaluate7,
     );
 
@@ -1104,7 +1111,13 @@ fn idle_to_commit(game: &mut Game, table: &Table, now: i64) -> Result<()> {
 /// 执行，桌子会永久卡死（生产上等于「掉线玩家占座不走」）。离座后手牌不足
 /// 2 人则整个手牌取消（无投入、无发牌、不写证明条目），回到 Idle 等下一手。
 #[inline(never)]
-fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i64) -> Result<()> {
+fn commit_to_await_seed(
+    game: &mut Game,
+    deck: &mut Deck,
+    hands: &mut [&mut PlayerHand; MAX_SEATS],
+    table: &Table,
+    now: i64,
+) -> Result<()> {
     let mut missing = 0u16;
     for i in 0..MAX_SEATS {
         if game.hand_mask & seat_bit(i as u8) != 0 && game.seats[i].salt_commit == [0u8; 32] {
@@ -1152,6 +1165,13 @@ fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i6
                 game.occupied_mask &= !bit;
                 game.hand_mask &= !bit;
                 left_any = true;
+                // 2026-10-10（审计延伸；#22 座位 8 实锤 5244 次 6011）：被踢出
+                // 本手的座位必须把手牌账户清零——zero_secrets 只清最终 hand_mask，
+                // 漏下的盐会让该席位的 take_seat 永远报 SeatNotClean（钱在 L1
+                // 也坐不进来，只能升级程序救）。
+                hands[i].cards = [0xFF; 2];
+                hands[i].salt = [0u8; 32];
+                hands[i].salt_hand_id = 0;
             }
         }
         if left_any {
@@ -1165,6 +1185,10 @@ fn commit_to_await_seed(game: &mut Game, deck: &mut Deck, table: &Table, now: i6
                     let s = &mut game.seats[i];
                     s.salt_commit = [0; 32];
                     s.next_salt_commit = [0; 32];
+                    // 同上的手牌账户清零（防脏盐卡死 take_seat）。
+                    hands[i].cards = [0xFF; 2];
+                    hands[i].salt = [0u8; 32];
+                    hands[i].salt_hand_id = 0;
                 }
             }
             game.hand_mask = 0;
@@ -1239,6 +1263,12 @@ fn await_seed(
         }
     }
     if offenders != 0 {
+        // 2026-10-10（审计 P1-4）：揭示宽限——VRF 已履行后先等到 phase_deadline
+        // （= 履行时刻 + reveal_timeout_s，由 vrf_callback 写入），慢揭示不再
+        // 误伤全桌；到期仍缺盐 → 作废 + strike。BadPhase 由 crank 静默重试。
+        if now < game.phase_deadline {
+            return err!(SolpokerError::BadPhase);
+        }
         return void_hand_path(
             table,
             table_bytes,
@@ -1591,7 +1621,7 @@ pub fn advance(
 ) -> Result<()> {
     match game.phase {
         PHASE_IDLE => idle_to_commit(game, table, now),
-        PHASE_COMMIT => commit_to_await_seed(game, deck, table, now),
+        PHASE_COMMIT => commit_to_await_seed(game, deck, hands, table, now),
         PHASE_AWAIT_SEED => {
             await_seed(table, table_bytes, game, deck, proof, secrets, replay, hands, program_id, now)
         }

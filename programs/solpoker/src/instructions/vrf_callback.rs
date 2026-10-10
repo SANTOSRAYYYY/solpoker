@@ -61,6 +61,11 @@ pub fn handler(
             deck.vrf_out[idx] = randomness;
             deck.vrf_attempt_used[idx] = core_slot.attempt();
             game.vrf.sync_from_core(&core_slot);
+            // 2026-10-10（审计 P1-4）：揭示宽限截止——发牌路径在把缺盐座位作废
+            // 之前先等到这个时间点（慢揭示不再误伤全桌）。phase_deadline 在
+            // AwaitSeed 阶段无其他用途（commit 超时只在 phase 1 使用它）。
+            game.phase_deadline =
+                Clock::get()?.unix_timestamp + ctx.accounts.table.reveal_timeout_s as i64;
         }
         FulfillOutcome::Ignored => {
             // §9: correct identity, stale or mismatched request — ignore.

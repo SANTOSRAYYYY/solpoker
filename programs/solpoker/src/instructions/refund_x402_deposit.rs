@@ -56,7 +56,14 @@ pub fn handler(
     }
 
     // ---- 只允许动盈余：退款后余额仍须 ≥ I-X 要求 ----
-    let required = required_backing(ctx.accounts.game.as_ref(), ctx.remaining_accounts, table.rake_swept_total)?;
+    // 2026-10-10（审计 P0-2）：账本读取已绑定本桌本座（read_seat_counters）——
+    // 此前可传任意桌账本压低 required，把待结资金退给任意 payer。
+    let required = required_backing(
+        ctx.accounts.game.as_ref(),
+        ctx.remaining_accounts,
+        table.rake_swept_total,
+        &table.key(),
+    )?;
     let after = (ctx.accounts.vault.amount as u128)
         .checked_sub(amount as u128)
         .ok_or(SolpokerError::Overflow)?;
@@ -104,12 +111,14 @@ fn required_backing(
     game_ai: &AccountInfo,
     seats: &[AccountInfo],
     rake_swept: u64,
+    table_key: &Pubkey,
 ) -> Result<u128> {
     require!(seats.len() == MAX_SEATS, SolpokerError::SeatMismatch);
     let snap = fund::read_game_snapshot(game_ai)?;
     let mut counters = [(0u64, 0u64); MAX_SEATS];
     for (i, ai) in seats.iter().enumerate() {
-        counters[i] = fund::read_seat_counters(ai)?;
+        // remaining_accounts 必须按座位 0..8 顺序给出**本桌**账本（位置==座位号）。
+        counters[i] = fund::read_seat_counters(ai, table_key, i as u8)?;
     }
     fund::required_vault_backing_iter(counters, &snap, rake_swept)
 }

@@ -41,7 +41,8 @@ pub fn handler(ctx: Context<AuditTable>) -> Result<()> {
     .iter()
     .enumerate()
     {
-        counters[i] = fund::read_seat_counters(&ai.to_account_info())?;
+        // 2026-10-10（审计 P0-2）：绑定本桌 + 位置==座位号。
+        counters[i] = fund::read_seat_counters(&ai.to_account_info(), &table.key(), i as u8)?;
     }
     let required = fund::required_vault_backing_iter(counters, &snap, table.rake_swept_total)?;
 

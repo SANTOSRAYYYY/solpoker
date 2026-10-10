@@ -34,6 +34,15 @@ pub fn handler(ctx: Context<RequestVrf>) -> Result<()> {
     let mut game = ctx.accounts.game.load_mut()?;
     let table = &ctx.accounts.table;
 
+    // 2026-10-10（审计 P1-1）：队列地址是调用方给的——必须门禁到 keeper（table.admin）。
+    // 否则任何人在 arm→request 的公开窗口抢先调用、把请求路由到不会履行的队列，
+    // 3 次重试耗尽后整手作废（全下的劣势方可借此逃脱；同一手法可对整桌 DoS）。
+    require_keys_eq!(
+        ctx.accounts.payer.key(),
+        table.admin,
+        SolpokerError::Unauthorized
+    );
+
     // Ready → Pending via the core state machine. core_replay() is None only
     // for Fulfilled/Void, which both reject a new request (NotReady).
     let mut core_slot = game.vrf.core_replay().ok_or(SolpokerError::VrfNotArmed)?;
@@ -58,13 +67,19 @@ pub fn handler(ctx: Context<RequestVrf>) -> Result<()> {
     );
 
     // Callback account order must match VrfCallbackState field order after the
-    // injected identity signer: [deck (writable), game (writable)].
+    // injected identity signer: [table (readonly), deck (writable), game (writable)]
+    // —— 2026-10-10（审计 P1-2）新增 table 绑定。
     let ix = create_request_randomness_ix(RequestRandomnessParams {
         payer: ctx.accounts.payer.key(),
         oracle_queue: ctx.accounts.vrf.oracle_queue.key(),
         callback_program_id: crate::ID,
         callback_discriminator: vrf::vrf_callback_discriminator().to_vec(),
         accounts_metas: Some(vec![
+            SerializableAccountMeta {
+                pubkey: table_key,
+                is_signer: false,
+                is_writable: false,
+            },
             SerializableAccountMeta {
                 pubkey: deck_pda,
                 is_signer: false,

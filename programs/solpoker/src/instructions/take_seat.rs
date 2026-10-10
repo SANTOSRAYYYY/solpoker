@@ -44,11 +44,13 @@ pub fn handler(ctx: Context<TakeSeat>, idx: u8) -> Result<()> {
             SolpokerError::Conservation
         );
         // Phase 2 accepts only a clean hand account.
+        // 2026-10-10（审计延伸）：只校验**牌**是否清净（防继承前任底牌即可）。
+        // 盐不再作为门槛——旧程序在「Commit 阶段被踢出/作废」路径漏清盐，历史
+        // 遗留的脏盐（salt_hand_id 已过期）对所有校验 fail-closed（reveal/发牌
+        // 都按 salt_hand_id 绑定），用它阻塞入座没有任何安全收益，却会把席位
+        // 永久卡死（#22 座位 8 实锤）。新程序已补上清零，这里同时自愈历史脏位。
         let hand = &ctx.accounts.player_hand;
-        require!(
-            hand.cards == [0xFF; 2] && hand.salt == [0u8; 32],
-            SolpokerError::SeatNotClean
-        );
+        require!(hand.cards == [0xFF; 2], SolpokerError::SeatNotClean);
         fund::take_seat_transition(seat, &ledger);
         game.occupied_mask |= bit;
 

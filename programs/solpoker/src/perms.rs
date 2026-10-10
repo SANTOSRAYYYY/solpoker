@@ -68,14 +68,22 @@ pub fn vrf_identity() -> Pubkey {
 /// - hand_i（1..=9）：VRF 身份 ∪ 该座当前占用者（座位空时只剩 VRF 身份）。
 ///
 /// 覆盖通道（admin_set_members）同样过这层校验——运营方无法再把自己加回来。
+///
+/// 2026-10-10（审计 P2）：**座位已占用时名单必须包含占用者**——此前空名单
+/// 恒真（`all()` on empty），admin 可把成员清空剥夺占用者对自己底牌的读取
+/// （骚扰/可用性）。占用中「只留 VRF 哨兵」的写法不再被接受。
 pub fn member_policy_ok(target_index: u8, occupant: &Pubkey, members: &[Pubkey]) -> bool {
     let vrf = vrf_identity();
-    members.iter().all(|pk| {
+    let all_allowed = members.iter().all(|pk| {
         if *pk == vrf {
             return true;
         }
         target_index != 0 && *occupant != Pubkey::default() && pk == occupant
-    })
+    });
+    let keeps_occupant = target_index == 0
+        || *occupant == Pubkey::default()
+        || members.iter().any(|pk| pk == occupant);
+    all_allowed && keeps_occupant
 }
 
 #[cfg(test)]
@@ -98,11 +106,20 @@ mod tests {
         let other = Pubkey::new_unique();
         assert!(member_policy_ok(3, &occ, &[occ]));
         assert!(member_policy_ok(3, &occ, &[vrf, occ]));
-        assert!(member_policy_ok(3, &occ, &[vrf]));
-        assert!(!member_policy_ok(3, &occ, &[other]));
+        assert!(!member_policy_ok(3, &occ, &[vrf])); // 审计 P2：占用中必须保留占用者
         assert!(!member_policy_ok(3, &occ, &[vrf, other]));
         // 空座：只允许 VRF 身份。
         assert!(!member_policy_ok(3, &Pubkey::default(), &[occ]));
         assert!(member_policy_ok(3, &Pubkey::default(), &[vrf]));
+        assert!(member_policy_ok(3, &Pubkey::default(), &[]));
+    }
+
+    #[test]
+    fn occupied_hand_must_keep_occupant() {
+        // 2026-10-10（审计 P2）：空名单 / 只留哨兵都不得用于占用中的座位。
+        let occ = Pubkey::new_unique();
+        assert!(!member_policy_ok(3, &occ, &[]));
+        assert!(!member_policy_ok(3, &occ, &[vrf_identity()]));
+        assert!(member_policy_ok(3, &occ, &[occ]));
     }
 }

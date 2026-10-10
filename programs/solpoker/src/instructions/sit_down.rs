@@ -55,7 +55,8 @@ pub fn handler(
         &ctx.accounts.other7,
     ];
     for ai in other_infos {
-        let l = fund::read_seat_ledger_l1(&ai.to_account_info())?;
+        // 2026-10-10（审计 P1-3）：账本读取绑定本桌——此前传别桌账本即可绕过身份规则。
+        let l = fund::read_seat_ledger_l1(&ai.to_account_info(), &table.key())?;
         require!(l.idx != idx, SolpokerError::SeatMismatch);
         let bit = 1u16 << l.idx;
         require!(seen & bit == 0, SolpokerError::SeatMismatch); // 不得重复传同一座位

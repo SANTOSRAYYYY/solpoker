@@ -5,8 +5,10 @@
 //! `PDA(["magic-fee-vault", tee_validator], Delegation Program)`，
 //! 用 `dlp_api::pda::magic_fee_vault_pda_from_validator` 校验）。
 //!
-//! 外层发送者可以是任何 keeper/玩家；Deck、PlayerHand 永不 commit（§10）。
-//! 禁止在 CommitPayer 余额不足时回退 plain path——整个意图原子失败。
+//! 外层发送者必须是本桌 admin（keeper 门禁，2026-10-10 审计 P1-8：此前
+//! permissionless，任何人可刷爆 CommitPayer 让快照停更）。Deck、PlayerHand
+//! 永不 commit（§10）。禁止在 CommitPayer 余额不足时回退 plain path——整个
+//! 意图原子失败。
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::dlp_api;

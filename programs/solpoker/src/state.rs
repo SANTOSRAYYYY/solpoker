@@ -65,7 +65,7 @@ pub struct ProgramConfig {
 #[derive(InitSpace)]
 pub struct Table {
     pub table_id: u32,
-    /// Stage 6 过渡期保留：create_table / delegate_table / debug_arm_vrf 仍以
+    /// Stage 6 过渡期保留：create_table / delegate_table 以
     /// 此 key 的签名为门禁；生产鉴权（ProgramConfig.admin）在后续 Phase 接入。
     pub admin: Pubkey,
     /// 0=Human 1=AgentOnly 2=Mixed

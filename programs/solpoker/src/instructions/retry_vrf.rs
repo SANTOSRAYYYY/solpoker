@@ -29,6 +29,14 @@ pub fn handler(ctx: Context<RetryVrf>) -> Result<()> {
         return err!(SolpokerError::VrfNotPending);
     };
 
+    // 2026-10-10（审计 P1-1）：与 request_vrf 相同——队列由调用方传入，
+    // 必须门禁到 keeper（table.admin），否则重试同样可被路由到死队列。
+    require_keys_eq!(
+        ctx.accounts.payer.key(),
+        table.admin,
+        SolpokerError::Unauthorized
+    );
+
     let now = Clock::get()?.unix_timestamp;
     let core_target = core_slot.target();
     match core_slot.retry(now, table.vrf_timeout_s, table.vrf_max_attempts) {
@@ -44,12 +52,19 @@ pub fn handler(ctx: Context<RetryVrf>) -> Result<()> {
                 &crate::ID,
             );
 
+            // Callback metas order = VrfCallbackState field order (after identity
+            // signer): [table, deck, game]；table 是 2026-10-10 的新绑定。
             let ix = create_request_randomness_ix(RequestRandomnessParams {
                 payer: ctx.accounts.payer.key(),
                 oracle_queue: ctx.accounts.vrf.oracle_queue.key(),
                 callback_program_id: crate::ID,
                 callback_discriminator: vrf::vrf_callback_discriminator().to_vec(),
                 accounts_metas: Some(vec![
+                    SerializableAccountMeta {
+                        pubkey: table_key,
+                        is_signer: false,
+                        is_writable: false,
+                    },
                     SerializableAccountMeta {
                         pubkey: deck_pda,
                         is_signer: false,

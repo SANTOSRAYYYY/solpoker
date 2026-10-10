@@ -27,6 +27,42 @@ use crate::{CreateTable, CreateTableArgs};
 const COMMIT_PAYER_FUND: u64 = 50_000_000;
 
 pub fn handler(ctx: Context<CreateTable>, args: CreateTableArgs) -> Result<()> {
+    // 2026-10-10（审计 P2）：建桌参数域校验——此前完全没有校验。血泪示例：
+    // `bb=0` 的桌每手永久卡死在 AwaitSeed（筹码冻结、只能靠升级程序恢复）；
+    // `max_strikes=0` 每手全员被自动离座；`heartbeat_s=0` 会让 commit 门禁失效。
+    use crate::errors::SolpokerError as E;
+    require!(
+        args.bb > 0 && args.sb > 0 && args.sb <= args.bb,
+        E::BadAmount
+    );
+    require!(
+        args.bb % crate::fund::CENT == 0
+            && args.sb % crate::fund::CENT == 0
+            && args.ante % crate::fund::CENT == 0,
+        E::BadAmount
+    );
+    require!(
+        args.min_buy_in_bb > 0 && args.min_buy_in_bb <= args.max_buy_in_bb,
+        E::BadBuyIn
+    );
+    require!(args.kind <= 2, E::KindNotAllowed);
+    require!(args.rake_bps <= 10_000 && args.rake_cap_bb <= 1_000, E::BadAmount);
+    require!(
+        args.action_timeout_s > 0
+            && args.commit_timeout_s > 0
+            && args.reveal_timeout_s > 0
+            && args.vrf_timeout_s > 0,
+        E::BadAmount
+    );
+    require!(
+        args.vrf_max_attempts > 0
+            && args.max_strikes > 0
+            && args.commit_every_n_hands > 0
+            && args.heartbeat_s > 0
+            && args.escape_stale_s > 0,
+        E::BadAmount
+    );
+
     let table_key = ctx.accounts.table.key();
     let (commit_payer_key, commit_payer_bump) =
         Pubkey::find_program_address(&[b"commit_payer", table_key.as_ref()], &crate::ID);

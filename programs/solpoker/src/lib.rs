@@ -171,12 +171,23 @@ pub struct RetryVrfAccounts<'info> {
 #[vrf_callback]
 #[derive(Accounts)]
 pub struct VrfCallbackState<'info> {
+    /// 本桌（只读）：账户绑定 + 揭示宽限（reveal_timeout_s）。
+    ///
+    /// 2026-10-10（审计 P1-2）：回调此前对 deck/game **零绑定**——第三方可以
+    /// 借 VRF 程序之手直调本回调、自选账户组合写入随机数（provenance 破坏）。
+    /// 现在 deck/game 都由 table 派生 seeds，弹回来的账户必须与本桌一致。
+    #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
+    pub table: Account<'info, Table>,
     /// Private deck; only randomness lands here. Runs on the ER, where the
     /// clone is owned by this program (see RequestVrf note).
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [b"deck", table.key().as_ref(), &table.epoch.to_be_bytes()],
+        bump,
+    )]
     pub deck: AccountLoader<'info, Deck>,
     /// Pending request slot to match against callback_args.
-    #[account(mut)]
+    #[account(mut, seeds = [b"game", table.key().as_ref()], bump)]
     pub game: AccountLoader<'info, Game>,
 }
 
@@ -236,9 +247,11 @@ pub struct Advance<'info> {
     pub caller: Signer<'info>,
 }
 
-/// commit_game（§10 / D8，ER，permissionless）：手与手之间把 Game + HandProof
-/// 作为一个意图 commit 回 L1；intent payer 为已委托的 CommitPayer，
+/// commit_game（§10 / D8，ER；2026-10-10 审计 P1-8 起为 keeper 门禁：
+/// 签名者必须 == table.admin）：手与手之间把 Game + HandProof 作为一个意图
+/// commit 回 L1；intent payer 为已委托的 CommitPayer，
 /// 必须传 canonical validator-scoped magic_fee_vault。
+/// （此前 permissionless：任何人刷 commit_game 即可打空 CommitPayer → 快照停更。）
 #[derive(Accounts)]
 pub struct CommitGame<'info> {
     #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
@@ -265,6 +278,10 @@ pub struct CommitGame<'info> {
     /// CHECK: canonical magic fee vault（handler 用 dlp_api 推导校验）。
     #[account(mut)]
     pub magic_fee_vault: UncheckedAccount<'info>,
+    /// keeper 门禁（2026-10-10 审计 P1-8）：commit 消耗本桌 CommitPayer 的
+    /// 余额，此前任何签名者都能调用——可被刷爆导致 L1 快照停更（可用性 DoS）。
+    #[account(constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized)]
+    pub admin: Signer<'info>,
 }
 
 // --- Stage 6 Phase 3: 手牌循环（design §6/§7/§8，ER） ---
@@ -326,18 +343,24 @@ pub struct ClaimTimeout<'info> {
     pub caller: Signer<'info>,
 }
 
+// 2026-10-10（审计 P1-9）：debug_arm_vrf（手动 arm 测试钩子）已从程序中删除——
+// 它可被 admin 用来把手牌卡死在 AwaitSeed（筹码永久冻结）并提供任意时序的 VRF
+// 后门。生产路径的 arm 全部由 advance 的 phase 机决定。
+
+/// owner_force_stand_up（ER，2026-10-10 审计 P2）：主人回收自己 agent 的座位。
+/// 资金纪律与 admin 版完全一致（stack → 该座自己的 owed，payout 钉死）。
 #[derive(Accounts)]
-pub struct DebugArmVrf<'info> {
+#[instruction(idx: u8)]
+pub struct OwnerForceStandUp<'info> {
     #[account(seeds = [b"table", table.table_id.to_le_bytes().as_ref()], bump = table.bump)]
     pub table: Account<'info, Table>,
-    #[account(
-        mut,
-        seeds = [b"game", table.key().as_ref()],
-        bump,
-        constraint = table.admin == admin.key() @ errors::SolpokerError::Unauthorized,
-    )]
+    #[account(mut, seeds = [b"game", table.key().as_ref()], bump)]
     pub game: AccountLoader<'info, Game>,
-    pub admin: Signer<'info>,
+    /// CHECK: SeatLedger 的 ER 只读克隆（owner/agent_owner 字段在 L1 账本上；
+    /// handler 用 fund::read_seat_ledger_clone 手工校验 owner+table+idx）。
+    #[account(seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
+    pub seat_ledger: UncheckedAccount<'info>,
+    pub owner: Signer<'info>,
 }
 
 // --- Stage 6 Phase 1: 建桌流程（design §11.1） ---
@@ -906,6 +929,10 @@ pub struct TopUp<'info> {
     pub table: Account<'info, Table>,
     #[account(mut, seeds = [b"seat", table.key().as_ref(), &[idx]], bump)]
     pub seat: Account<'info, SeatLedger>,
+    /// 可选：agent 身份档案（PDA ["agent", occupant]）。座位为 agent（kind=1）
+    /// 时**必传**且必须 Active —— 主人的 pause/revoke 由此立即止住补码
+    /// （2026-10-10 审计 P2：此前 pause 只挡新入座，已就座者可继续花钱）。
+    pub agent_profile: Option<Account<'info, AgentProfile>>,
     /// CHECK: vault_auth 签名 PDA；此处仅作 ATA 派生。
     #[account(seeds = [b"vault_auth", table.key().as_ref()], bump = table.vault_auth_bump)]
     pub vault_auth: UncheckedAccount<'info>,
@@ -974,6 +1001,21 @@ pub struct CreditX402Deposit<'info> {
     pub other7: UncheckedAccount<'info>,
     /// 可选：agent 身份档案（PDA ["agent", signer]）；不传 = 真人。
     pub agent_profile: Option<Account<'info, AgentProfile>>,
+    /// CHECK: vault_auth 签名 PDA（仅作 ATA 派生，不建账户）。
+    #[account(seeds = [b"vault_auth", table.key().as_ref()], bump = table.vault_auth_bump)]
+    pub vault_auth: UncheckedAccount<'info>,
+    /// CHECK: 必须 == table.mint（handler 校验；不反序列化——栈纪律）。
+    pub mint: UncheckedAccount<'info>,
+    /// TableVault —— I-X 背书检查（2026-10-10 审计 P0-3）读它的余额：
+    /// 每次入账都必须被真实托管资金全额覆盖。
+    /// CHECK: 地址 = ATA(vault_auth, mint)、owner = SPL Token（handler 手工校验 +
+    /// 零拷贝读 amount @ 64..72 —— `Account<TokenAccount>` 会让 try_accounts
+    /// 栈帧溢出 4KB 预算，构建期已实测）。
+    pub vault: UncheckedAccount<'info>,
+    /// Game 的 L1 快照（I-X 背书检查用；owner/discriminator 由
+    /// fund::read_game_snapshot 手工校验）。
+    /// CHECK: 同上。
+    pub game: UncheckedAccount<'info>,
     #[account(mut)]
     pub gateway: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -1420,11 +1462,9 @@ pub mod solpoker {
         instructions::agent::remove_owner(ctx)
     }
 
-    /// Test harness（Stage 2/3 保留，后续 Phase 移除）：ER 上手动 arm VRF
-    /// 槽位（生产路径是 advance 的 phase 机决定 arm）。
-    pub fn debug_arm_vrf(ctx: Context<DebugArmVrf>, target: u8) -> Result<()> {
-        instructions::debug_arm_vrf::handler(ctx, target)
-    }
+    // （debug_arm_vrf 已于 2026-10-10 删除——审计 P1-9：可借它把手牌卡死在
+    // AwaitSeed（筹码永久冻结）并提供任意时序的 VRF 后门；生产 arm 全部由
+    // advance 的 phase 机决定。）
 
     // --- Stage 6 Phase 2: 资金流与守恒（design §5） ---
 
@@ -1559,5 +1599,10 @@ pub mod solpoker {
     /// fold；记超时次数。断言 I-ER。
     pub fn claim_timeout(ctx: Context<ClaimTimeout>, hand_id: u64) -> Result<()> {
         instructions::claim_timeout::handler(ctx, hand_id)
+    }
+
+    /// 主人回收自己 agent 的座位（ER；2026-10-10 审计 P2）。资金只进 payout。
+    pub fn owner_force_stand_up(ctx: Context<OwnerForceStandUp>, idx: u8) -> Result<()> {
+        instructions::owner_force_stand_up::handler(ctx, idx)
     }
 }

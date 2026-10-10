@@ -57,12 +57,37 @@ pub struct Settlement {
     pub rake: u64,
 }
 
+/// 抽水参数（2026-10-10，审计 P2-3）：此前 rake 公式硬编码在 core（2.5% / 3BB），
+/// Table 上的 `rake_bps / rake_cap_bb / rake_min_pot_bb` 上链后**从不被读取**——
+/// 「参数上链」与实际收费脱钩。现在由调用方（advance）传入；`Default` 与旧行为
+/// 逐字节一致（bps=250、cap=3BB、min_pot=1BB），core 的全部测试向量因此不变。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RakeParams {
+    /// 万分比（250 = 2.5%）。
+    pub bps: u16,
+    /// 封顶：cap_bb × bb。
+    pub cap_bb: u16,
+    /// 起收门槛：发了翻牌且 gross > min_pot_bb × bb 才抽。
+    pub min_pot_bb: u16,
+}
+
+impl Default for RakeParams {
+    fn default() -> Self {
+        Self {
+            bps: 250,
+            cap_bb: 3,
+            min_pot_bb: 1,
+        }
+    }
+}
+
 /// 结算一手已结束的牌局，并把结果写回引擎座位
 /// （`stack += refund + award`、`in_hand` 清零、`pot` 清零、`finished = true`）。
 ///
 /// - `hole`：九席底牌；只有 live 玩家需要有效底牌（folded 可用 [`NO_CARD`]）；
 /// - `board` / `board_len`：公共牌与已发张数；`board_len < 5` 时表示本手由
 ///   fold 结束（此时 `live_mask` 必为单人），不做牌型评估；
+/// - `rake`：抽水参数（[`RakeParams`]；来自 Table，`Default` 与历史硬编码一致）；
 /// - `evaluate`：7 选 5 牌型评估（`[hole0, hole1, board0..5]`），大者胜；
 ///   与 [`crate::eval::evaluate7`] 签名兼容。
 ///
@@ -72,6 +97,7 @@ pub fn settle<R, F>(
     hole: &[[u8; 2]; MAX_SEATS as usize],
     board: &[u8; 5],
     board_len: u8,
+    rake: RakeParams,
     evaluate: F,
 ) -> Settlement
 where
@@ -181,10 +207,10 @@ where
         // 真到达时下方 live 兜底分支保证守恒。
     }
 
-    // ---- 4) rake（§7.2：no-flop-no-drop；2.5%，3BB 封顶，向下取整到 CENT）----
-    let rake = if engine.flop_dealt && gross_total > engine.bb {
-        let pct = ((gross_total as u128 * 25 / 1000) as u64) / CENT * CENT;
-        pct.min(3 * engine.bb)
+    // ---- 4) rake（§7.2：no-flop-no-drop；参数由调用方传入；向下取整到 CENT）----
+    let rake = if engine.flop_dealt && gross_total > rake.min_pot_bb as u64 * engine.bb {
+        let pct = ((gross_total as u128 * rake.bps as u128 / 10_000) as u64) / CENT * CENT;
+        pct.min(rake.cap_bb as u64 * engine.bb)
     } else {
         0
     };
@@ -441,7 +467,7 @@ mod tests {
         // 链上 runout advance 补发公共牌（含翻牌）→ 收 rake。
         e.flop_dealt = true;
         let hole = hole_cards_for(&[(0, hole(12, 11)), (1, hole(9, 8))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         // 退回 5BB 差额后才建池：gross = 10BB。
         assert_eq!(s.refunds[0], 500 * CENT);
         assert_eq!(s.pots.len(), 1);
@@ -467,7 +493,7 @@ mod tests {
             false,
         );
         let hole = hole_cards_for(&[(0, hole(12, 11))]);
-        let s = settle(&mut e, &hole, &board5(), 0, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 0, RakeParams::default(), eval_sum);
         assert_eq!(s.rake, 0);
         // 未跟注退回仍生效：座位 0 退回 5BB，赢 10BB。
         assert_eq!(s.refunds[0], 500 * CENT);
@@ -481,13 +507,13 @@ mod tests {
         // gross == 1BB 整：rake = 0（§7.2 条件严格大于）。
         let mut e = direct_engine(&[(0, 50 * CENT), (1, 50 * CENT)], &[], 0, 100 * CENT, true);
         let hole = hole_cards_for(&[(0, hole(12, 11)), (1, hole(9, 8))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.rake, 0);
         assert_eq!(s.awards[0], 100 * CENT);
         // 有未跟注退回时 gross 进一步缩小，同样不收 rake：
         // [60, 40] → 退 20 → gross = 80 CENT < 1BB。
         let mut e = direct_engine(&[(0, 60 * CENT), (1, 40 * CENT)], &[], 0, 100 * CENT, true);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.refunds[0], 20 * CENT);
         assert_eq!(s.rake, 0);
         assert_eq!(s.awards[0], 80 * CENT);
@@ -499,7 +525,7 @@ mod tests {
         let bb = 100 * CENT;
         let mut e = direct_engine(&[(0, 1000 * bb), (1, 1000 * bb)], &[], 0, bb, true);
         let hole = hole_cards_for(&[(0, hole(12, 11)), (1, hole(9, 8))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.rake, 3 * bb);
         assert_eq!(s.awards[0] + s.rake, 2000 * bb);
     }
@@ -511,7 +537,7 @@ mod tests {
         let bb = 10 * CENT;
         let mut e = direct_engine(&[(0, 41 * CENT), (1, 41 * CENT)], &[], 0, bb, true);
         let hole = hole_cards_for(&[(0, hole(12, 11)), (1, hole(9, 8))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.rake, 2 * CENT);
         assert_eq!(s.rake % CENT, 0);
         assert_eq!(s.awards[0] + s.rake, 82 * CENT);
@@ -538,7 +564,7 @@ mod tests {
             true,
         );
         let hole = hole_cards_for(&[(1, hole(12, 11))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         // 死层并入：2 层变 1 层……准确说 3 层 → 2 层：P0=2BB×4=8BB，
         // P1=(10-2)BB×3 + (14-10)BB×2 = 24BB + 8BB = 32BB。
         assert_eq!(s.pots.len(), 2);
@@ -572,7 +598,7 @@ mod tests {
             true,
         );
         let hole = hole_cards_for(&[(1, hole(12, 11)), (2, hole(10, 9))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.pots.len(), 2);
         assert_eq!(s.pots[0].gross, 150 * CENT);
         assert_eq!(s.pots[1].gross, 100 * CENT);
@@ -604,7 +630,7 @@ mod tests {
             false,
         );
         let hole = hole_cards_for(&[(0, hole(12, 11)), (1, hole(10, 9)), (2, hole(8, 7))]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.refunds[2], 100 * CENT);
         assert_eq!(s.pots.len(), 2);
         assert_eq!(s.pots[0].gross, 150 * CENT); // 主池
@@ -649,7 +675,7 @@ mod tests {
             (3, hole(10, 3)),
         ]);
         // 确认三者 rank 和相同（12+1 == 11+2 == 10+3）。
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.pots.len(), 1);
         assert_eq!(s.pots[0].winner_mask, 0b1110);
         assert_eq!(s.awards[0], 0);
@@ -675,7 +701,7 @@ mod tests {
             (2, hole(0, 1)),  // 最小
             (3, hole(11, 2)), // 并列最大
         ]);
-        let s = settle(&mut e, &hole, &board5(), 5, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 5, RakeParams::default(), eval_sum);
         assert_eq!(s.pots[0].winner_mask, 0b1001);
         // 净池 45 CENT，每人 22 CENT，余 1 CENT 给 anchor（座位 3）。
         assert_eq!(s.awards[3], 23 * CENT);
@@ -699,7 +725,7 @@ mod tests {
         assert!(out.hand_finished);
         // 无有效底牌（NO_CARD）也能结算。
         let hole = [[NO_CARD; 2]; 9];
-        let s = settle(&mut e, &hole, &board5(), 0, eval_sum);
+        let s = settle(&mut e, &hole, &board5(), 0, RakeParams::default(), eval_sum);
         assert_eq!(s.rake, 0); // 未发翻牌
                                // 未跟注退回：BB 的 110 是唯一最高（folded 的 60/10 次之）→ 退 50。
         assert_eq!(s.refunds[2], 50 * CENT);

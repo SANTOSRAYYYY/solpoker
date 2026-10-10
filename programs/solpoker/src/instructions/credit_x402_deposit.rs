@@ -56,36 +56,41 @@ pub fn handler(
     // 单笔上限：一次入座/补码不超过本桌最大买入（网关无法把巨额一次记进来）。
     require!(amount <= max, SolpokerError::BadBuyIn);
 
+    // ---- 全桌账本扫描（绑定本桌；新占座与补码两条路径都要）----
+    // 2026-10-10（审计 P1-3/P0-3）：①账本读取绑定本桌（此前传别桌账本可绕身份规则）；
+    // ②两种分支都需要 9 座计数器做 I-X 背书校验。
+    let table_key = table.key();
+    let mut seen = 0u16;
+    let mut others: Vec<SeatLedger> = Vec::with_capacity(8);
+    let other_infos = [
+        &ctx.accounts.other0,
+        &ctx.accounts.other1,
+        &ctx.accounts.other2,
+        &ctx.accounts.other3,
+        &ctx.accounts.other4,
+        &ctx.accounts.other5,
+        &ctx.accounts.other6,
+        &ctx.accounts.other7,
+    ];
+    for ai in other_infos {
+        let l = fund::read_seat_ledger_l1(&ai.to_account_info(), &table_key)?;
+        require!(l.idx != idx, SolpokerError::SeatMismatch);
+        let bit = 1u16 << l.idx;
+        require!(seen & bit == 0, SolpokerError::SeatMismatch);
+        seen |= bit;
+        others.push(l);
+    }
+    require!(
+        seen == (0x1FFu16 & !(1u16 << idx)),
+        SolpokerError::SeatMismatch
+    );
+
     let seat = &mut ctx.accounts.seat;
     if seat.occupant == Pubkey::default() {
         // ---- 新占座：与 sit_down 完全相同的金额与身份规则 ----
         require!(
             fund::is_valid_buy_in(amount, min, max),
             SolpokerError::BadBuyIn
-        );
-        let mut seen = 0u16;
-        let mut others: Vec<SeatLedger> = Vec::with_capacity(8);
-        let other_infos = [
-            &ctx.accounts.other0,
-            &ctx.accounts.other1,
-            &ctx.accounts.other2,
-            &ctx.accounts.other3,
-            &ctx.accounts.other4,
-            &ctx.accounts.other5,
-            &ctx.accounts.other6,
-            &ctx.accounts.other7,
-        ];
-        for ai in other_infos {
-            let l = fund::read_seat_ledger_l1(&ai.to_account_info())?;
-            require!(l.idx != idx, SolpokerError::SeatMismatch);
-            let bit = 1u16 << l.idx;
-            require!(seen & bit == 0, SolpokerError::SeatMismatch);
-            seen |= bit;
-            others.push(l);
-        }
-        require!(
-            seen == (0x1FFu16 & !(1u16 << idx)),
-            SolpokerError::SeatMismatch
         );
         let agent = ctx.accounts.agent_profile.as_deref();
         fund::check_sit_identity(table.kind, &payer, agent, &others)?;
@@ -113,6 +118,53 @@ pub fn handler(
         // ---- 补码：只允许给「同一个付款人」的座位充值 ----
         require!(seat.occupant == payer, SolpokerError::NotOccupant);
     }
+
+    // ---- I-X 背书检查（2026-10-10，审计 P0-3）----
+    // 本指令不动钱、此前也**不校验钱**：网关可凭空记筹码（无真实付款）→ ER 发
+    // 筹码 → 赢走真人的钱 → cash_out 抽干保险库。现在「入账后的 I-X 下限」必须
+    // 被 TableVault 余额全额覆盖（与 refund/audit 同一公式）。
+    // 残余边界（如实）：L1 快照滞后于 ER 实时态时允许的垫背以快照为界；主网计划
+    // 改为「付款与入账同笔交易」的原子模式彻底消除该信任。
+    {
+        // mint/vault 零拷贝手工校验（栈纪律：Account<T> 反序列化会让
+        // try_accounts 顶穿 4KB —— 2026-10-10 构建期实测）。
+        require_keys_eq!(*ctx.accounts.mint.key, table.mint, SolpokerError::SeatMismatch);
+        let vault_ai = ctx.accounts.vault.to_account_info();
+        require_keys_eq!(
+            vault_ai.key(),
+            anchor_spl::associated_token::get_associated_token_address(
+                &ctx.accounts.vault_auth.key(),
+                &ctx.accounts.mint.key()
+            ),
+            SolpokerError::SeatMismatch
+        );
+        require_keys_eq!(
+            *vault_ai.owner,
+            anchor_spl::token::Token::id(),
+            SolpokerError::BadSnapshot
+        );
+        let vault_amount = {
+            let d = vault_ai.try_borrow_data()?;
+            require!(d.len() >= 72, SolpokerError::BadSnapshot);
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&d[64..72]); // SPL Token：amount @ 64..72
+            u64::from_le_bytes(b)
+        };
+
+        let mut counters = [(0u64, 0u64); MAX_SEATS];
+        counters[idx as usize] = (seat.deposited_total, seat.paid_total);
+        for l in others.iter() {
+            counters[l.idx as usize] = (l.deposited_total, l.paid_total);
+        }
+        let snap = fund::read_game_snapshot(ctx.accounts.game.as_ref())?;
+        let required_before =
+            fund::required_vault_backing_iter(counters, &snap, table.rake_swept_total)?;
+        let required_after = required_before
+            .checked_add(amount as u128)
+            .ok_or(SolpokerError::Overflow)?;
+        require!((vault_amount as u128) >= required_after, SolpokerError::Conservation);
+    }
+
     seat.deposited_total = seat
         .deposited_total
         .checked_add(amount)

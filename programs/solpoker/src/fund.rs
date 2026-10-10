@@ -263,8 +263,11 @@ pub fn read_game_snapshot<'a, 'info>(
 
 /// L1 只读 SeatLedger（audit_table）：owner == 本程序 + discriminator + 长度
 /// + borsh（L1 账本永不委托，所以不接受 DLP owner——与 ER 克隆读取不同）。
+/// 2026-10-10（审计 P1-3）：**必须绑定本桌**——此前不校验 `ledger.table`，
+/// 传入别桌账本即可让 §2.2/§2.3 身份扫描全看到无害占用者（同主人同桌、
+/// 一钱包多座对刷由此可绕）。
 #[inline(never)]
-pub fn read_seat_ledger_l1(ai: &AccountInfo) -> Result<SeatLedger> {
+pub fn read_seat_ledger_l1(ai: &AccountInfo, table_key: &Pubkey) -> Result<SeatLedger> {
     require!(ai.owner == &crate::ID, SolpokerError::BadSnapshot);
     let data = ai.try_borrow_data()?;
     require!(
@@ -272,7 +275,10 @@ pub fn read_seat_ledger_l1(ai: &AccountInfo) -> Result<SeatLedger> {
         SolpokerError::BadSnapshot
     );
     let mut slice: &[u8] = &data;
-    SeatLedger::try_deserialize(&mut slice).map_err(|_| SolpokerError::BadSnapshot.into())
+    let ledger =
+        SeatLedger::try_deserialize(&mut slice).map_err(|_| SolpokerError::BadSnapshot)?;
+    require!(ledger.table == *table_key, SolpokerError::SeatMismatch);
+    Ok(ledger)
 }
 
 /// ER-side read of the SeatLedger clone (D1: the ledger itself is L1-only and
@@ -373,8 +379,12 @@ where
 /// 零拷贝读取 L1 SeatLedger 的 (deposited_total, paid_total)（只借字节，不把
 /// 203B 的结构体搬上栈 —— 见 [`required_vault_backing_iter`] 的理由）。
 /// 字段偏移由 `seat_ledger_counter_offsets_match_borsh` 单测钉死。
+///
+/// 2026-10-10（审计 P0-2）：**必须绑定本桌本座**（`table_key` + 位置 `idx`）。
+/// 此前只查 owner/discriminator，调用方可传任意桌的账本压低 I-X 下限 ——
+/// refund 由此可把待结资金退到任意地址、audit 失真。
 #[inline(never)]
-pub fn read_seat_counters(ai: &AccountInfo) -> Result<(u64, u64)> {
+pub fn read_seat_counters(ai: &AccountInfo, table_key: &Pubkey, idx: u8) -> Result<(u64, u64)> {
     require!(ai.owner == &crate::ID, SolpokerError::BadSnapshot);
     let data = ai.try_borrow_data()?;
     require!(
@@ -382,6 +392,11 @@ pub fn read_seat_counters(ai: &AccountInfo) -> Result<(u64, u64)> {
         SolpokerError::BadSnapshot
     );
     require!(&data[..8] == SeatLedger::DISCRIMINATOR, SolpokerError::BadSnapshot);
+    require!(
+        &data[SEAT_TABLE_OFF..SEAT_TABLE_OFF + 32] == table_key.as_ref(),
+        SolpokerError::SeatMismatch
+    );
+    require!(data[SEAT_IDX_OFF] == idx, SolpokerError::SeatMismatch);
     let mut dep = [0u8; 8];
     dep.copy_from_slice(&data[SEAT_DEPOSITED_OFF..SEAT_DEPOSITED_OFF + 8]);
     let mut paid = [0u8; 8];
@@ -397,6 +412,10 @@ pub const SEAT_PAID_OFF: usize = 194;
 pub const SEAT_OCCUPANT_OFF: usize = 41;
 /// occupancy_id 偏移。
 pub const SEAT_OCCUPANCY_ID_OFF: usize = 73;
+/// 账本所属桌的偏移（审计 P0-2 的绑定校验用；同样由单测钉死）。
+pub const SEAT_TABLE_OFF: usize = 8;
+/// 座位号的偏移（同上）。
+pub const SEAT_IDX_OFF: usize = 40;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -812,6 +831,30 @@ mod tests {
         assert_eq!(read_u64(SEAT_OCCUPANCY_ID_OFF), l.occupancy_id);
         // read_seat_counters 与切片版一致（同一公式、同一偏移）
         assert_eq!(read_seat_counters_from_data(&acct).unwrap(), (l.deposited_total, l.paid_total));
+    }
+
+    /// 审计 P0-2 回归：账本读取必须绑定本桌本座（refund/audit 的 I-X 下限
+    /// 依赖这一点；此前可传别桌账本把下限压低、把待结资金退给任意地址）。
+    #[test]
+    fn read_seat_counters_binds_table_and_idx() {
+        let mut l = sample_ledger(3);
+        l.table = Pubkey::new_unique();
+        l.deposited_total = 777;
+        l.paid_total = 55;
+        let mut buf = Vec::new();
+        l.serialize(&mut buf).unwrap();
+        let mut data = Vec::new();
+        data.extend_from_slice(SeatLedger::DISCRIMINATOR);
+        data.extend_from_slice(&buf);
+        let key = Pubkey::new_unique();
+        let owner = crate::ID;
+        let mut lamports = 1u64;
+        let ai = AccountInfo::new(&key, false, false, &mut lamports, &mut data, &owner, false);
+        // 正确绑定：可读。
+        assert_eq!(read_seat_counters(&ai, &l.table, 3).unwrap(), (777, 55));
+        // 错桌 / 错座位：拒绝。
+        assert!(read_seat_counters(&ai, &Pubkey::new_unique(), 3).is_err());
+        assert!(read_seat_counters(&ai, &l.table, 4).is_err());
     }
 
     /// 迭代版与切片版必须给出完全相同的要求（单一公式的保障）。
