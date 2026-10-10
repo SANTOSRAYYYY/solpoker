@@ -4,7 +4,7 @@
     "name": "solpoker",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "solpoker: private heads-up NLHE on Solana (MagicBlock Private Ephemeral Rollup)"
+    "description": "SolPoker: private, verifiable No-Limit Hold'em cash tables on Solana (2-9 players; MagicBlock Private Ephemeral Rollup)"
   },
   "instructions": [
     {
@@ -206,6 +206,26 @@
                 "kind": "account",
                 "path": "table.table_id",
                 "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
               }
             ]
           }
@@ -1594,6 +1614,14 @@
         {
           "name": "magic_fee_vault",
           "writable": true
+        },
+        {
+          "name": "admin",
+          "docs": [
+            "keeper 门禁（2026-10-10 审计 P1-8）：commit 消耗本桌 CommitPayer 的",
+            "余额，此前任何签名者都能调用——可被刷爆导致 L1 快照停更（可用性 DoS）。"
+          ],
+          "signer": true
         }
       ],
       "args": []
@@ -2167,22 +2195,41 @@
       ]
     },
     {
-      "name": "debug_arm_vrf",
+      "name": "credit_x402_deposit",
       "docs": [
-        "Test harness（Stage 2/3 保留，后续 Phase 移除）：ER 上手动 arm VRF",
-        "槽位（生产路径是 advance 的 phase 机决定 arm）。"
+        "x402 标准模式入账（配套文档一 §4.3）：config.gateway 签名，把「已在 L1",
+        "付进 TableVault」的付款记到座位账本。金额/身份规则与 sit_down 相同；",
+        "DepositRecord（PDA 以付款签名两半为种子）保证同一笔付款不可重复入账。"
       ],
       "discriminator": [
-        58,
-        46,
-        195,
-        13,
-        117,
-        132,
-        198,
-        74
+        208,
+        50,
+        134,
+        84,
+        72,
+        92,
+        81,
+        119
       ],
       "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
         {
           "name": "table",
           "pda": {
@@ -2206,17 +2253,88 @@
           }
         },
         {
-          "name": "game",
+          "name": "seat",
+          "writable": true
+        },
+        {
+          "name": "deposit_record",
+          "docs": [
+            "入账凭据（付款签名两半为种子；重复入账在此失败）。"
+          ],
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  103,
+                  120,
+                  52,
+                  48,
+                  50
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "sig_lo"
+              },
+              {
+                "kind": "arg",
+                "path": "sig_hi"
+              }
+            ]
+          }
+        },
+        {
+          "name": "other0",
+          "docs": [
+            "handler 内手工校验 owner+dish+idx 并为不同座位。"
+          ]
+        },
+        {
+          "name": "other1"
+        },
+        {
+          "name": "other2"
+        },
+        {
+          "name": "other3"
+        },
+        {
+          "name": "other4"
+        },
+        {
+          "name": "other5"
+        },
+        {
+          "name": "other6"
+        },
+        {
+          "name": "other7"
+        },
+        {
+          "name": "agent_profile",
+          "docs": [
+            "可选：agent 身份档案（PDA [\"agent\", signer]）；不传 = 真人。"
+          ],
+          "optional": true
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
                   97,
-                  109,
-                  101
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
                 ]
               },
               {
@@ -2227,14 +2345,64 @@
           }
         },
         {
-          "name": "admin",
+          "name": "mint"
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "TableVault —— I-X 背书检查（2026-10-10 审计 P0-3）读它的余额：",
+            "每次入账都必须被真实托管资金全额覆盖。",
+            "零拷贝读 amount @ 64..72 —— `Account<TokenAccount>` 会让 try_accounts",
+            "栈帧溢出 4KB 预算，构建期已实测）。"
+          ]
+        },
+        {
+          "name": "game",
+          "docs": [
+            "Game 的 L1 快照（I-X 背书检查用；owner/discriminator 由",
+            "fund::read_game_snapshot 手工校验）。"
+          ]
+        },
+        {
+          "name": "gateway",
+          "writable": true,
           "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
         {
-          "name": "target",
+          "name": "idx",
           "type": "u8"
+        },
+        {
+          "name": "payer",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "sig_lo",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "sig_hi",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -3060,6 +3228,83 @@
       "args": []
     },
     {
+      "name": "owner_force_stand_up",
+      "docs": [
+        "主人回收自己 agent 的座位（ER；2026-10-10 审计 P2）。资金只进 payout。"
+      ],
+      "discriminator": [
+        177,
+        229,
+        81,
+        27,
+        213,
+        11,
+        64,
+        201
+      ],
+      "accounts": [
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seat_ledger",
+          "docs": [
+            "handler 用 fund::read_seat_ledger_clone 手工校验 owner+table+idx）。"
+          ]
+        },
+        {
+          "name": "owner",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "idx",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "pause_agent",
       "docs": [
         "pause_agent（X9）：主人暂停（暂停后不可入座/补码）。"
@@ -3206,6 +3451,184 @@
           "name": "account_seeds",
           "type": {
             "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "refund_x402_deposit",
+      "docs": [
+        "x402 标准模式退款（配套文档一 §4.3）：config.gateway 签名，把「已付进",
+        "TableVault 但未入账」的付款退回 ATA(payer, mint)。只能动盈余（退款后",
+        "余额仍须 ≥ I-X 要求，算法与 audit_table 相同）；RefundRecord（PDA 以",
+        "付款签名两半为种子）防重复退款。"
+      ],
+      "discriminator": [
+        219,
+        101,
+        215,
+        194,
+        206,
+        251,
+        197,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "table",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "game",
+          "docs": [
+            "Game 的 L1 快照（委托账户在 L1 上是最后一次 commit 的镜像）。"
+          ]
+        },
+        {
+          "name": "vault_auth",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "payer"
+        },
+        {
+          "name": "payer_ata",
+          "writable": true
+        },
+        {
+          "name": "refund_record",
+          "docs": [
+            "退款凭据（付款签名两半为种子；重复退款在此失败）。"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  120,
+                  52,
+                  48,
+                  50,
+                  114,
+                  101,
+                  102,
+                  117,
+                  110,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "sig_lo"
+              },
+              {
+                "kind": "arg",
+                "path": "sig_hi"
+              }
+            ]
+          }
+        },
+        {
+          "name": "gateway",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "sig_lo",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "sig_hi",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
           }
         }
       ]
@@ -4494,6 +4917,15 @@
           "writable": true
         },
         {
+          "name": "agent_profile",
+          "docs": [
+            "可选：agent 身份档案（PDA [\"agent\", occupant]）。座位为 agent（kind=1）",
+            "时**必传**且必须 Active —— 主人的 pause/revoke 由此立即止住补码",
+            "（2026-10-10 审计 P2：此前 pause 只挡新入座，已就座者可继续花钱）。"
+          ],
+          "optional": true
+        },
+        {
           "name": "vault_auth",
           "pda": {
             "seeds": [
@@ -4643,19 +5075,87 @@
           "signer": true
         },
         {
+          "name": "table",
+          "docs": [
+            "本桌（只读）：账户绑定 + 揭示宽限（reveal_timeout_s）。",
+            "",
+            "2026-10-10（审计 P1-2）：回调此前对 deck/game **零绑定**——第三方可以",
+            "借 VRF 程序之手直调本回调、自选账户组合写入随机数（provenance 破坏）。",
+            "现在 deck/game 都由 table 派生 seeds，弹回来的账户必须与本桌一致。"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  98,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table.table_id",
+                "account": "Table"
+              }
+            ]
+          }
+        },
+        {
           "name": "deck",
           "docs": [
             "Private deck; only randomness lands here. Runs on the ER, where the",
             "clone is owned by this program (see RequestVrf note)."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              },
+              {
+                "kind": "account",
+                "path": "table.epoch",
+                "account": "Table"
+              }
+            ]
+          }
         },
         {
           "name": "game",
           "docs": [
             "Pending request slot to match against callback_args."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  97,
+                  109,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "table"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -4700,6 +5200,19 @@
         161,
         59,
         154
+      ]
+    },
+    {
+      "name": "DepositRecord",
+      "discriminator": [
+        83,
+        232,
+        10,
+        31,
+        251,
+        49,
+        189,
+        167
       ]
     },
     {
@@ -4794,6 +5307,19 @@
       ]
     },
     {
+      "name": "RefundRecord",
+      "discriminator": [
+        101,
+        159,
+        85,
+        113,
+        48,
+        38,
+        7,
+        215
+      ]
+    },
+    {
       "name": "SeatLedger",
       "discriminator": [
         96,
@@ -4817,6 +5343,47 @@
         129,
         230,
         112
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "HandEventLog",
+      "discriminator": [
+        199,
+        92,
+        40,
+        78,
+        162,
+        124,
+        61,
+        38
+      ]
+    },
+    {
+      "name": "X402DepositCredited",
+      "discriminator": [
+        254,
+        5,
+        210,
+        70,
+        44,
+        0,
+        230,
+        137
+      ]
+    },
+    {
+      "name": "X402DepositRefunded",
+      "discriminator": [
+        52,
+        20,
+        154,
+        241,
+        199,
+        5,
+        175,
+        215
       ]
     }
   ],
@@ -4980,6 +5547,16 @@
       "code": 6031,
       "name": "AgentProfileMismatch",
       "msg": "agent"
+    },
+    {
+      "code": 6032,
+      "name": "PayoutNotSet",
+      "msg": "payout"
+    },
+    {
+      "code": 6033,
+      "name": "MemberNotAllowed",
+      "msg": "members"
     }
   ],
   "types": [
@@ -5280,6 +5857,58 @@
       }
     },
     {
+      "name": "DepositRecord",
+      "docs": [
+        "x402 标准模式的入账凭据（配套文档一 §4.3；2026-10-08 落地）。",
+        "PDA [\"x402\", sig_lo, sig_hi]（付款交易签名的两半）——`init` 语义保证",
+        "同一笔付款不可能被网关重复入账。记录付款人/桌/座/金额/时间与完整签名，",
+        "**供任何人事后审计**：拿 `sig` 去 L1 查那笔交易，核对「付款人 → TableVault」",
+        "的转账金额 ≥ `amount`（/history 的 L1 审计视图即为此准备）。",
+        "这是 x402 标准模式里唯一信任网关的地方，但可完全审计（同 §9.4 的说明）。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "seat_idx",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "credited_at",
+            "type": "i64"
+          },
+          {
+            "name": "sig",
+            "docs": [
+              "付款交易签名（64 字节）。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "Game",
       "docs": [
         "ER game state (design §3.2). PDA [\"game\", table]，公开。While delegated,",
@@ -5465,6 +6094,56 @@
               "u8（0/1；bool 不是 Pod）。"
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HandEventLog",
+      "docs": [
+        "玩家行动 / 超时自动行动的**规范事件**（与写进 transcript 的 Event 同值）。",
+        "公开数据：金额、座号、行动类型——结算后本就按 §8.7 公开；不含盐、不含牌面。",
+        "验证用途：把这些事件按序追加到 draw_digest[k]，应复现 street_end[k]；",
+        "全部追加 + HandEnd 后应复现 transcript_final。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hand_id",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "docs": [
+              "该手内事件序号（action_seq，Timeout 也占一号）——仅信息性，验证按日志顺序。"
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "event_tag",
+            "docs": [
+              "0=Action 1=Timeout"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "seat",
+            "type": "u8"
+          },
+          {
+            "name": "kind",
+            "docs": [
+              "Action: kind 0..5（fold/check/call/bet/raise/allin）；Timeout: auto_kind（0=fold,1=check）"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "Action: call=实际支付额、bet/raise/allin=目标额；Timeout 恒 0"
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -5813,6 +6492,48 @@
       }
     },
     {
+      "name": "RefundRecord",
+      "docs": [
+        "x402 标准模式的退款凭据（2026-10-08）。PDA [\"x402refund\", sig_lo, sig_hi]",
+        "（付款签名的两半）——`init` 语义保证同一笔付款不会重复退款。记录",
+        "付款人/桌/金额/时间/完整签名，供任何人事后到 L1 核对那笔付款交易。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "refunded_at",
+            "type": "i64"
+          },
+          {
+            "name": "sig",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "ReplayEntry",
       "serialization": "bytemuck",
       "repr": {
@@ -5829,14 +6550,57 @@
             "type": "u64"
           },
           {
-            "name": "occupants",
+            "name": "street_end",
             "docs": [
-              "该手 9 个 occupant —— 让「occupants + salts → salt_digest」这一步也能被验证。"
+              "**v2**：每条街**结束时**（该街最后一个事件之后）的 transcript 摘要。",
+              "有了它 + 链下公开的事件流，任何人都能验证\"这条行动序列确实产生了这条",
+              "transcript\"，并一路对到 HandProof.transcript_final（设计 §7）。",
+              "v1 里这 288 字节是 occupants —— 弃用理由：对历史手牌的 salt_digest 自检，",
+              "价值低于\"事件流可验证\"；当前手的 occupant 仍可从实时 Game 读到。"
             ],
             "type": {
               "array": [
-                "pubkey",
-                9
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                4
+              ]
+            }
+          },
+          {
+            "name": "streets_ended",
+            "docs": [
+              "bit k = street_end[k] 有效。"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_occ_pad_a",
+            "docs": [
+              "这 288 字节区的剩余部分（v2 未用，置零）。拆成两个数组：bytemuck 只对",
+              "≤32 的数组有 Pod/Default 实现。"
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    32
+                  ]
+                },
+                4
+              ]
+            }
+          },
+          {
+            "name": "_occ_pad_b",
+            "type": {
+              "array": [
+                "u8",
+                31
               ]
             }
           },
@@ -5896,14 +6660,21 @@
             "type": "u8"
           },
           {
+            "name": "layout_ver",
+            "docs": [
+              "布局版本：0 = v1（同一段 288B 是 occupants），2 = v2（street_end + mask）。"
+            ],
+            "type": "u8"
+          },
+          {
             "name": "_pad",
             "docs": [
-              "显式填充：504 = 8×63。"
+              "显式填充：504 = 8×63（**v2 不改变账户大小** → 老账户无需重建/重新 init）。"
             ],
             "type": {
               "array": [
                 "u8",
-                9
+                8
               ]
             }
           }
@@ -6198,7 +6969,7 @@
           {
             "name": "admin",
             "docs": [
-              "Stage 6 过渡期保留：create_table / delegate_table / debug_arm_vrf 仍以",
+              "Stage 6 过渡期保留：create_table / delegate_table 以",
               "此 key 的签名为门禁；生产鉴权（ProgramConfig.admin）在后续 Phase 接入。"
             ],
             "type": "pubkey"
@@ -6449,6 +7220,80 @@
           },
           {
             "name": "Runout"
+          }
+        ]
+      }
+    },
+    {
+      "name": "X402DepositCredited",
+      "docs": [
+        "入账事件：只含公开数据（付款人/桌/座/金额/付款签名），不含任何私密材料。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "seat",
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "sig",
+            "docs": [
+              "付款交易签名 —— 审计用：拿它去 L1 核对「付款人 → TableVault」的转账。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "X402DepositRefunded",
+      "docs": [
+        "退款事件：公开数据（桌/付款人/金额/付款签名），供审计对账。"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "table",
+            "type": "pubkey"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "sig",
+            "docs": [
+              "对应那笔「付了款但未入账」的交易签名。"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }

@@ -75,12 +75,35 @@ export interface AuditItem {
 const cache = new Map<number, { at: number; body: unknown }>();
 const TTL_MS = 15_000;
 
+// 2026-10-10（审计 L2）：最小限流（防单客户端循环烧 Helius 配额与 RPC 额度）。
+const rate = new Map<string, number[]>();
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 20;
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const arr = (rate.get(ip) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (arr.length >= RATE_MAX) {
+    rate.set(ip, arr);
+    return true;
+  }
+  arr.push(now);
+  rate.set(ip, arr);
+  return false;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const tableId = Number(url.searchParams.get("table") ?? 14);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 30), 60);
-  if (!Number.isInteger(tableId) || tableId < 0) {
-    return Response.json({ error: "table must be a non-negative integer" }, { status: 400 });
+  if (!Number.isInteger(tableId) || tableId < 0 || tableId > 64) {
+    return Response.json({ error: "table must be an integer in [0, 64]" }, { status: 400 });
+  }
+  const ip =
+    req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "local";
+  if (rateLimited(ip)) {
+    return Response.json({ error: "rate limited" }, { status: 429 });
   }
   const headers = { "Cache-Control": "private, max-age=10" };
   const hit = cache.get(tableId);

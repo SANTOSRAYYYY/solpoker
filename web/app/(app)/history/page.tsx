@@ -39,6 +39,8 @@ import { DEAL_VECTORS } from "@/lib/vectors";
 import {
   readGameLive,
   readHandProofLive,
+  readHandProof,
+  readHandSecrets,
   readHandReplay,
   readHandSecretsLive,
   type ProofEntryView,
@@ -184,6 +186,8 @@ export default function HistoryPage() {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [tableId, setTableId] = useState<number | null>(null);
   const [entries, setEntries] = useState<(ProofEntryView | null)[]>([]);
+  // 复算输入的数据源（审计 M2/H6）：L1 已提交快照 vs ER 实时态。
+  const [proofSource, setProofSource] = useState<"L1" | "ER">("L1");
   const [secrets, setSecrets] = useState<(SecretsEntryView | null)[]>([]);
   const [game, setGame] = useState<GameView | null>(null);
   const [sel, setSel] = useState<number | null>(null);
@@ -298,12 +302,28 @@ export default function HistoryPage() {
       for (;;) {
         if (stop) return;
         try {
-          const [proof, sec, live, rep] = await Promise.all([
-            readHandProofLive(er, ctx.l1, tableId),
-            readHandSecretsLive(er, ctx.l1, tableId),
+          // 2026-10-10（审计 M2/H6）：复算输入**优先取 L1**（commit 后的快照，
+          // 被审计方无法事后伪造）；L1 还没有这手（未提交）才回落 ER，
+          // 界面用徽章标注数据源。
+          const [l1Proof, l1Sec, l1Rep, live] = await Promise.all([
+            readHandProof(ctx.l1, tableId),
+            readHandSecrets(ctx.l1, tableId),
+            readHandReplay(ctx.l1, ctx.l1, tableId).catch(() => null),
             readGameLive(er, ctx.l1, tableId).catch(() => null),
-            readHandReplay(er, ctx.l1, tableId).catch(() => null),
           ]);
+          let proof = l1Proof;
+          let sec = l1Sec;
+          let rep = l1Rep;
+          let src: "L1" | "ER" = "L1";
+          if (!proof || proof.entries.every((e) => !e)) {
+            src = "ER";
+            [proof, sec, rep] = await Promise.all([
+              readHandProofLive(er, ctx.l1, tableId),
+              readHandSecretsLive(er, ctx.l1, tableId),
+              readHandReplay(er, ctx.l1, tableId).catch(() => null),
+            ]);
+          }
+          setProofSource(src);
           setEntries(proof?.entries ?? []);
           setSecrets(sec ?? []);
           setGame(live?.game ?? null);
@@ -421,6 +441,22 @@ export default function HistoryPage() {
       <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="title-cn text-[24px] text-mist">{tr("history.title")}</h1>
+          {/* 2026-10-10（审计 M2/H6）：复算输入的数据源徽章——L1=已提交快照（可信），
+              ER=被审计方实时态（尚未提交，未过 L1 核验）。 */}
+          <span
+            className={`mt-1 inline-block rounded-full border px-2.5 py-0.5 font-mono text-[10.5px] ${
+              proofSource === "L1"
+                ? "border-win/35 bg-win/10 text-win"
+                : "border-warn/40 bg-warn/10 text-warn"
+            }`}
+            title={
+              proofSource === "L1"
+                ? "数据源：L1 已提交快照"
+                : "数据源：ER 实时态（尚未提交到 L1，未过 L1 核验）"
+            }
+          >
+            {proofSource === "L1" ? "数据源: L1 ✓" : "数据源: ER（未核验）"}
+          </span>
           <p className="mt-1 max-w-[720px] text-[13px] leading-relaxed text-mist-dim">
             {tr("history.blurb")}
           </p>

@@ -44,9 +44,14 @@ function loadDeployer(): Keypair {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function POST(req: Request) {
+  // 2026-10-10（审计 M3/H7）：限流键优先取平台可信头——自建/代理部署下
+  // `x-forwarded-for` 可被客户端伪造（取最后一段=代理追加的对端）；
+  // Vercel 部署下 `x-vercel-forwarded-for` 由边缘写入。
+  const xff = req.headers.get("x-forwarded-for");
   const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() ??
     req.headers.get("x-real-ip") ??
+    (xff ? xff.split(",").pop()?.trim() : null) ??
     "local";
 
   if (!/devnet/i.test(L1_RPC)) {
@@ -82,6 +87,10 @@ export async function POST(req: Request) {
       { status: 429, headers: { "retry-after": String(retryAfterS) } }
     );
   }
+
+  // 2026-10-10（审计 H7）：**先占冷却位再发放**——此前只在成功路径记录冷却，
+  // 并发/慢请求（maxDuration=60）可以在首个完成前绕过冷却重复发放。
+  lastByIp.set(ip, Date.now());
 
   try {
     const l1 = new Connection(L1_RPC, "confirmed");
@@ -173,9 +182,10 @@ export async function POST(req: Request) {
       targets: { sol: SOL_TARGET, usdc: USDC_TARGET },
     });
   } catch (e) {
-    return Response.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
-      { status: 500 }
-    );
+    // 失败解锁冷却（允许立刻重试），但**不把内部错误原文回显**（审计 L1：
+    // e.message 会把服务器路径/配置状态泄露给匿名调用者）。细节只进服务端日志。
+    lastByIp.delete(ip);
+    console.error("[faucet]", e instanceof Error ? e.message : String(e));
+    return Response.json({ ok: false, error: "faucet 内部错误（详见服务端日志）" }, { status: 500 });
   }
 }

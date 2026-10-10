@@ -47,7 +47,10 @@ export const ER_CU = 1_400_000;
 export const MAX_SEATS = 9;
 // X10: session key 预充（付 ER 手续费）。
 export const SESSION_KEY_LAMPORTS = 1_000_000;
-export const SESSION_TTL_S = 7 * 24 * 3600;
+// 2026-10-10（审计 M1）：会话 key TTL 从 7 天收紧到 12 小时——降低明文会话
+// 私钥在 localStorage/sessionStorage 被窃取后的可利用窗口（新入座生效；
+// 老座位沿用当时写入的过期时间，直至换座/重坐）。
+export const SESSION_TTL_S = 12 * 3600;
 
 export const PHASES = [
   "Idle",

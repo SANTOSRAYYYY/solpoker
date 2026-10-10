@@ -44,7 +44,8 @@ import { useI18n } from "@/lib/i18n";
 import { fmtUsdc, phaseName, type GameView } from "@/lib/game-state";
 import { readGameLive, readHandProofLive, readSeatLedgers, type SeatLedgerView } from "@/lib/chain-read";
 import { scanTables, type TableInfo } from "@/lib/tables";
-import { loadOrCreateSessionKey } from "@/lib/session-key";
+import { loadOrCreateSessionKey, clearSeatSecrets } from "@/lib/session-key";
+import { redactSecrets } from "@/lib/redact";
 import { parseUsdcInput } from "@/lib/amount";
 import { isSfxMuted, primeSfx, setSfxMuted, sfx } from "@/lib/sfx";
 
@@ -676,6 +677,8 @@ export default function TablePage() {
       const unsigned = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
       const signed = await signL1(ctx.wallet, unsigned);
       const sig = await sendWalletSigned(l1, signed, "cash_out");
+      // 2026-10-10（审计 M1）：兑现后清掉该座位的会话私钥与盐。
+      if (idx >= 0) clearSeatSecrets(tableId, idx, ctx.address);
       setNotice(tr("table.notice.cashoutDone", { sig: sig.slice(0, 16) }));
     } catch (e) {
       setNotice(
@@ -1270,12 +1273,12 @@ export default function TablePage() {
             )}
             {driver.error && (
               <p className="mx-auto mt-2 max-w-[1020px] text-[12px] leading-relaxed text-loss">
-                {driver.error}
+                {redactSecrets(driver.error)}
               </p>
             )}
             {tee.phase === "error" && (
               <p className="mx-auto mt-2 max-w-[1020px] text-[12px] text-loss">
-                TEE 连接失败：{tee.message}
+                TEE 连接失败：{redactSecrets(tee.message)}
               </p>
             )}
         </div>
@@ -1530,6 +1533,8 @@ export default function TablePage() {
                 onClick={async () => {
                   setConfirmLeave(false);
                   await driver.standUp();
+                  // 2026-10-10（审计 M1）：离座后清掉该座位的会话私钥与盐。
+                  if (mySeat !== null && ctx.address) clearSeatSecrets(tableId, mySeat, ctx.address);
                 }}
                 disabled={!!driver.busy}
               >

@@ -15,14 +15,17 @@ export function loadOrCreateSessionKey(
   wallet: string
 ): Keypair {
   try {
-    const raw = localStorage.getItem(keyOf(tableId, seat, wallet));
+    // 2026-10-10（审计 M1）：会话私钥改存 sessionStorage（关浏览器即清），
+    // 并顺手清掉历史遗留的 localStorage 副本（明文私钥不进持久存储）。
+    localStorage.removeItem(keyOf(tableId, seat, wallet));
+    const raw = sessionStorage.getItem(keyOf(tableId, seat, wallet));
     if (raw) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
   } catch {
     // fall through: regenerate
   }
   const kp = Keypair.fromSecretKey(nacl.sign.keyPair().secretKey);
   try {
-    localStorage.setItem(
+    sessionStorage.setItem(
       keyOf(tableId, seat, wallet),
       JSON.stringify(Array.from(kp.secretKey))
     );
@@ -30,6 +33,23 @@ export function loadOrCreateSessionKey(
     // storage full/denied: session key lives in memory only this run
   }
   return kp;
+}
+
+/** 离座/兑现后清掉该座位的会话私钥与全部盐（审计 M1：收缩被发现后的可用窗口）。 */
+export function clearSeatSecrets(tableId: number, seat: number, wallet: string) {
+  const key = keyOf(tableId, seat, wallet);
+  try {
+    localStorage.removeItem(key); // 历史遗留（旧版本写进 localStorage）
+    sessionStorage.removeItem(key);
+    const prefix = `solpoker:salt:${tableId}:`;
+    const suffix = `:${seat}:${wallet}`;
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(prefix) && k.endsWith(suffix)) sessionStorage.removeItem(k);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 // Salt per (table, hand, seat) — sessionStorage so a refresh mid-hand keeps
