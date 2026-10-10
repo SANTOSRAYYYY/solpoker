@@ -10,6 +10,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -72,6 +73,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
   }, []);
+
+  // 半登录态自动恢复（2026-10-10）：Privy 会话在、但钱包列表持续为空超过 2 秒 →
+  // 自动重跑一次连接流程（外部钱包扩展在页面重开后不总能静默挂回会话，此时
+  // ctx.me 为空、大部分功能不可用）。刻意只自动尝试一次：呈现给用户的是
+  // Privy 的连接弹窗；曾成功挂上过则复位，下次断连还能再自动恢复一次；
+  // 仍失败就交给手动的「重新连接钱包」按钮。
+  const autoTried = useRef(false);
+  const optionsLen = options.length;
+  useEffect(() => {
+    if (!ready) return;
+    if (optionsLen > 0) {
+      autoTried.current = false;
+      return;
+    }
+    if (!authenticated || autoTried.current) return;
+    const h = window.setTimeout(() => {
+      autoTried.current = true;
+      try {
+        login();
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
+    return () => window.clearTimeout(h);
+  }, [ready, authenticated, optionsLen, login]);
 
   const wallet = useMemo(
     () => options.find((o) => o.address === address)?.wallet ?? null,

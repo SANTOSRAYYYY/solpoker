@@ -872,17 +872,25 @@ export default function TablePage() {
                   <Dot kind="live" /> {tr("table.teeOk")}
                 </Badge>
               ) : !ctx.me ? (
-                /* 未登录访客：这里先给「连接钱包」——以前是 disabled，看起来像按钮坏了 */
-                <button
-                  className="btn-casino btn-brand px-2.5 py-1.5 text-[12px] whitespace-nowrap"
-                  onClick={() => {
-                    setNotice(tr("table.loginHint"));
-                    ctx.login();
-                  }}
-                  disabled={!ctx.privyConfigured}
-                >
-                  {tr("nav.connect")}
-                </button>
+                /* 未登录访客 / 半登录态（已登录但钱包扩展没挂上）：这个位置就是恢复入口——
+                   半登录态下点它 = 重新连接钱包；以前是 disabled，看起来像按钮坏了 */
+                <span className="flex items-center gap-2">
+                  {ctx.authenticated && (
+                    <span className="hidden text-[10.5px] whitespace-nowrap text-mist-faint xl:inline">
+                      {tr("nav.reconnectHint")}
+                    </span>
+                  )}
+                  <button
+                    className="btn-casino btn-brand px-2.5 py-1.5 text-[12px] whitespace-nowrap"
+                    onClick={() => {
+                      if (!ctx.authenticated) setNotice(tr("table.loginHint"));
+                      ctx.login();
+                    }}
+                    disabled={!ctx.privyConfigured}
+                  >
+                    {ctx.authenticated ? tr("nav.reconnect") : tr("nav.connect")}
+                  </button>
+                </span>
               ) : (
                 <button
                   className="btn-casino btn-glass px-2.5 py-1.5 text-[12px] whitespace-nowrap"
@@ -1379,15 +1387,18 @@ export default function TablePage() {
                   <p className="text-[12.5px] leading-relaxed text-mist-dim">
                     {tr("table.sitConnectHint")}
                   </p>
+                  {ctx.authenticated && (
+                    <p className="text-[11px] text-mist-faint">{tr("nav.reconnectHint")}</p>
+                  )}
                   <button
                     className="btn-casino btn-brand mt-3 w-full py-2.5 text-[13px]"
                     onClick={() => {
-                      setNotice(tr("table.loginHint"));
+                      if (!ctx.authenticated) setNotice(tr("table.loginHint"));
                       ctx.login();
                     }}
                     disabled={!ctx.privyConfigured}
                   >
-                    {tr("nav.connect")}
+                    {ctx.authenticated ? tr("nav.reconnect") : tr("nav.connect")}
                   </button>
                 </>
               ) : (

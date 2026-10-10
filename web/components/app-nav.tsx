@@ -94,16 +94,18 @@ export function AppNav() {
             </button>
           )}
 
-          {/* 已登录但没有可用的 Solana 钱包（Privy 内嵌钱包未开通等）：
-              别把右上角留空 —— 给「连接钱包」重试，再给一个退出重置的出口。 */}
+          {/* 已登录但没有可用的 Solana 钱包（半登录态：会话在、钱包扩展没挂上）：
+              别把右上角留空 —— 给「重新连接钱包」（重跑 Privy 连接流程），
+              再给一个退出重置的出口。 */}
           {ctx.ready && ctx.authenticated && !ctx.me && (
             <div className="flex items-center gap-1.5">
               <button
                 className="btn-casino btn-brand px-4 py-1.5 text-[12.5px]"
                 onClick={ctx.login}
                 disabled={!ctx.privyConfigured}
+                title={t("nav.reconnectHint")}
               >
-                {t("nav.connect")}
+                {t("nav.reconnect")}
               </button>
               <button
                 className="rounded-full border border-accent-500/30 bg-black/30 px-2.5 py-1.5 text-[11px] text-mist-dim hover:border-loss/60 hover:text-loss"
