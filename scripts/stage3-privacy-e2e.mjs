@@ -114,13 +114,9 @@ if (!(await er.getAccountInfo(permission))) {
 // ---- 4/5. arm + request + fulfill (CPI writes must be unaffected) ----
 const o = 8 + 32 + 8 + 5 + 1;
 const states = ["Idle", "Ready", "Pending", "Fulfilled", "Void"];
-{
-  const ix = await erProgram.methods
-    .debugArmVrf(1)
-    .accounts({ table, game, admin: deployer.publicKey })
-    .instruction();
-  await sendAndConfirm(er, [ix], [deployer], "debug_arm_vrf (ER)");
-}
+// 2026-10-10（审计 P1-9）：debug_arm_vrf 已从生产程序删除。stage-3 遗留 harness
+// 需改用 advance 的 phase 流程 arm——在此之前无法继续。
+throw new Error("debug_arm_vrf 已于 2026-10-10 移除（审计 P1-9）：stage3 harness 需改写为 advance 流程");
 const tRequest = Date.now();
 {
   const ix = await erProgram.methods

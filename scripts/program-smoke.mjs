@@ -68,6 +68,8 @@ await probe(
   await program.methods.topUp(0, new BN(1)).accounts({
     table: p.table, seat: p.seat(0), vaultAuth: p.vaultAuth, vault, mint: TUSDC,
     playerAta, payer: deployer.publicKey,
+    // 2026-10-10（审计 P2）：top_up 新增可选 agent profile（kind=Agent 时必传）。
+    agentProfile: null,
   }).instruction()
 );
 
@@ -84,6 +86,8 @@ await probe(
       config, table: p.table, seat: p.seat(0), depositRecord,
       other0: p.seat(1), other1: p.seat(2), other2: p.seat(3), other3: p.seat(4),
       other4: p.seat(5), other5: p.seat(6), other6: p.seat(7), other7: p.seat(8),
+      // 2026-10-10（审计 P0-3）：I-X 背书检查的新账户（负例仍应报 BadBuyIn）。
+      vaultAuth: p.vaultAuth, mint: TUSDC, vault, game: p.game,
       gateway: deployer.publicKey, agentProfile: null,
     })
     .instruction()

@@ -134,10 +134,22 @@ async function main() {
     .split(",")
     .map((s) => Number(s.trim()));
   const l1 = new Connection(L1_URL, { commitment: "confirmed", fetch: fetchWithTimeout });
-  const { token } = await getAuthToken(ER_BASE, deployer.publicKey, async (msg) => {
-    const nacl = (await import("tweetnacl")).default;
-    return nacl.sign.detached(msg, deployer.secretKey);
-  });
+  // 2026-10-10：启动认证带重试——本机网络会间歇性抽风（connect timeout），
+  // 之前一次抖动就让整个 crank 退出（牌桌全停）。这里最多重试 20 次（~5 分钟）。
+  let token = null;
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    try {
+      ({ token } = await getAuthToken(ER_BASE, deployer.publicKey, async (msg) => {
+        const nacl = (await import("tweetnacl")).default;
+        return nacl.sign.detached(msg, deployer.secretKey);
+      }));
+      break;
+    } catch (e) {
+      console.log(`crank 启动：ER 认证失败（第 ${attempt}/20 次）：${String(e.message ?? e).slice(0, 100)}`);
+      if (attempt === 20) throw e;
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+  }
   const er = new Connection(`${ER_BASE}?token=${token}`, { commitment: "confirmed", fetch: fetchWithTimeout });
   const program = new anchor.Program(idl, new anchor.AnchorProvider(er, new anchor.Wallet(deployer), { commitment: "confirmed" }));
   const l1Program = new anchor.Program(idl, new anchor.AnchorProvider(l1, new anchor.Wallet(deployer), { commitment: "confirmed" }));
@@ -264,6 +276,7 @@ async function main() {
       const snapOff = 152 + i * 152;
       const snapStatus = snapInfo.data[snapOff + 145];
       const snapOwed = snapInfo.data.readBigUInt64LE(snapOff + 120);
+      const snapCredited = snapInfo.data.readBigUInt64LE(snapOff + 112);
       if (snapStatus !== 2 && snapOwed <= paid) {
         const waitKey = `${tableId}:${i}:${snapStatus}:${snapOwed}:${paid}`;
         if (!sweepWaitLog.has(waitKey)) {
@@ -271,6 +284,23 @@ async function main() {
           console.log(`[t${tableId}] sweep wait[${i}]: L1 快照未反映释放（status=${snapStatus} owed=${Number(snapOwed) / 1e6}）→ 催 commit`);
         }
         zombieTables.add(tableId);
+        continue;
+      }
+      // no-op 形态守卫（2026-10-10 审计 P2-2）：快照已不是"可付/可放"的形态时
+      // 发出去只会是空转成功、且「成功就 return」会占掉本轮唯一动作位、饿死
+      // commit_game 等其它动作（座位已 Left 且 owed==paid 但 credited≠deposited
+      // 的历史残留是典型触发源）。只做两件事：确有付款（owed>paid）或确可释放
+      // （Left 且 credited==deposited），否则记日志让行。
+      const canPay = snapOwed > paid;
+      const canRelease = snapStatus === 2 && snapCredited === deposited;
+      if (!canPay && !canRelease) {
+        const nopKey = `${tableId}:${i}:nop:${snapStatus}:${snapOwed}:${paid}:${snapCredited}:${deposited}`;
+        if (!sweepWaitLog.has(nopKey)) {
+          sweepWaitLog.add(nopKey);
+          console.log(
+            `[t${tableId}] sweep nop[${i}]: 快照无可付/可放（status=${snapStatus} owed=${Number(snapOwed) / 1e6} paid=${Number(paid) / 1e6} credited=${Number(snapCredited) / 1e6} deposited=${Number(deposited) / 1e6}）→ 跳过（资金可由重坐取回）`
+          );
+        }
         continue;
       }
       const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
@@ -446,6 +476,9 @@ async function main() {
               handReplay: replayPda(table),
               commitPayer: commitPayerPda(table), magicContext: MAGIC_CONTEXT,
               magicProgram: MAGIC_PROGRAM, magicFeeVault,
+              // 2026-10-10（审计 P1-8）：commit_game 现在是 keeper 门禁（签名者
+              // 必须 == table.admin），crank 持有部署者密钥 = 所有桌的 admin。
+              admin: deployer.publicKey,
             })
             .instruction();
           const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} commit_game`, ER_CU);

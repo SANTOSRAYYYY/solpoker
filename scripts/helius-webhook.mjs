@@ -116,6 +116,20 @@ const server = http.createServer((req, res) => {
 
   // Helius webhook / 本地模拟：同一个处理路径
   if (req.method === "POST" && (url.pathname === "/" || url.pathname === "/simulate")) {
+    // 2026-10-10（审计 L3）：正式 webhook 需要共享密钥（WEBHOOK_SECRET，
+    // 通过 x-webhook-secret 头携带）；未配置时只接受本地模拟端点。
+    const secret = process.env.WEBHOOK_SECRET;
+    if (secret) {
+      if ((req.headers["x-webhook-secret"] ?? "") !== secret) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+        return;
+      }
+    } else if (url.pathname !== "/simulate") {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "WEBHOOK_SECRET 未设置，拒绝外部 webhook" }));
+      return;
+    }
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {

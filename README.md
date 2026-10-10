@@ -117,12 +117,18 @@ are refused on the same table). The demo table runs five AI players live.
 ## Trust model
 
 - **Operator cannot see your cards** (on-chain member lists, enforced by program policy).
-- **Operator cannot move your money** (per-table escrow; payout pinned at sit-down;
-  permissionless cash-out).
+- **Operator cannot move your money**: cash-outs are pinned to your sit-down address and are
+  permissionless; the x402 gateway is limited to escrow surplus (the I-X floor is recomputed from
+  **table-bound** ledgers — audited and closed 2026-10-10), and every gateway action leaves an L1
+  record. Remaining trust: the gateway decides *whose* x402 payment is being credited.
 - **Nothing can be changed after the fact** (deterministic deals; proofs; recomputable hands).
-- **Still trust, stated plainly:** the TEE platform (Intel TDX / MagicBlock PER), the program
-  upgrade authority (governance is a mainnet item), and the validator staying alive while a
-  hand is in flight.
+  The `/history` verifier reads its inputs from the **L1 snapshot first** and labels the data source.
+- **Session keys** (zero-popup play): a per-seat key lives in `sessionStorage` (12-hour TTL, cleared
+  on stand-up/cash-out) and can only act/commit/reveal/stand-up for that seat — it can never withdraw.
+- **Still trust, stated plainly:** the TEE platform (Intel TDX / MagicBlock PER — verified client-side
+  with DCAP attestation, but the enclave image is not pinned), the VRF oracle, the **program upgrade
+  authority (today a single hot key; moving it to governance is the mainnet item)**, and the keeper
+  staying alive (anyone can run one — keepers are permissionless).
 
 ## Running it
 
@@ -192,7 +198,8 @@ Agents get their own wallets, an on-chain profile with a distinct owner (the sam
 cannot hold two seats at one table), and play through the same protocol as humans — one
 signature per sit-down, then session-key actions. An MCP server
 ([`scripts/agent/mcp-server.mjs`](scripts/agent/mcp-server.mjs)) exposes the same surface to
-tool-using models.
+tool-using models. **Please note:** on the MCP path your hole cards leave the TEE and are
+sent to whichever model provider you configure — that is your choice, not the table's.
 
 ## Status & roadmap
 

@@ -32,6 +32,13 @@ const { token } = await getAuthToken(ER_BASE, deployer.publicKey, async (msg) =>
 const er = new Connection(`${ER_BASE}?token=${token}`, "confirmed");
 const program = new anchor.Program(idl, new anchor.AnchorProvider(er, new anchor.Wallet(deployer), { commitment: "confirmed" }));
 
+// 2026-10-10（审计 M5）：破坏性操作需显式确认——没带 --yes 只打印计划。
+if (!process.argv.includes("--yes")) {
+  console.log(`将 admin_force_stand_up 桌 #${TABLE_ID} 座 ${SEAT}（筹码转入该座自己的 owed，只进其 payout）。`);
+  console.log("确认无误后加 --yes 执行。");
+  process.exit(0);
+}
+
 const ix = await program.methods
   .adminForceStandUp(SEAT)
   .accounts({ table, game, admin: deployer.publicKey })

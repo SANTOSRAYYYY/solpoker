@@ -213,6 +213,12 @@ async function credit({ tableId, tv, payer, amount, sig }) {
       other0: tv.otherPdas[0], other1: tv.otherPdas[1], other2: tv.otherPdas[2],
       other3: tv.otherPdas[3], other4: tv.otherPdas[4], other5: tv.otherPdas[5],
       other6: tv.otherPdas[6], other7: tv.otherPdas[7],
+      // 2026-10-10（审计 P0-3）：I-X 背书检查的新账户——入账后的余额下限
+      // 必须被 TableVault 全额覆盖（网关不能凭空记筹码）。
+      vaultAuth: tv.vaultAuth,
+      mint: TUSDC_MINT,
+      vault: tv.vault,
+      game: tv.game,
       gateway: gateway.publicKey,
       agentProfile: null,
     })
@@ -222,7 +228,19 @@ async function credit({ tableId, tv, payer, amount, sig }) {
   tx.recentBlockhash = (await l1.getLatestBlockhash("confirmed")).blockhash;
   tx.sign(gateway);
   const txSig = await l1.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-  await l1.confirmTransaction(txSig, "confirmed");
+  // 2026-10-10（审计 L4）：本环境 confirmTransaction 不可靠（超时不抛错）——
+  // 显式轮询签名状态并复核 err。
+  let confirmed = false;
+  for (let i = 0; i < 30; i++) {
+    const s = (await l1.getSignatureStatuses([txSig])).value[0];
+    if (s?.err) throw new Error(`credit_x402_deposit 失败：${JSON.stringify(s.err).slice(0, 120)}`);
+    if (s?.confirmationStatus === "confirmed" || s?.confirmationStatus === "finalized") {
+      confirmed = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  if (!confirmed) throw new Error(`credit_x402_deposit 未在 21s 内确认：${txSig}`);
   return { creditSig: txSig, depositRecord: depositRecord.toBase58() };
 }
 

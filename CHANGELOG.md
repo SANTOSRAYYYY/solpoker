@@ -1,5 +1,57 @@
 # CHANGELOG
 
+## 全面安全审计与修复（2026-10-10）
+
+对程序/发牌/资金/运维脚本/Web/平台层做了六路并行审计（关键条目全部回源码与实链复核），
+并修复了下列问题。程序已升级两次部署（`4abjMdxz…` / `2oT9DjhG…`），crank 已换新代码重启。
+
+**资金与身份（P0/P1）**
+- `refund_x402_deposit` 的 9 份账本读取新增**本桌+本座绑定**（`read_seat_counters`）——
+  此前可传任意桌账本把 I-X 盈余下限压低，把待结资金退给任意地址；README 的
+  「Operator cannot move your money」在程序层不再被这条路径证伪。
+- `credit_x402_deposit` 新增 **I-X 背书检查**（vault 余额必须全额覆盖入账后的下限）——
+  此前网关可凭空记筹码赢走真人的钱；新增 4 个账户，vault 余额按栈纪律零拷贝读取。
+- `sit_down` / `credit_x402` 的 8 座身份扫描账本同样绑定本桌——修掉「用别桌账本绕过
+  同主人同桌/一钱包多座」的路径。
+- `commit_game` 改为 **keeper 门禁**（签名者 == table.admin）——此前 permissionless，
+  任何人可刷爆 CommitPayer 让 L1 快照停更。
+- `request_vrf` / `retry_vrf` 同样门禁到 keeper——此前任何人在 arm→request 窗口把请求
+  路由到不会履行的队列，可让整手作废（输家全脱身 / 全桌 DoS）。
+- `top_up`：agent 座位（kind=1）必须携带**活跃** AgentProfile——主人的 pause/revoke
+  由此立即止住 agent 花钱。
+- 新增 `owner_force_stand_up`：主人回收自己 agent 的座位（与 admin 版同纪律，资金只进 payout）。
+
+**发牌与作废**
+- `vrf_callback` 新增 `table` 绑定（deck/game 都由 seeds 派生）——此前回调账户零绑定，
+  第三方可借 VRF 程序直调回调、自选账户组合写入随机数。
+- 揭示宽限接线：VRF 履行后先等 `reveal_timeout_s`（截止写于回调的 phase_deadline）再判定
+  缺盐作废——慢揭示不再误伤全桌（字段此前是死码）。
+- 修复**席位永久卡死**（#22 座位 8 实锤）：Commit 阶段被踢出/作废的手未清手牌账户的盐，
+  导致 `take_seat` 永远 `SeatNotClean`（钱在 L1 也坐不进来）。两条路径补清零；
+  `take_seat` 的清洁检查放宽为「只看牌」（陈旧盐对一切校验 fail-closed，不再阻塞入座，自愈历史脏位）。
+
+**其他程序修复**
+- 删除 `debug_arm_vrf`（生产残留；可被 admin 用来把手牌卡死在 AwaitSeed）。
+- `create_table` 参数域校验（bb=0 白占座/永久卡死、max_strikes=0 每手踢人、心跳=0 门禁失效等）。
+- `admin_set_members`：占用中的座位名单必须保留占用者（防空名单剥夺读取）。
+- rake 三参数真正接线（此前 Table 上线后从不被读取，公式硬编码 2.5%/3BB；`RakeParams::default`
+  与历史逐字节一致）。
+- `read_seat_counters` 绑定回归测试；core/program 测试全绿（92 + 42 + 8）。
+
+**Web**
+- 会话私钥改存 `sessionStorage`（关浏览器即清）+ TTL 7 天→12 小时 + 离座/兑现后清理
+  （`clearSeatSecrets`）。
+- `/history` 复算输入**L1 优先** + 数据源徽章（此前信任根是 ER 实时态=被审计方）。
+- faucet：限流键优先平台可信头 + 先占冷却位再发放 + 错误不再回显内部细节；l1-audit 加限流与
+  table 范围校验；生产环境 CSP/安全响应头；RPC 凭据（token=/api-key=）展示前脱敏。
+
+**运维**
+- crank：sweep no-op 形态守卫（快照无可付/可放时不再空转占动作位）；启动认证带重试
+  （一次网络抖动不再让整支 crank 退出）。
+- `migrate-members` 默认干跑（`--apply` 才执行）；`force-stand-up` / `cash-out-seat` 需 `--yes`；
+  helius-webhook 支持 `WEBHOOK_SECRET`；x402 入账改显式签名状态轮询复核。
+- README 信任模型改写（含 TEE/升级权/会话密钥口径，消除两处与实现不符的承诺）。
+
 ## 半登录态体验：自动重连一次 + 「重新连接钱包」文案（2026-10-10）
 
 **用户观察**：有时钱包连不上，钱包模块显示重试按钮，点一下（TEE 按钮所在的位置）就又能

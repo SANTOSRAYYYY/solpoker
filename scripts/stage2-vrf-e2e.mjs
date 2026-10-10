@@ -130,14 +130,11 @@ const { token, expiresAt } = await getAuthToken(
 console.log(`✓ TEE token (expires ${new Date(expiresAt * 1000).toISOString()})`);
 const er = new Connection(`${ER_BASE}?token=${token}`, "confirmed");
 
-// ---- 4. debug_arm_vrf (Flop = 1) ----
-{
-  const ix = await program.methods
-    .debugArmVrf(1)
-    .accounts({ table, game, admin: deployer.publicKey })
-    .instruction();
-  await sendAndConfirm(er, [ix], "debug_arm_vrf (ER, target=Flop)");
-}
+// ---- 4. arm ----
+// 2026-10-10（审计 P1-9）：debug_arm_vrf 已从生产程序删除（可被 admin 用来
+// 把手牌卡死在 AwaitSeed）。本脚本是 stage-2 遗留 harness，需改用 advance 的
+// 正常 phase 流程 arm——在此之前无法继续。
+throw new Error("debug_arm_vrf 已于 2026-10-10 移除（审计 P1-9）：stage2 harness 需改写为 advance 流程");
 
 // ---- 5. request_vrf ----
 const tRequest = Date.now();

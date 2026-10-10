@@ -461,7 +461,7 @@ for (const [i, p] of players.entries()) {
 {
   const ix = await erProgram.methods
     .commitGame()
-    .accounts({ table, game, handProof, handSecrets, commitPayer, magicContext: MAGIC_CONTEXT, magicProgram: MAGIC_PROGRAM, magicFeeVault })
+    .accounts({ table, game, handProof, handSecrets, handReplay, commitPayer, magicContext: MAGIC_CONTEXT, magicProgram: MAGIC_PROGRAM, magicFeeVault, admin: deployer.publicKey })
     .instruction();
   await sendAndConfirm(er, [ix], [deployer], "commit_game (ER→L1)", ER_CU);
 }

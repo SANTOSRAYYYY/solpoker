@@ -286,6 +286,13 @@ export async function ixStandUp(program, table, seat, signer) {
 
 export async function ixTopUp(program, { table, seat, amountMicro }) {
   const vaultAuth = vaultAuthPda(table);
+  // 2026-10-10（审计 P2）：agent 座位（kind=1）补码必须携带**活跃**的
+  // AgentProfile —— 主人的 pause/revoke 由此立即止住 agent 继续花钱。
+  // 本 helper 只服务 agent 上下文（mcp-server / topup-test）。
+  const agentProfile = PublicKey.findProgramAddressSync(
+    [Buffer.from("agent"), program.provider.wallet.publicKey.toBuffer()],
+    program.programId
+  )[0];
   return program.methods
     .topUp(seat, new BN(amountMicro))
     .accounts({
@@ -294,6 +301,7 @@ export async function ixTopUp(program, { table, seat, amountMicro }) {
       mint: TUSDC_MINT,
       playerAta: getAssociatedTokenAddressSync(TUSDC_MINT, program.provider.wallet.publicKey),
       payer: program.provider.wallet.publicKey,
+      agentProfile,
     })
     .instruction();
 }

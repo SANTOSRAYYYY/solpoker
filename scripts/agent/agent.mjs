@@ -260,7 +260,7 @@ async function cmdSit(name, tableId, seat, buyIn = 20) {
   }
   ixs.push(
     await program.methods
-      .sitDown(seat, new BN(Math.round(buyIn * 1e6)), agent.keypair.publicKey, new BN(Math.floor(Date.now() / 1000) + 7 * 24 * 3600))
+      .sitDown(seat, new BN(Math.round(buyIn * 1e6)), agent.keypair.publicKey, new BN(Math.floor(Date.now() / 1000) + 12 * 3600))
       .accounts({
         table, seat: seatPda(table, seat), ...others, agentProfile, vaultAuth, vault,
         mint: TUSDC_MINT, playerAta: ata, payer: agent.keypair.publicKey,

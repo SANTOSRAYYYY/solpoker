@@ -43,6 +43,8 @@ for (const id of IDS) {
       handReplay: pda([Buffer.from("replay"), table.toBuffer()]),
       commitPayer: pda([Buffer.from("commit_payer"), table.toBuffer()]),
       magicContext: MAGIC_CONTEXT, magicProgram: MAGIC_PROGRAM, magicFeeVault,
+      // 2026-10-10（审计 P1-8）：commit_game 已改为 keeper 门禁（admin 签名）。
+      admin: deployer.publicKey,
     }).instruction();
     const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), ix);
     tx.feePayer = deployer.publicKey;

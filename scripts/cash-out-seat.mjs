@@ -34,6 +34,11 @@ if (!ledger) { console.log("seat ledger 不存在"); process.exit(1); }
 const payout = new PublicKey(ledger.data.slice(8 + 32 + 1 + 32 + 8 + 1 + 32 + 32 + 8, 8 + 32 + 1 + 32 + 8 + 1 + 32 + 32 + 8 + 32));
 const payoutAta = getAssociatedTokenAddressSync(TUSDC_MINT, payout);
 console.log(`table #${TABLE_ID} seat ${SEAT}: payout=${payout.toBase58().slice(0, 8)}… ata=${payoutAta.toBase58().slice(0, 8)}…`);
+// 2026-10-10（审计 M5）：破坏性操作需显式确认——没带 --yes 只打印计划。
+if (!process.argv.includes("--yes")) {
+  console.log(`将对该座发 cash_out（资金只进上面钉死的 payout）。确认无误后加 --yes 执行。`);
+  process.exit(0);
+}
 
 const program = new anchor.Program(idl, new anchor.AnchorProvider(l1, new anchor.Wallet(deployer), { commitment: "confirmed" }));
 const tx = new Transaction();

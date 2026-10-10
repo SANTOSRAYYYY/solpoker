@@ -162,3 +162,13 @@ cd web && npx tsc --noEmit && npm run build              # 前端类型 + 构建
 **栈纪律（SBF 4KB）**：大结构体（如 `SeatLedger`）不要按份声明局部变量 —— 用
 `fund::read_seat_counters` 逐座零拷贝读、迭代版 I-X；重活拆 `#[inline(never)]` 函数；
 要长期保存的入参（签名等）在 handler 最前面就写进账户。详见 CHANGELOG 2026-10-08 两条。
+
+**2026-10-10 审计后的新纪律**（改动全在 CHANGELOG 同日条目）：
+- `commit_game` / `request_vrf` / `retry_vrf` 是 **keeper 门禁**（签名者必须是 table.admin）——
+  自建 keeper 脚本必须用部署者密钥，否则报 6005。
+- `credit_x402_deposit` 新增账户 `vaultAuth / mint / vault / game`（I-X 背书检查）；
+  `top_up` 对 agent 座位必须带 `agentProfile`（活跃）。
+- 破坏性脚本：`migrate-members` 默认干跑（`--apply` 执行）；`force-stand-up`、`cash-out-seat` 需 `--yes`。
+- webhook 服务若暴露公网，必须设 `WEBHOOK_SECRET`（请求头 `x-webhook-secret`）；
+  未设时只接受 `/simulate`。
+- `owner_force_stand_up`：主人回收自己 agent 座位（与 admin 版同纪律）。

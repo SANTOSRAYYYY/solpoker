@@ -9,6 +9,9 @@ import * as env from "./env.mjs";
 
 const FROM = Number(process.argv[2] ?? 1);
 const TO = Number(process.argv[3] ?? 40);
+// 2026-10-10（审计 M5）：默认**干跑**（打印计划，不发交易）；真正执行必须显式
+// 加 --apply。历史上这个脚本默认全量 1..40 直发，误跑即对全部在线桌动成员名单。
+const APPLY = process.argv.includes("--apply");
 const VRF_PROGRAM = new PublicKey("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
 const PERMISSION_PROGRAM = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
 
@@ -64,6 +67,10 @@ for (let id = FROM; id <= TO; id++) {
     // 不要用 getAccountInfo 做存在性预检查：收紧成员后非成员读 = null，
     // 与"账户不存在"不可区分（2026-10-09 实测）。直接尝试，程序端校验 PDA。
     const permission = pda([Buffer.from("permission:"), tgt.toBuffer()], PERMISSION_PROGRAM);
+    if (!APPLY) {
+      console.log(`[dry-run] #${id} target#${targetIndex} members=[${members.map((m) => m.toBase58().slice(0, 6)).join(", ")}]（加 --apply 执行）`);
+      continue;
+    }
     try {
       const ix = await program.methods
         .adminSetMembers(targetIndex, members)
