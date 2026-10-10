@@ -258,7 +258,12 @@ async function main() {
       if (gameOcc !== ledOcc) continue;
       const deposited = ledAcc.data.readBigUInt64LE(186);
       const paid = ledAcc.data.readBigUInt64LE(194);
-      if (deposited <= paid) continue; // nothing to pay out
+      // 2026-10-10（#22 座 8 实锤）：dep<=paid 也要处理「已付清但持仓没释放」的
+      // 残留——旧逻辑在这里直接 continue，这类座位会永久占着（UI 显示旧占用者，
+      // 新玩家 sit_down 被 L1 账本的 SeatNotEmpty 挡住）。是否真发交易交给后面的
+      // 「可付/可放」守卫判断（release-only 时 cash_out 付 0 并释放）。
+      const stillOccupied = !new PublicKey(ledAcc.data.slice(41, 73)).equals(PublicKey.default);
+      if (deposited <= paid && !stillOccupied) continue; // 既没钱可付、也没占用残留 → 跳过
       // 同一个（已存/已付）快照只尝试一次：程序拒绝过的座位不要每轮重试
       const sweepKey = `${tableId}:${i}:${deposited}:${paid}`;
       if ((sweepTried.get(sweepKey) ?? 0) > Date.now()) continue;
