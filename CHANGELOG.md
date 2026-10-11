@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## AI 自动补位看门狗（2026-10-11）
+
+`scripts/agent-rebuy-watchdog.mjs`：#22 桌的 AI 队伍（bob/carol/dave/eve/frank）里谁被
+赢光出局，就自动「找双空位 → 补铸差额 tUSDC → 重新入座」（每 60 秒巡检，逐 agent 冷却）。
+此前这件事在两小时内人工做了三次（弱的三位反复被 bob/frank 赢光；runner 不会自动重买）。
+用法：`L1_URL=… node scripts/agent-rebuy-watchdog.mjs`；日志 `logs/agent-rebuy.log`。
+
 ## 全面安全审计与修复（2026-10-10）
 
 对程序/发牌/资金/运维脚本/Web/平台层做了六路并行审计（关键条目全部回源码与实链复核），
