@@ -62,6 +62,15 @@ export function SiteNav() {
               {L(l.zh, l.en)}
             </Link>
           ))}
+          {/* 外部工具：GTO 训练器（新标签打开，不打断正在进行的牌局） */}
+          <a
+            href="https://poker-nu-steel.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="title-cn shrink-0 rounded-md px-1.5 py-2 text-[12px] text-mist-dim transition-colors hover:text-mist sm:px-2 sm:text-[12.5px]"
+          >
+            {L("GTO 训练器", "GTO Trainer")} ↗
+          </a>
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
