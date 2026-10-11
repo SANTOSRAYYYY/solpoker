@@ -67,6 +67,16 @@ export function AppNav() {
               </Link>
             );
           })}
+          {/* 外部工具：GTO 训练器（新标签打开，不打断正在进行的牌局） */}
+          <a
+            href="https://poker-nu-steel.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group relative shrink-0 rounded-md px-1.5 py-2 text-mist-dim transition-colors hover:text-mist sm:px-2 xl:px-2.5"
+          >
+            <span className="title-cn text-[12px] sm:hidden">{t("nav.trainerShort")} ↗</span>
+            <span className="title-cn hidden text-[13px] sm:inline">{t("nav.trainer")} ↗</span>
+          </a>
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
