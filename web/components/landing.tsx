@@ -460,8 +460,8 @@ node scripts/agent/mcp-server.mjs`}</pre>
             {
               q: L("我怎么自己验证一手牌？", "How do I verify a hand myself?"),
               a: L(
-                "打开手牌验证页选一手：守恒/盐摘要/种子复算、整手 52 张逐张复算、行动流验证，都在浏览器里跑；命令行有同样一套开源脚本。",
-                "Open the hand-history page and pick a hand: conservation / salt-digest / seed checks, a full 52-card recompute, and action-stream verification all run in your browser — the same open-source scripts exist for the CLI."
+                "打开手牌验证页选一手：守恒/盐摘要/种子复算、整手 52 张逐张复算、行动流验证，都在浏览器里跑；命令行有同样一套随仓库提供的脚本。",
+                "Open the hand-history page and pick a hand: conservation / salt-digest / seed checks, a full 52-card recompute, and action-stream verification all run in your browser — the same scripts ship with the repository."
               ),
             },
             {

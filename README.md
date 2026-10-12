@@ -232,4 +232,9 @@ SolPoker 是 Solana 上的**隐私德州扑克现金桌**（每桌 2–9 人，�
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE) — **free for noncommercial study, research and
+personal use only.** Any commercial use requires a separate license from the licensor —
+reach out on Telegram [@SANTOSRAYBryan](https://t.me/SANTOSRAYBryan).
+
+（中文：本仓库仅供学习、研究与个人非商业使用；任何商业用途需另行获得授权，
+请联系 Telegram @SANTOSRAYBryan。）

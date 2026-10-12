@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 许可变更：MIT → PolyForm Noncommercial 1.0.0（2026-10-12）
+
+按项目方要求，仓库许可从 MIT 改为 **PolyForm Noncommercial 1.0.0**（官方全文，随附
+Licensor/联系方式头块）：**仅供学习、研究与个人非商业用途；任何商业用途需另行授权，
+联系 Telegram @SANTOSRAYBryan**。同步更新 `crates/solpoker-core/Cargo.toml` 的 SPDX
+标识与 README 许可区块、落地页相关措辞。
+
+**注意（不溯及既往）**：在改为非商业许可**之前**已按 MIT 获得本仓库副本的人，对其
+已获得的版本仍享有 MIT 授予的权利（含商用）；新许可自本次提交起对未来版本与新的
+获得者生效。依赖项（Anchor/Next.js 等第三方库）的许可不受影响。
+
 ## AI 自动补位看门狗（2026-10-11）
 
 `scripts/agent-rebuy-watchdog.mjs`：#22 桌的 AI 队伍（bob/carol/dave/eve/frank）里谁被

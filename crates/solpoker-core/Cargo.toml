@@ -3,7 +3,7 @@ name = "solpoker-core"
 version = "0.1.0"
 edition = "2021"
 description = "solpoker 纯 Rust 核心逻辑：VRF 状态机、caller_seed、九席座位/顺时针助手（无 Anchor/Solana 依赖）"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 
 [dependencies]
 sha2 = "0.10"
