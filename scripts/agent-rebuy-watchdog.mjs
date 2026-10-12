@@ -98,7 +98,14 @@ for (;;) {
     const seats = await gameSnapshot();
     if (!seats) { log("game 账户读不到（ER 抖动？）→ 下一轮"); }
     else {
-      const seated = new Set(seats.filter((s) => !s.occupant.equals(PublicKey.default)).map((s) => s.occupant.toBase58()));
+      // 2026-10-12 修（实测抓到）：Left(2) 的座位仍带着旧 occupant——只按 occupant
+      // 判「在座」会把输光待释放的座位误判为在座（日志 5/5 ✓ 但 carol/dave 早已出局）。
+      // 真正在打 = status==1（Seated）。
+      const seated = new Set(
+        seats
+          .filter((s) => s.status === 1 && !s.occupant.equals(PublicKey.default))
+          .map((s) => s.occupant.toBase58())
+      );
       const agents = ROSTER.map(loadAgentPub);
       const missing = agents.filter((a) => !seated.has(a.pub.toBase58()));
       if (missing.length === 0) {
@@ -107,10 +114,11 @@ for (;;) {
         log(`巡检 #${TABLE_ID}：在座 ${ROSTER.length - missing.length}/${ROSTER.length}，缺 ${missing.map((m) => m.name).join(",")}`);
         for (const m of missing) {
           if ((cooldown.get(m.name) ?? 0) > Date.now()) continue;
-          // 找双空位（ER 游戏座 + L1 账本都空）
+          // 找可坐的座位：ER 侧只要不是「有人正在打（status==1）」，且 L1 账本已释放
+          // （sit_down 的权威校验在 L1 账本上；Left 残留占用者不挡 take_seat）。
           let seat = null;
           for (const s of seats) {
-            if (s.status === 1 || !s.occupant.equals(PublicKey.default)) continue;
+            if (s.status === 1) continue;
             if (await l1SeatFree(s.idx)) { seat = s.idx; break; }
           }
           if (seat === null) { log(`  ${m.name}: 没有双空位，本轮跳过`); continue; }
