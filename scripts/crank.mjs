@@ -68,6 +68,34 @@ const sweepWaitLog = new Set(); // sweep: dedupe "等快照" 日志（key 含快
 const idleSkipUntil = new Map(); // tableId -> ts：空闲桌（无占用且 Idle）节流——削减 23 桌每轮 ~207 个座位账本读（RPC 429 的来源）
 const commitFailUntil = new Map(); // table -> ts：commit_game 失败后的冷却（避免刷屏，且不阻塞阶段机）
 const zombieTables = new Set(); // tables whose sweep hit a stuck seat -> force a commit_game to refresh the L1 snapshot
+const lastCommitAt = new Map(); // table -> ts：commit_game 尝试节流（2026-10-15，见下）
+// commit 尝试的最小间隔（2026-10-15，652 失败审计）：僵尸强迫提交（zombieTables）
+// 曾经每轮都发 commit_game，成功即清标记→下一轮 sweep 又加回，循环成风暴——
+// 实测 10-14 上午 ~2800 笔/小时的 noop 提交刷上 L1，快照管道反而更堵。
+// 15s 只是给尝试限速（正常每手提交 ~70s 一次，不会被打到）。
+const COMMIT_MIN_GAP_MS = 15_000;
+
+// ---- 动作级容错（2026-10-15，652 失败交易审计） ---------------------------
+// 教训：单个动作失败若直接 throw 到表级 catch，会把 pass 里排在后面的
+// commit_game / 发牌一起饿死——#22 座 8 曾因脏座位（SeatNotClean）连败
+// 5246 次，期间整桌阶段机停摆。commit_game 在 2026-10-08 已改成「失败只降级」，
+// 这里给 take_seat / apply_deposits / request_vrf / claim_timeout 补上同款：
+// 失败 → 该动作退避 10 分钟 + 节流日志，pass 继续往下走。
+const actionFailUntil = new Map(); // "t:action" -> ts 退避截止
+const actionLogUntil = new Map(); // 同键 -> ts：单个退避窗口内只打印一条
+function noteActionFailure(tableId, action, err, detail = "") {
+  const key = `${tableId}:${action}`;
+  actionFailUntil.set(key, Date.now() + 10 * 60_000);
+  if (Date.now() < (actionLogUntil.get(key) ?? 0)) return;
+  actionLogUntil.set(key, Date.now() + 10 * 60_000);
+  console.log(
+    `[t${tableId}] ${action}${detail} 失败 → 退避 10 分钟（不阻塞本桌 commit/发牌）：` +
+    `${String(err?.message ?? err).slice(0, 110)}`
+  );
+}
+function actionInBackoff(tableId, action) {
+  return Date.now() < (actionFailUntil.get(`${tableId}:${action}`) ?? 0);
+}
 const vaultAuthPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("vault_auth"), table.toBuffer()], programId)[0];
 const deckPda = (table) => PublicKey.findProgramAddressSync([Buffer.from("deck"), table.toBuffer(), Buffer.from([0, 0])], programId)[0];
 
@@ -354,17 +382,23 @@ async function main() {
       const ledgerOcc = ledgerAcc.data.readBigUInt64LE(73);
       const ledgerEmpty = ledgerAcc.data.subarray(41, 73).every((b) => b === 0);
       if (!ledgerEmpty && ledgerOcc > gameOcc) {
-        const ix = await program.methods
-          .takeSeat(i)
-          .accounts({
-            table, game, seatLedger: seatPda(table, i), playerHand: handPda(table, i),
-            permission: permPda(handPda(table, i)), commitPayer: commitPayerPda(table),
-            vault: EPHEMERAL_VAULT, caller: deployer.publicKey,
-          })
-          .instruction();
-        const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} take_seat[${i}]`, ER_CU);
-        console.log(`[t${tableId}] take_seat[${i}]: ${sig.slice(0, 12)}…`);
-        return; // 一轮一个动作，保持节奏清晰
+        if (actionInBackoff(tableId, `take_seat[${i}]`)) continue; // 该座位退避中，跳过
+        try {
+          const ix = await program.methods
+            .takeSeat(i)
+            .accounts({
+              table, game, seatLedger: seatPda(table, i), playerHand: handPda(table, i),
+              permission: permPda(handPda(table, i)), commitPayer: commitPayerPda(table),
+              vault: EPHEMERAL_VAULT, caller: deployer.publicKey,
+            })
+            .instruction();
+          const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} take_seat[${i}]`, ER_CU);
+          console.log(`[t${tableId}] take_seat[${i}]: ${sig.slice(0, 12)}…`);
+          return; // 一轮一个动作，保持节奏清晰
+        } catch (e) {
+          noteActionFailure(tableId, `take_seat[${i}]`, e);
+          continue; // 不 throw：pass 继续（其它座位 / commit / 发牌照常）
+        }
       }
     }
 
@@ -379,13 +413,19 @@ async function main() {
       if (!ledgerAcc) continue;
       const deposited = ledgerAcc.data.readBigUInt64LE(186);
       if (deposited > credited) {
-        const ix = await program.methods
-          .applyDeposits(i)
-          .accounts({ table, game, seatLedger: seatPda(table, i), caller: deployer.publicKey })
-          .instruction();
-        const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} apply_deposits[${i}]`, ER_CU);
-        console.log(`[t${tableId}] apply_deposits[${i}] (+${Number(deposited - credited) / 1e6}): ${sig.slice(0, 12)}…`);
-        return;
+        if (actionInBackoff(tableId, `apply_deposits[${i}]`)) continue;
+        try {
+          const ix = await program.methods
+            .applyDeposits(i)
+            .accounts({ table, game, seatLedger: seatPda(table, i), caller: deployer.publicKey })
+            .instruction();
+          const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} apply_deposits[${i}]`, ER_CU);
+          console.log(`[t${tableId}] apply_deposits[${i}] (+${Number(deposited - credited) / 1e6}): ${sig.slice(0, 12)}…`);
+          return;
+        } catch (e) {
+          noteActionFailure(tableId, `apply_deposits[${i}]`, e);
+          continue; // 不 throw：pass 继续
+        }
       }
     }
 
@@ -394,30 +434,43 @@ async function main() {
     if (vrfState === 1) {
       const until = vrfWaitUntil.get(tableId) ?? 0;
       if (Date.now() > until) {
-        const ix = await program.methods
-          .requestVrf()
-          .accounts({ table, game, payer: deployer.publicKey, vrf: { oracleQueue: ER_VRF_QUEUE } })
-          .instruction();
-        const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} request_vrf`, ER_CU);
-        console.log(`[t${tableId}] request_vrf: ${sig.slice(0, 12)}…`);
-        vrfWaitUntil.set(tableId, Date.now() + 4000);
-        // 原地等履行（≤2s，实测 ~1.1s，2026-10-09）：等到就直接落到第 5 步发牌，
-        // 省掉一整轮轮询（每街 ~2.5–3.5s）。等不到保持旧时序（return，下一轮发牌）。
-        // 边界：有上限、只发生在本桌刚发出请求之后；活跃桌多时自然退化为旧节奏。
-        // 安全前提：揭示已提前到 Commit 阶段（agent/网页同日改动）——发牌变快
-        // 也不会撞上「缺盐作废」窗口。
-        const waitDeadline = Date.now() + 2000;
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 700));
-          const fresh = await er.getAccountInfo(game);
-          const st = fresh ? fresh.data[144] : 1;
-          if (st !== 1 && st !== 2) {
-            vrfFulfilledNow = st === 3; // 3=Fulfilled；4=Void 也落到第 5 步走作废路径
-            break;
+        if (actionInBackoff(tableId, "request_vrf")) {
+          // 退避中：跳过 request（不 return——让 commit 等后续步骤照常走）
+        } else {
+          let requested = false;
+          try {
+            const ix = await program.methods
+              .requestVrf()
+              .accounts({ table, game, payer: deployer.publicKey, vrf: { oracleQueue: ER_VRF_QUEUE } })
+              .instruction();
+            const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} request_vrf`, ER_CU);
+            console.log(`[t${tableId}] request_vrf: ${sig.slice(0, 12)}…`);
+            requested = true;
+          } catch (e) {
+            noteActionFailure(tableId, "request_vrf", e);
+            vrfWaitUntil.set(tableId, Date.now() + 15000);
           }
-          if (Date.now() > waitDeadline) break;
+          if (requested) {
+            vrfWaitUntil.set(tableId, Date.now() + 4000);
+            // 原地等履行（≤2s，实测 ~1.1s，2026-10-09）：等到就直接落到第 5 步发牌，
+            // 省掉一整轮轮询（每街 ~2.5–3.5s）。等不到保持旧时序（return，下一轮发牌）。
+            // 边界：有上限、只发生在本桌刚发出请求之后；活跃桌多时自然退化为旧节奏。
+            // 安全前提：揭示已提前到 Commit 阶段（agent/网页同日改动）——发牌变快
+            // 也不会撞上「缺盐作废」窗口。
+            const waitDeadline = Date.now() + 2000;
+            for (;;) {
+              await new Promise((r) => setTimeout(r, 700));
+              const fresh = await er.getAccountInfo(game);
+              const st = fresh ? fresh.data[144] : 1;
+              if (st !== 1 && st !== 2) {
+                vrfFulfilledNow = st === 3; // 3=Fulfilled；4=Void 也落到第 5 步走作废路径
+                break;
+              }
+              if (Date.now() > waitDeadline) break;
+            }
+            if (!vrfFulfilledNow) return;
+          }
         }
-        if (!vrfFulfilledNow) return;
       }
     }
 
@@ -450,13 +503,21 @@ async function main() {
     // 3) 行动超时 → claim_timeout（只有真的有人欠行动时才发；死状态由第 5 步自愈）
     if ((phase === 3 || phase === 5) && pendingToAct !== 0 && actionDeadline > 0n && BigInt(now) > actionDeadline) {
       const toAct = g[1549];
-      const ix = await program.methods
-        .claimTimeout(new BN(handId.toString()))
-        .accounts({ table, game, caller: deployer.publicKey })
-        .instruction();
-      const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} claim_timeout`, ER_CU);
-      console.log(`[t${tableId}] claim_timeout (seat ${toAct}): ${sig.slice(0, 12)}…`);
-      return;
+      if (actionInBackoff(tableId, "claim_timeout")) {
+        // 退避中：跳过（不 return——commit/advance 照常走）
+      } else {
+        try {
+          const ix = await program.methods
+            .claimTimeout(new BN(handId.toString()))
+            .accounts({ table, game, caller: deployer.publicKey })
+            .instruction();
+          const sig = await sendAndConfirm(er, [ix], [deployer], `t${tableId} claim_timeout`, ER_CU);
+          console.log(`[t${tableId}] claim_timeout (seat ${toAct}): ${sig.slice(0, 12)}…`);
+          return;
+        } catch (e) {
+          noteActionFailure(tableId, "claim_timeout", e, ` (seat ${toAct})`);
+        }
+      }
     }
 
     // 4) commit：hands_since_commit 达到阈值且不在手牌中；
@@ -468,8 +529,10 @@ async function main() {
       const commitEvery = tableAcc ? tableAcc.data[123] : 255;
       if (
         (handsSinceCommit >= commitEvery || zombieTables.has(tableId)) &&
-        Date.now() > (commitFailUntil.get(tableId) ?? 0)
+        Date.now() > (commitFailUntil.get(tableId) ?? 0) &&
+        Date.now() - (lastCommitAt.get(tableId) ?? 0) >= COMMIT_MIN_GAP_MS
       ) {
+        lastCommitAt.set(tableId, Date.now());
         try {
           const [magicFeeVault] = PublicKey.findProgramAddressSync(
             [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()], DLP

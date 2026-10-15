@@ -40,6 +40,14 @@ const INTERVAL_S = Number(process.argv[3] ?? 600);
 const RECON_MS = 120_000;      // 巡检（读各桌 game + 选桌）的硬上限
 const CHILD_CAP_MS = 45 * 60_000; // 单个补币子进程的最长生命
 
+// 高燃烧桌（2026-10-15，652 失败审计）：#22 是 commitEvery=1 的全天候活跃桌，
+// 五账户租金余量烧穿 → commit 整包失败 → 快照停更 → 座位释放被堵（10-09 实锤
+// 131 手 commit 连败）。对齐 10-09 的手工处置：单独分组、单独高目标（钉在 1.0）。
+const HIGH_BURN_IDS = (process.env.HIGH_BURN_IDS ?? "22")
+  .split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+const HIGH_TARGET = process.env.HIGH_TARGET_SOL ?? "1.0";
+const HIGH_MIN = process.env.HIGH_MIN_SOL ?? "0.8";
+
 const deployer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(fs.readFileSync("keys/deployer.json", "utf8")))
 );
@@ -54,10 +62,10 @@ function log(line) {
 }
 
 // 跑一次 topup-delegated（子进程复用现成逻辑：MIN 阈值、lamports PDA 流程、对账日志）
-function runTopup(list) {
+function runTopup(list, extraEnv = {}) {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, ["scripts/topup-delegated.mjs", list.join(",")], {
-      env: process.env,
+      env: { ...process.env, ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const chunks = [];
@@ -107,13 +115,23 @@ async function cycle(er) {
     new Promise((_, rej) => setTimeout(() => rej(new Error(`巡检超过 ${RECON_MS / 1000}s 未完成`)), RECON_MS)),
   ]);
   if (need.length === 0) return log("巡检：无占用桌、无待提交 → 跳过补充");
-  log(`巡检：${need.join(",")} 需要检查 → 调 topup-delegated（${need.length} 桌）`);
-  const code = await runTopup(need);
-  log(`topup-delegated 退出码 ${code}`);
+  const high = need.filter((id) => HIGH_BURN_IDS.includes(id));
+  const rest = need.filter((id) => !HIGH_BURN_IDS.includes(id));
+  log(`巡检：${need.join(",")} 需要检查（高燃烧桌：${high.length ? high.join(",") : "无"}）`);
+  if (rest.length) {
+    const code = await runTopup(rest);
+    log(`topup-delegated 退出码 ${code}`);
+  }
+  if (high.length) {
+    log(`高燃烧桌 ${high.join(",")} → TARGET=${HIGH_TARGET} MIN=${HIGH_MIN}`);
+    const code = await runTopup(high, { TARGET_SOL: HIGH_TARGET, MIN_SOL: HIGH_MIN });
+    log(`topup-delegated（高燃烧）退出码 ${code}`);
+  }
 }
 
 log(
-  `看门狗启动：桌 ${ids.join(",")}，间隔 ${INTERVAL_S}s（TARGET=${process.env.TARGET_SOL ?? "0.12"} MIN=${process.env.MIN_SOL ?? "0.10"}）`
+  `看门狗启动：桌 ${ids.join(",")}，间隔 ${INTERVAL_S}s（TARGET=${process.env.TARGET_SOL ?? "0.12"} MIN=${process.env.MIN_SOL ?? "0.10"}；` +
+  `高燃烧 ${HIGH_BURN_IDS.join(",")} → TARGET=${HIGH_TARGET} MIN=${HIGH_MIN}）`
 );
 
 for (;;) {

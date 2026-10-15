@@ -87,6 +87,26 @@ async function l1SeatFree(idx) {
   return new PublicKey(acc.data.slice(41, 73)).equals(PublicKey.default);
 }
 
+// 2026-10-15（652 失败交易审计）：sit_down 的全桌身份扫描要求「本人不得占用
+// 本桌任何 L1 账本」。出局后账本未释放（僵尸态，等 crank sweep cash_out）期间
+// 发 sit 必然 AlreadySeated(6030)——审计确认 519 笔失败全部来自这个重试循环。
+// 坐之前先自查 9 个账本：仍占用 → 跳过本轮去等释放，不烧注定失败的交易。
+async function agentLedgerSeat(pub) {
+  const me = pub.toBase58();
+  const accs = await Promise.all(
+    Array.from({ length: 9 }, (_, i) =>
+      l1.getAccountInfo(pda([Buffer.from("seat"), tablePda.toBuffer(), Buffer.from([i])])).catch(() => null)
+    )
+  );
+  for (let i = 0; i < 9; i++) {
+    const a = accs[i];
+    if (!a || a.data.length < 203) continue;
+    const occ = new PublicKey(a.data.slice(41, 73));
+    if (!occ.equals(PublicKey.default) && occ.toBase58() === me) return i;
+  }
+  return null;
+}
+
 async function walletUsdc(pub) {
   const ata = getAssociatedTokenAddressSync(TUSDC_MINT, pub);
   const acc = await l1.getTokenAccountBalance(ata).catch(() => null);
@@ -114,6 +134,15 @@ for (;;) {
         log(`巡检 #${TABLE_ID}：在座 ${ROSTER.length - missing.length}/${ROSTER.length}，缺 ${missing.map((m) => m.name).join(",")}`);
         for (const m of missing) {
           if ((cooldown.get(m.name) ?? 0) > Date.now()) continue;
+          // 僵尸预检（必须先于 fund/sit）：账本仍占 = sit_down 必被 6030 拒，
+          // 等 crank 释放即可，别陪跑。
+          let zombieSeat = null;
+          try { zombieSeat = await agentLedgerSeat(m.pub); } catch { /* 读失败 → 按未占用走链上兜底 */ }
+          if (zombieSeat !== null) {
+            log(`  ${m.name}: 僵尸态——L1 账本仍占着座 ${zombieSeat}（等 crank 释放），本轮不 sit`);
+            cooldown.set(m.name, Date.now() + 300_000); // 5 分钟后再看
+            continue;
+          }
           // 找可坐的座位：ER 侧只要不是「有人正在打（status==1）」，且 L1 账本已释放
           // （sit_down 的权威校验在 L1 账本上；Left 残留占用者不挡 take_seat）。
           let seat = null;
